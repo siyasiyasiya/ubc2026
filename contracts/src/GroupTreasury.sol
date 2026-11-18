@@ -13,10 +13,11 @@ interface IERC20 {
 /// is approved by everyone in it, each share is pulled straight to whoever paid, never more than
 /// what is left of that member's recurring limit in that group.
 ///
-/// Trust model: the operator is the chat agent's key. It can propose splits, LOWER a member's
-/// limit, and remove someone who left the chat (all of which only reduce what can be pulled). It
-/// can never raise a limit, add a member, approve on a member's behalf, or send money anywhere
-/// except to the payee of a split everyone approved. Those are transactions from members' wallets.
+/// Trust model: members' wallets are passkey (Face ID) smart accounts. Joining a group, choosing
+/// and raising a limit are signed by the member. The operator is the chat agent's key: it proposes
+/// splits, relays each member's 👍 (`approveFor`), lowers limits and removes people who left the
+/// chat. It can never add a member, raise a limit, or send money anywhere but the payee of a
+/// split, and no pull ever exceeds what is left of the limit the member signed for that group.
 contract GroupTreasury {
     enum Period {
         Weekly,
@@ -64,8 +65,11 @@ contract GroupTreasury {
     mapping(bytes32 => mapping(address => bool)) public approved;
     /// debts[debtor][creditor]: shares that could not be pulled, across all groups.
     mapping(address => mapping(address => uint256)) public debts;
+    mapping(bytes32 => bool) public ticketUsed;
 
-    event Joined(bytes32 indexed group, address indexed member, uint256 limit, Period period);
+    event Joined(
+        bytes32 indexed group, address indexed member, uint256 limit, Period period, bytes32 ticket
+    );
     event Left(bytes32 indexed group, address indexed member, address indexed by);
     event LimitSet(
         bytes32 indexed group, address indexed member, uint256 limit, Period period, address by
@@ -100,6 +104,7 @@ contract GroupTreasury {
     error NotFullyApproved();
     error TransferFailed();
     error TooMuch();
+    error TicketUsed();
 
     modifier onlyOperator() {
         if (msg.sender != operator) revert NotOperator();
@@ -113,12 +118,15 @@ contract GroupTreasury {
 
     // --- membership and limits -------------------------------------------------------------
 
-    /// Joins a group from the member's own wallet with a starting limit. Rejoining after leaving
-    /// (or being removed) is allowed and starts a fresh window.
-    function join(bytes32 group, uint128 limit, Period period) external {
+    /// Joins a group from the member's own (passkey) wallet with a starting limit. `ticket` is the
+    /// single-use id from the invite link the agent DMed them; the server watches `Joined` to link
+    /// the wallet to their chat handle. Rejoining after leaving starts a fresh window.
+    function join(bytes32 group, uint128 limit, Period period, bytes32 ticket) external {
         if (members[group][msg.sender].active) revert AlreadyMember();
+        if (ticketUsed[ticket]) revert TicketUsed();
+        ticketUsed[ticket] = true;
         members[group][msg.sender] = Member(true, period, limit, _window(period), 0);
-        emit Joined(group, msg.sender, limit, period);
+        emit Joined(group, msg.sender, limit, period, ticket);
     }
 
     function leave(bytes32 group) external {
@@ -199,15 +207,15 @@ contract GroupTreasury {
         emit SpendProposed(id, group, payee, total, deadline);
     }
 
-    /// A member approves their share of a split (the onchain twin of the 👍 in the chat).
+    /// A member approves their share of a split from their own wallet.
     function approve(bytes32 id) external {
-        Spend storage s = _open(id);
-        if (block.timestamp > s.deadline) revert Expired();
-        if (approved[id][msg.sender]) revert AlreadyApproved();
-        if (!_owes(s, msg.sender)) revert NotParticipant();
-        approved[id][msg.sender] = true;
-        ++s.approvals;
-        emit SpendApproved(id, msg.sender);
+        _approve(id, msg.sender);
+    }
+
+    /// The agent relays a member's 👍 from the chat, so approving needs no Face ID. This is safe
+    /// to delegate because `settle` never pulls more than the limit the member signed themselves.
+    function approveFor(bytes32 id, address member) external onlyOperator {
+        _approve(id, member);
     }
 
     /// Pulls every share to the payer. Anyone may call it once everyone has approved. A share over
@@ -289,6 +297,16 @@ contract GroupTreasury {
     function _member(bytes32 group, address who) internal view returns (Member storage m) {
         m = members[group][who];
         if (!m.active) revert NotMember();
+    }
+
+    function _approve(bytes32 id, address who) internal {
+        Spend storage s = _open(id);
+        if (block.timestamp > s.deadline) revert Expired();
+        if (approved[id][who]) revert AlreadyApproved();
+        if (!_owes(s, who)) revert NotParticipant();
+        approved[id][who] = true;
+        ++s.approvals;
+        emit SpendApproved(id, who);
     }
 
     function _remove(bytes32 group, address who) internal {
