@@ -79,6 +79,7 @@
         cursor: pointer;
       }
       button:disabled { opacity: 0.5; cursor: default; }
+      #returning { display: block; margin-top: 12px; text-align: center; font-size: 14px; color: var(--accent); text-decoration: none; }
       #status { margin-top: 16px; white-space: pre-line; font-size: 15px; color: var(--muted); }
       #status[data-kind="error"] { color: var(--bad); }
       #status[data-kind="done"] { color: var(--ok); font-weight: 500; }
@@ -102,6 +103,7 @@
           </select>
         </div>
         <button id="go" type="submit">Continue with Face ID</button>
+        <a id="returning" href="#">Used Kitty before on another phone?</a>
       </form>
       <p id="status" role="status"></p>
       <footer>Your money stays yours until something is actually bought. You only pay for things you 👍, and never more than this.</footer>

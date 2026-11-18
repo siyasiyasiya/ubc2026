@@ -61,24 +61,27 @@ function setup(): void {
   }
 }
 
-/** Unlocks the passkey this browser used before, or creates a new one. */
-async function passkey(): Promise<WebAuthnCredential> {
-  const transport = toPasskeyTransport(clientUrl, clientKey);
-  const saved = localStorage.getItem(CREDENTIAL_KEY);
-  if (saved) {
-    return toWebAuthnCredential({ transport, mode: WebAuthnMode.Login, credentialId: saved });
-  }
-  try {
-    // A passkey synced from another device (iCloud Keychain) logs straight in.
-    return await toWebAuthnCredential({ transport, mode: WebAuthnMode.Login });
-  } catch {
-    // Shown by iOS when saving the passkey, so keep it human.
-    const username = `${name || "Kitty"} (${chatName}) ${crypto.randomUUID().slice(0, 4)}`;
-    return toWebAuthnCredential({ transport, mode: WebAuthnMode.Register, username });
-  }
+/** Circle usernames: 5-50 chars of [A-Za-z0-9_@.:+-]. iOS shows it when saving the passkey. */
+function passkeyUsername(): string {
+  const clean = (text: string) => text.replace(/[^A-Za-z0-9_@.:+-]+/g, "-").replace(/^-+|-+$/g, "");
+  const base = [clean(name), clean(chatName)].filter(Boolean).join("-").slice(0, 38) || "Kitty";
+  return `${base}-${crypto.randomUUID().slice(0, 6)}`;
 }
 
-async function submit(event: SubmitEvent): Promise<void> {
+/**
+ * Unlocks this browser's saved passkey, or makes a new one. A first-time member registers
+ * straight away: trying a login first and falling back would make Safari drop the tap that
+ * allows the Face ID prompt. Returning members on a new device use "Used Kitty before?".
+ */
+async function passkey(returning: boolean): Promise<WebAuthnCredential> {
+  const transport = toPasskeyTransport(clientUrl, clientKey);
+  const saved = localStorage.getItem(CREDENTIAL_KEY);
+  if (saved) return toWebAuthnCredential({ transport, mode: WebAuthnMode.Login, credentialId: saved });
+  if (returning) return toWebAuthnCredential({ transport, mode: WebAuthnMode.Login });
+  return toWebAuthnCredential({ transport, mode: WebAuthnMode.Register, username: passkeyUsername() });
+}
+
+async function submit(event: Event, returning = false): Promise<void> {
   event.preventDefault();
   const data = new FormData(form);
   const usd = String(data.get("amount") ?? "").trim();
@@ -89,7 +92,7 @@ async function submit(event: SubmitEvent): Promise<void> {
   button.disabled = true;
   try {
     show("Waiting for Face ID…");
-    const credential = await passkey();
+    const credential = await passkey(returning);
     localStorage.setItem(CREDENTIAL_KEY, credential.id);
 
     const transport = toModularTransport(`${clientUrl}/arcTestnet`, clientKey);
@@ -144,3 +147,4 @@ async function submit(event: SubmitEvent): Promise<void> {
 
 setup();
 form.addEventListener("submit", (e) => void submit(e));
+$("returning").addEventListener("click", (e) => void submit(e, true));
