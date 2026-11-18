@@ -1,0 +1,22 @@
+{
+  "name": "@gta/wallet",
+  "version": "0.0.0",
+  "description": "WalletAdapter implementations: pull each member's share within their recurring limit. Chain + provider undecided.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@gta/core": "workspace:*"
+  }
+}

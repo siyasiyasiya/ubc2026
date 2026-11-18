@@ -1,0 +1,21 @@
+{
+  "name": "@gta/server",
+  "version": "0.0.0",
+  "description": "Composition root: wires adapters into the core state machine and runs the agent process.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev": "node --experimental-strip-types src/index.ts",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@gta/agent": "workspace:*",
+    "@gta/core": "workspace:*",
+    "@gta/funding": "workspace:*",
+    "@gta/imessage": "workspace:*",
+    "@gta/purchase": "workspace:*",
+    "@gta/wallet": "workspace:*"
+  }
+}
