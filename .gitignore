@@ -12,3 +12,6 @@ contracts/broadcast/
 
 # logs / scratch
 *.log
+
+# Claude Code agent worktrees (transient)
+.claude/worktrees/
