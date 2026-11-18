@@ -7,25 +7,48 @@
  *  3. receive a tapback (👍) and see which message it targets
  *  4. receive a voice memo (for the ElevenLabs speech-to-text path)
  *
- * Run: npm run spike  (needs SPECTRUM_PROJECT_ID / SPECTRUM_PROJECT_SECRET in agent/.env)
+ * Modes (IMESSAGE_MODE in agent/.env):
+ *  - "local" (default): runs on this Mac through Messages.app, as whatever Apple ID is signed in.
+ *    Needs Full Disk Access for the terminal. No Photon account needed.
+ *  - "cloud": Photon Stable cloud line. Needs SPECTRUM_PROJECT_ID / SPECTRUM_PROJECT_SECRET.
+ *
+ * Safety: in local mode the bot can read every chat on the signed-in account, so it only REPLIES in
+ * chats listed in ALLOWED_SPACE_IDS (comma-separated). Every other message is logged with its space
+ * id and ignored, so you can copy the test group's id into the allowlist.
+ *
+ * Run: npm run spike
  */
 import { Spectrum } from "spectrum-ts";
 import { imessage } from "spectrum-ts/providers/imessage";
+import { localIMessage } from "@spectrum-ts/imessage-local";
 
-const app = await Spectrum({ providers: [imessage.config()] });
-console.log("Photon spike running. Text the line, post a photo, or 👍 a message.");
+const mode = process.env.IMESSAGE_MODE ?? "local";
+const allowed = new Set(
+  (process.env.ALLOWED_SPACE_IDS ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean),
+);
+
+const provider = mode === "cloud" ? imessage.config() : localIMessage.config();
+const app = await Spectrum({ providers: [provider] });
+console.log(`Photon spike running (${mode}). Allowlisted chats: ${allowed.size || "none yet"}`);
 
 for await (const [space, message] of app.messages) {
   if (message.direction === "outbound") continue;
 
-  const chatType = imessage(space).type; // "dm" | "group"
   const content = message.content;
-  console.log(`[${chatType}] ${content.type} from`, message.sender, "msg", message.id);
+  console.log(`[${space.id}] ${content.type} from`, message.sender, "msg", message.id);
+
+  if (mode === "local" && !allowed.has(space.id)) {
+    console.log("  not allowlisted, ignoring");
+    continue;
+  }
 
   try {
     switch (content.type) {
       case "text":
-        await space.send(`🤖 got it (${chatType}): "${content.text}"`);
+        await space.send(`🤖 treasury bot got: "${content.text}"`);
         break;
 
       case "attachment": {

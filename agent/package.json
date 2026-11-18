@@ -14,6 +14,7 @@
     "node": ">=22"
   },
   "dependencies": {
+    "@spectrum-ts/imessage-local": "^12.16.0",
     "spectrum-ts": "^12.16.0"
   },
   "devDependencies": {
