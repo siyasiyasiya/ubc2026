@@ -49,12 +49,12 @@ Owns: `packages/imessage`, `packages/agent`, `packages/purchase`.
 | Task | Status | Notes |
 | --- | --- | --- |
 | `PhotonChatPort` — post, image, 👍 reactions, DM | ⬜ todo | real `@photon-ai/imessage-kit`; needs a Mac + Full Disk Access |
-| `agent` — parse requests → intents | ⬜ todo | blocked on LLM + framework decision |
-| `agent` — read receipts → `Receipt` (pay-after) | ⬜ todo | `ReceiptReader` impl (vision) |
+| `agent` — parse requests → intents | ⬜ todo | Claude + Vercel AI SDK (`generateObject`) |
+| `agent` — read receipts → `Receipt` (pay-after) | ⬜ todo | `ReceiptReader` impl (Claude vision via AI SDK) |
 | `agent` — drive the state machine via ports | ⬜ todo | perform effects: post_preview, place_order, pull_shares |
-| `PurchaseAdapter` — **real** store checkout | ⬜ todo | DEMO-CRITICAL. Must be a real checkout, not mocked. |
-| **Decide:** LLM + agent framework | 🔲 decision | ask Siya before choosing |
-| **Decide:** first store + access method | 🔲 decision | official agent API vs browser automation |
+| `PurchaseAdapter` — **real** store checkout (Crossmint) | ⬜ todo | DEMO-CRITICAL. Crossmint Agent Checkouts API; real checkout, not mocked. |
+| ✅ **Decided:** LLM + framework | ✅ done | **Claude + Vercel AI SDK**, default model **Sonnet 5** (swappable). Needs Anthropic API key (not the Claude subscription). |
+| ✅ **Decided:** store + access method | ✅ done | **Crossmint** Agent Checkouts (universal catalog, buyer's own account via Browser Profiles). agent-browser kept as a swappable fallback behind `PurchaseAdapter`. |
 
 ## Shared — coordinate before touching
 
