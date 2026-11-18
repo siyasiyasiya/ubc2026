@@ -51,11 +51,17 @@ contract GroupTreasuryTest is Test {
         _join(tristan, 50 * USD);
     }
 
+    uint256 tickets;
+
+    function _t() internal returns (bytes32) {
+        return keccak256(abi.encode("ticket", ++tickets));
+    }
+
     function _join(address who, uint128 limit) internal {
         usdc.mint(who, 1_000 * USD);
         vm.startPrank(who);
         usdc.approve(address(treasury), type(uint256).max);
-        treasury.join(G, limit, GroupTreasury.Period.Weekly);
+        treasury.join(G, limit, GroupTreasury.Period.Weekly, _t());
         vm.stopPrank();
     }
 
@@ -85,7 +91,7 @@ contract GroupTreasuryTest is Test {
     function test_join_revertsTwice() public {
         vm.prank(neena);
         vm.expectRevert(GroupTreasury.AlreadyMember.selector);
-        treasury.join(G, 1, GroupTreasury.Period.Weekly);
+        treasury.join(G, 1, GroupTreasury.Period.Weekly, _t());
     }
 
     function test_leave_zeroesRemaining() public {
@@ -408,14 +414,14 @@ contract GroupTreasuryTest is Test {
     function test_join_canRejoinAfterLeaving() public {
         vm.startPrank(neena);
         treasury.leave(G);
-        treasury.join(G, 5 * USD, GroupTreasury.Period.Monthly);
+        treasury.join(G, 5 * USD, GroupTreasury.Period.Monthly, _t());
         vm.stopPrank();
         assertEq(treasury.remaining(G, neena), 5 * USD);
     }
 
     function test_groups_haveSeparateMembersAndLimits() public {
         vm.prank(siya);
-        treasury.join(TRIP, 300 * USD, GroupTreasury.Period.Monthly);
+        treasury.join(TRIP, 300 * USD, GroupTreasury.Period.Monthly, _t());
         assertEq(treasury.remaining(TRIP, siya), 300 * USD);
         assertEq(treasury.remaining(TRIP, neena), 0); // not in the trip chat
 
@@ -428,7 +434,7 @@ contract GroupTreasuryTest is Test {
 
     function test_propose_revertsForMemberOfAnotherGroup() public {
         vm.prank(stranger);
-        treasury.join(TRIP, 100 * USD, GroupTreasury.Period.Weekly);
+        treasury.join(TRIP, 100 * USD, GroupTreasury.Period.Weekly, _t());
         address[] memory who = new address[](1);
         who[0] = stranger;
         uint256[] memory shares = new uint256[](1);
@@ -438,20 +444,76 @@ contract GroupTreasuryTest is Test {
         treasury.propose(ID, G, neena, who, shares, uint64(block.timestamp + 1));
     }
 
+    // --- invite tickets ---
+
+    function test_join_ticketIsSingleUse() public {
+        bytes32 ticket = keccak256("invite");
+        vm.prank(stranger);
+        treasury.join(TRIP, USD, GroupTreasury.Period.Weekly, ticket);
+        vm.prank(siya);
+        vm.expectRevert(GroupTreasury.TicketUsed.selector);
+        treasury.join(TRIP, USD, GroupTreasury.Period.Weekly, ticket);
+    }
+
+    function test_join_emitsTicket() public {
+        bytes32 ticket = keccak256("invite");
+        vm.expectEmit(address(treasury));
+        emit GroupTreasury.Joined(TRIP, stranger, USD, GroupTreasury.Period.Weekly, ticket);
+        vm.prank(stranger);
+        treasury.join(TRIP, USD, GroupTreasury.Period.Weekly, ticket);
+    }
+
+    // --- relayed 👍 ---
+
+    function test_approveFor_operatorRelaysThumbsUp() public {
+        _proposeDinner();
+        vm.startPrank(operator);
+        treasury.approveFor(ID, siya);
+        treasury.approveFor(ID, tristan);
+        vm.stopPrank();
+        treasury.settle(ID);
+        assertEq(usdc.balanceOf(neena), 1_060 * USD);
+    }
+
+    function test_approveFor_revertsForNonOperator() public {
+        _proposeDinner();
+        vm.prank(siya);
+        vm.expectRevert(GroupTreasury.NotOperator.selector);
+        treasury.approveFor(ID, tristan);
+    }
+
+    function test_approveFor_revertsForOutsider() public {
+        _proposeDinner();
+        vm.prank(operator);
+        vm.expectRevert(GroupTreasury.NotParticipant.selector);
+        treasury.approveFor(ID, stranger);
+    }
+
+    function test_approveFor_revertsAfterMemberApproved() public {
+        _proposeDinner();
+        vm.prank(siya);
+        treasury.approve(ID);
+        vm.prank(operator);
+        vm.expectRevert(GroupTreasury.AlreadyApproved.selector);
+        treasury.approveFor(ID, siya);
+    }
+
     // --- the headline safety property ---
 
-    /// However the agent is prompted, the operator key alone can't move a member's money.
-    function testFuzz_operatorAloneCannotPull(uint256 amount) public {
-        amount = bound(amount, 1, 50 * USD);
+    /// However the agent is prompted, the operator key alone can never take more from a member
+    /// than what's left of the limit the member signed for that group.
+    function testFuzz_operatorAloneIsCappedBySignedLimit(uint256 amount) public {
+        amount = bound(amount, 1, 1_000 * USD);
         address[] memory who = new address[](1);
         who[0] = siya;
         uint256[] memory shares = new uint256[](1);
         shares[0] = amount;
         vm.startPrank(operator);
         treasury.propose(ID, G, operator, who, shares, uint64(block.timestamp + 1 days));
-        vm.expectRevert(GroupTreasury.NotFullyApproved.selector);
-        treasury.settle(ID);
+        treasury.approveFor(ID, siya);
         vm.stopPrank();
-        assertEq(usdc.balanceOf(siya), 1_000 * USD);
+        treasury.settle(ID);
+        assertLe(usdc.balanceOf(operator), 50 * USD);
+        assertGe(usdc.balanceOf(siya), 950 * USD);
     }
 }
