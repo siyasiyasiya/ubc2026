@@ -230,6 +230,27 @@ describe("pay-after over estimate", () => {
   });
 });
 
+describe("pay-after with no estimate", () => {
+  it("never settles without a 👍 from everyone in the split", () => {
+    const awaitingReceipt: RequestState = { name: "awaiting_receipt", participants: ["alice", "carol"] };
+    const r = transition(awaitingReceipt, {
+      type: "receipt_read",
+      receipt: receipt(usdc(42)),
+      split: evenSplit({ total: usdc(42), participantIds: ["alice", "carol"], payeeMemberId: "alice" }),
+      screenshot: screenshot(),
+      tolerance: usdc(5),
+      deadline: 7000,
+    });
+    expect(r.state.name).toBe("awaiting_approval");
+    expect(r.effects.map((e) => e.type)).toEqual(["post_preview"]);
+
+    let state = transition(r.state, { type: "reaction", memberId: "alice", emoji: "👍", added: true, at: 1 }).state;
+    expect(state.name).toBe("awaiting_approval");
+    state = transition(state, { type: "reaction", memberId: "carol", emoji: "👍", added: true, at: 2 }).state;
+    expect(state.name).toBe("settling");
+  });
+});
+
 // --- controls ---------------------------------------------------------------
 
 describe("cancel", () => {
