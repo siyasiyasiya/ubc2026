@@ -224,6 +224,24 @@ describe("mapReactionRow", () => {
   it("returns null for a non-reaction row", () => {
     expect(mapReactionRow(makeMessage())).toBeNull();
   });
+
+  it("strips the p:N/ prefix so the target matches the message id", () => {
+    const mapped = mapReactionRow(makeReactionRow({ targetMessageId: "p:0/target-guid-1" }));
+    expect(mapped?.targetMessageId).toBe("target-guid-1");
+  });
+
+  it("looks up the sender when a group reaction arrives with participant null", () => {
+    // Seen live: a 👍 from a group member came through with participant null.
+    const row = { ...makeReactionRow({ kind: "like" }), participant: null };
+    expect(mapReactionRow(row)).toBeNull();
+    const mapped = mapReactionRow(row, (id) => (id === row.id ? "+18475550000" : null));
+    expect(mapped?.senderHandle).toBe("+18475550000");
+  });
+
+  it("ignores my own reactions", () => {
+    const row = { ...makeReactionRow({ kind: "like" }), isFromMe: true };
+    expect(mapReactionRow(row, () => "+15550000000")).toBeNull();
+  });
 });
 
 // ----------------------------------------------------------------------------
@@ -231,13 +249,24 @@ describe("mapReactionRow", () => {
 // ----------------------------------------------------------------------------
 
 describe("PhotonChatPort send paths", () => {
-  it("postMessage sends { to, text } and returns a ref carrying the chatId", async () => {
+  it("postMessage sends { to, text } and falls back to a local ref if the row never appears", async () => {
     const sdk = new FakeSdk();
-    const port = new PhotonChatPort({ sdk });
+    const port = new PhotonChatPort({ sdk, sentIdTimeoutMs: 10 });
     const ref = await port.postMessage("iMessage;+;chatABC", "hello group");
     expect(sdk.sends).toEqual([{ to: "iMessage;+;chatABC", text: "hello group" }]);
     expect(ref.chatId).toBe("iMessage;+;chatABC");
     expect(ref.id).toMatch(/^local:/);
+  });
+
+  it("postMessage returns the real chat.db id once the sent row shows up", async () => {
+    const sdk = new FakeSdk();
+    const port = new PhotonChatPort({ sdk, sentIdTimeoutMs: 1000 });
+    const pending = port.postMessage("iMessage;+;chatABC", "🧾 #1 Dinner");
+    await Promise.resolve();
+    // Another of my messages in a different chat doesn't match; the right one does.
+    sdk.watchEvents?.onFromMeMessage?.(makeMessage({ id: "other", chatId: "iMessage;+;elsewhere", text: "🧾 #1 Dinner", isFromMe: true }));
+    sdk.watchEvents?.onFromMeMessage?.(makeMessage({ id: "card-guid", chatId: "iMessage;+;chatABC", text: "🧾 #1 Dinner", isFromMe: true }));
+    expect(await pending).toEqual({ id: "card-guid", chatId: "iMessage;+;chatABC" });
   });
 
   it("postImage sends the local file path as an attachment with an optional caption", async () => {

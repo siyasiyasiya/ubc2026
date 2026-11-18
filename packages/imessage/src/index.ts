@@ -19,6 +19,10 @@
  */
 
 import { randomUUID } from "node:crypto";
+import os from "node:os";
+import path from "node:path";
+
+import Database from "better-sqlite3";
 
 import type {
   ChatPort,
@@ -60,6 +64,42 @@ export interface PhotonChatPortConfig {
   sdk?: PhotonSdk;
   /** Surfaces watcher/dispatch errors (ChatPort has no error channel). */
   onError?: (error: Error) => void;
+  /**
+   * Looks up who sent a message by its id when the SDK leaves `participant` null, which it does
+   * for reactions in group chats. Defaults to a read-only chat.db lookup when the real SDK is used;
+   * pass `null` to disable.
+   */
+  resolveSender?: SenderResolver | null;
+  /** How long postMessage waits for the sent row to appear in chat.db to learn its id. */
+  sentIdTimeoutMs?: number;
+}
+
+/** Returns the sender's handle for a message id, or null if unknown. */
+export type SenderResolver = (messageId: string) => string | null;
+
+/** Reaction targets look like "p:0/<guid>"; message ids are the bare guid. */
+export function normalizeMessageId(id: string): string {
+  return id.replace(/^p:\d+\//, "");
+}
+
+/** Read-only chat.db lookup of a message's sender handle (needs Full Disk Access). */
+export function chatDbSenderResolver(databasePath?: string): SenderResolver {
+  let db: Database.Database | undefined;
+  let stmt: Database.Statement<[string], { handle: string }> | undefined;
+  return (messageId) => {
+    try {
+      db ??= new Database(databasePath ?? path.join(os.homedir(), "Library/Messages/chat.db"), {
+        readonly: true,
+        fileMustExist: true,
+      });
+      stmt ??= db.prepare(
+        "SELECT h.id AS handle FROM message m JOIN handle h ON h.ROWID = m.handle_id WHERE m.guid = ?",
+      );
+      return stmt.get(messageId)?.handle ?? null;
+    } catch {
+      return null;
+    }
+  };
 }
 
 type MessageHandler = (msg: IncomingMessage) => void;
@@ -83,7 +123,10 @@ const THUMBS_UP = "👍";
  * This is the one spot to correct if the SDK's reaction shape changes in a
  * future version — keep the mapping isolated here.
  */
-export function mapReactionRow(message: Message): IncomingReaction | null {
+export function mapReactionRow(
+  message: Message,
+  resolveSender?: SenderResolver,
+): IncomingReaction | null {
   const reaction: Reaction | null = message.reaction;
   if (!reaction) return null;
 
@@ -96,13 +139,16 @@ export function mapReactionRow(message: Message): IncomingReaction | null {
 
   // Without a target we cannot attribute the approval to a posted message.
   if (reaction.targetMessageId === null) return null;
-  // Need the conversation + the handle that reacted to route/attribute it.
-  if (message.chatId === null || message.participant === null) return null;
+  // Need the conversation + the handle that reacted to route/attribute it. Group reactions
+  // arrive with participant null, so fall back to the chat.db lookup.
+  if (message.chatId === null || message.isFromMe) return null;
+  const sender = message.participant ?? resolveSender?.(message.id) ?? null;
+  if (sender === null) return null;
 
   return {
     chatId: message.chatId,
-    senderHandle: message.participant,
-    targetMessageId: reaction.targetMessageId,
+    senderHandle: sender,
+    targetMessageId: normalizeMessageId(reaction.targetMessageId),
     emoji: THUMBS_UP,
     added: !reaction.isRemoved,
     at: message.createdAt.getTime(),
@@ -113,7 +159,10 @@ export function mapReactionRow(message: Message): IncomingReaction | null {
  * Map a watcher `Message` row to a core `IncomingMessage`, or `null` when the
  * row cannot be routed (missing chat) or is actually a reaction row.
  */
-export function mapMessageRow(message: Message): IncomingMessage | null {
+export function mapMessageRow(
+  message: Message,
+  resolveSender?: SenderResolver,
+): IncomingMessage | null {
   // Reaction rows are never surfaced as plain messages.
   if (message.reaction) return null;
   if (message.chatId === null) return null;
@@ -128,7 +177,7 @@ export function mapMessageRow(message: Message): IncomingMessage | null {
 
   return {
     chatId: message.chatId,
-    senderHandle: message.participant ?? "",
+    senderHandle: message.participant ?? resolveSender?.(message.id) ?? "",
     text: message.text ?? "",
     attachments,
     at: message.createdAt.getTime(),
@@ -139,6 +188,10 @@ export function mapMessageRow(message: Message): IncomingMessage | null {
 export class PhotonChatPort implements ChatPort {
   private readonly sdk: PhotonSdk;
   private readonly onError: (error: Error) => void;
+  private readonly resolveSender: SenderResolver | undefined;
+  private readonly sentIdTimeoutMs: number;
+  /** Sends waiting to learn their chat.db id from the watcher's from-me rows. */
+  private readonly pendingSends: { chatId: string; text: string; resolve: (id: string) => void }[] = [];
 
   private readonly messageHandlers = new Set<MessageHandler>();
   private readonly reactionHandlers = new Set<ReactionHandler>();
@@ -148,6 +201,12 @@ export class PhotonChatPort implements ChatPort {
 
   constructor(config: PhotonChatPortConfig = {}) {
     this.sdk = config.sdk ?? new IMessageSDK(config.sdkConfig);
+    this.resolveSender =
+      config.resolveSender === null
+        ? undefined
+        : (config.resolveSender ??
+          (config.sdk ? undefined : chatDbSenderResolver(config.sdkConfig?.databasePath)));
+    this.sentIdTimeoutMs = config.sentIdTimeoutMs ?? 10_000;
     this.onError =
       config.onError ??
       ((error) => {
@@ -157,8 +216,12 @@ export class PhotonChatPort implements ChatPort {
   }
 
   async postMessage(chatId: string, text: string): Promise<MessageRef> {
+    // Start listening before sending so a fast chat.db row isn't missed.
+    const sentId = this.awaitSentId(chatId, text);
+    this.ensureWatching();
     await this.sdk.send({ to: chatId, text });
-    return this.makeRef(chatId);
+    const id = await sentId;
+    return id ? { id, chatId } : this.makeRef(chatId);
   }
 
   async postImage(chatId: string, image: ImageRef, caption?: string): Promise<MessageRef> {
@@ -199,13 +262,40 @@ export class PhotonChatPort implements ChatPort {
   }
 
   /**
-   * `send()` resolves on AppleScript dispatch and never returns the chat.db
-   * guid, so we mint a local ref. Correlating a posted message to the guid that
-   * later reactions target requires observing `onFromMeMessage` on the watcher —
-   * out of scope here and only observable on the Mac at runtime.
+   * Fallback when the sent row's guid wasn't seen in time (see `awaitSentId`). A 👍 on such a
+   * message can't be matched to it.
    */
   private makeRef(chatId: string): MessageRef {
     return { id: `local:${randomUUID()}`, chatId };
+  }
+
+  /**
+   * `send()` resolves on AppleScript dispatch and never returns the chat.db guid. The watcher's
+   * from-me rows do carry it, so wait for the next from-me row in this chat with the same text.
+   * Resolves undefined after `sentIdTimeoutMs`.
+   */
+  private awaitSentId(chatId: string, text: string): Promise<string | undefined> {
+    return new Promise((resolve) => {
+      const entry = { chatId, text, resolve: (id: string) => resolve(id) };
+      this.pendingSends.push(entry);
+      setTimeout(() => {
+        const i = this.pendingSends.indexOf(entry);
+        if (i >= 0) {
+          this.pendingSends.splice(i, 1);
+          resolve(undefined);
+        }
+      }, this.sentIdTimeoutMs).unref?.();
+    });
+  }
+
+  private matchSent(message: Message): void {
+    if (message.reaction || message.text === null) return;
+    const i = this.pendingSends.findIndex(
+      (p) => p.text === message.text && (message.chatId === null || p.chatId === message.chatId),
+    );
+    if (i < 0) return;
+    const [entry] = this.pendingSends.splice(i, 1);
+    entry?.resolve(message.id);
   }
 
   /** Start the single shared watcher on first subscription (idempotent). */
@@ -215,6 +305,7 @@ export class PhotonChatPort implements ChatPort {
     this.sdk
       .startWatching({
         onIncomingMessage: (message) => this.dispatch(message),
+        onFromMeMessage: (message) => this.matchSent(message),
         onError: (error) => this.onError(error),
       })
       .then(() => {
@@ -229,13 +320,13 @@ export class PhotonChatPort implements ChatPort {
   /** Route one watcher row to reaction or message handlers (never both). */
   private dispatch(message: Message): void {
     if (message.reaction) {
-      const reaction = mapReactionRow(message);
+      const reaction = mapReactionRow(message, this.resolveSender);
       if (reaction) {
         for (const handler of this.reactionHandlers) handler(reaction);
       }
       return; // reaction rows are not messages
     }
-    const msg = mapMessageRow(message);
+    const msg = mapMessageRow(message, this.resolveSender);
     if (!msg) return;
     for (const handler of this.messageHandlers) handler(msg);
   }
