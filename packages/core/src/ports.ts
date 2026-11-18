@@ -1,0 +1,155 @@
+/**
+ * Ports: the interfaces the core depends on. Everything undecided (chain,
+ * wallet provider, stores, LLM, funding, chat provider) plugs in here without
+ * touching the state machine. This is the dependency-inversion seam.
+ */
+
+import type { Usdc } from "./money.js";
+import type {
+  Cart,
+  CheckoutMethod,
+  ImageRef,
+  Member,
+  Receipt,
+  Screenshot,
+  SpendingLimit,
+} from "./types.js";
+
+// ----------------------------------------------------------------------------
+// PurchaseAdapter — one per store. Stores plug in without changing the core.
+// ----------------------------------------------------------------------------
+
+export interface BuildCartInput {
+  /** Plain-language ask or a structured item list the agent resolved. */
+  requestText: string;
+  items?: Array<{ name: string; quantity?: number }>;
+  /** Which account / card the order should check out against. */
+  checkout: CheckoutMethod;
+}
+
+export interface PreviewResult {
+  /** Checkout screenshot to post to the group chat for 👍 approval. */
+  screenshot: Screenshot;
+  /** The amount that will actually be charged. */
+  total: Usdc;
+  /** The cart as priced at preview time (may differ from buildCart if the
+   *  store re-priced). */
+  cart: Cart;
+}
+
+export interface PlaceOrderInput {
+  cart: Cart;
+  /** For a Link checkout, the treasurer's spend approval must already be done;
+   *  this carries whatever token/proof the checkout layer needs. */
+  checkoutAuth?: unknown;
+}
+
+/**
+ * A store integration. Implementations may use an official agent API or
+ * browser automation — the core does not care which. The demo store's adapter
+ * MUST perform a real checkout (no mock).
+ */
+export interface PurchaseAdapter {
+  readonly store: string;
+  buildCart(input: BuildCartInput): Promise<Cart>;
+  /** Produce the screenshot + final total shown to the group before approval. */
+  preview(cart: Cart): Promise<PreviewResult>;
+  /** Place the real order and return a receipt. */
+  placeOrder(input: PlaceOrderInput): Promise<Receipt>;
+}
+
+// ----------------------------------------------------------------------------
+// WalletAdapter — pulls each member's share within their limit. Swappable so
+// the chain and wallet provider can change later.
+// ----------------------------------------------------------------------------
+
+/** Where a pulled share is sent (the payer). */
+export type Payee =
+  | { kind: "wallet"; address: string }
+  | { kind: "card"; reference: string };
+
+export interface LimitStatus {
+  limit: SpendingLimit;
+  /** How much of the limit remains in the current period. */
+  remaining: Usdc;
+  resetsAt?: number;
+}
+
+export interface PullParams {
+  from: Member;
+  to: Payee;
+  amount: Usdc;
+  /** Human-readable memo, e.g. "Dinner at Uchi — your share". */
+  memo?: string;
+  /** Idempotency key so a retried pull never double-charges. */
+  idempotencyKey: string;
+}
+
+export interface PullOutcome {
+  status: "pulled" | "failed";
+  txRef?: string;
+  reason?: string;
+}
+
+/**
+ * Moves a member's share from their own wallet to the payer, never exceeding
+ * the member's recurring limit. How the limit is enforced (on-chain spend
+ * permissions, a provider policy, or signed permits) is an implementation
+ * detail hidden behind this interface.
+ */
+export interface WalletAdapter {
+  readonly id: string;
+  getLimitStatus(member: Member): Promise<LimitStatus>;
+  /** Cheap pre-check used when building the split preview. */
+  canPull(member: Member, amount: Usdc): Promise<{ ok: boolean; remaining: Usdc }>;
+  pull(params: PullParams): Promise<PullOutcome>;
+}
+
+// ----------------------------------------------------------------------------
+// ChatPort — the group chat (implemented by the Photon/iMessage adapter).
+// ----------------------------------------------------------------------------
+
+export interface MessageRef {
+  id: string;
+  chatId: string;
+}
+
+export interface IncomingMessage {
+  chatId: string;
+  /** Sender's handle as the chat provider reports it. */
+  senderHandle: string;
+  text: string;
+  attachments: ImageRef[];
+  at: number;
+}
+
+export interface IncomingReaction {
+  chatId: string;
+  senderHandle: string;
+  /** The message the reaction is attached to. */
+  targetMessageId: string;
+  emoji: string;
+  /** False when a reaction is removed. */
+  added: boolean;
+  at: number;
+}
+
+export type Unsubscribe = () => void;
+
+export interface ChatPort {
+  postMessage(chatId: string, text: string): Promise<MessageRef>;
+  postImage(chatId: string, image: ImageRef, caption?: string): Promise<MessageRef>;
+  /** One-on-one text to a member. */
+  sendDirectMessage(handle: string, text: string): Promise<MessageRef>;
+  onMessage(handler: (msg: IncomingMessage) => void): Unsubscribe;
+  onReaction(handler: (reaction: IncomingReaction) => void): Unsubscribe;
+}
+
+// ----------------------------------------------------------------------------
+// ReceiptReader — turns a receipt photo into a structured Receipt (vision/LLM
+// provider undecided).
+// ----------------------------------------------------------------------------
+
+export interface ReceiptReader {
+  read(image: ImageRef): Promise<Receipt>;
+}
