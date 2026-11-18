@@ -48,14 +48,15 @@ function show(text: string, kind: "info" | "error" | "done" = "info"): void {
 function setup(): void {
   $("title").textContent = joining ? `Join ${chatName}` : `Your limit for ${chatName}`;
   $("lede").textContent = joining
-    ? `${name ? `Hi ${name}. ` : ""}Pick the most the group can ever pull from you for ${chatName}. It resets on its own, and nobody can raise it but you.`
-    : `Change the most ${chatName} can pull from you. Raising it needs your Face ID.`;
+    ? `${name ? `Hi ${name}! ` : ""}Set the most ${chatName} can spend from you. It resets on its own, and only you can raise it.`
+    : `Change the most ${chatName} can spend from you.`;
   button.textContent = joining ? "Join with Face ID" : "Save with Face ID";
   if (!isHex(group) || group.length !== 66 || (joining && (!isHex(ticket) || ticket.length !== 66))) {
-    show("This link is incomplete. Ask the treasury in your chat for a new one.", "error");
+    show("This link is incomplete. Ask Kitty in your chat for a new one.", "error");
     button.disabled = true;
   } else if (!clientKey || !treasury) {
-    show("This page isn't configured yet (missing client key or contract address).", "error");
+    console.error("missing VITE_CLIENT_KEY or VITE_TREASURY_ADDRESS");
+    show("Something's not set up on our end. Try again in a bit.", "error");
     button.disabled = true;
   }
 }
@@ -71,7 +72,8 @@ async function passkey(): Promise<WebAuthnCredential> {
     // A passkey synced from another device (iCloud Keychain) logs straight in.
     return await toWebAuthnCredential({ transport, mode: WebAuthnMode.Login });
   } catch {
-    const username = `${name || "member"}-${crypto.randomUUID().slice(0, 8)}`;
+    // Shown by iOS when saving the passkey, so keep it human.
+    const username = `${name || "Kitty"} (${chatName}) ${crypto.randomUUID().slice(0, 4)}`;
     return toWebAuthnCredential({ transport, mode: WebAuthnMode.Register, username });
   }
 }
@@ -112,15 +114,16 @@ async function submit(event: SubmitEvent): Promise<void> {
         : { to: treasury, data: encodeFunctionData({ abi: treasuryAbi, functionName: "setLimit", args: [group as Hex, limit, period] }) },
     );
 
-    show("Saving on Arc…");
+    show("Saving…");
     const hash = await bundler.sendUserOperation({ calls, paymaster: true });
     const { receipt, success } = await bundler.waitForUserOperationReceipt({ hash });
     if (!success) throw new Error("The transaction didn't go through.");
 
+    // Chain details are for debugging only; members never see them.
+    console.info("account", account.address, "tx", receipt.transactionHash);
     const per = period === 1 ? "month" : "week";
     show(
-      `${joining && !alreadyIn ? `You're in ${chatName}` : "Saved"}: up to $${usd} a ${per}. You can go back to Messages.\n` +
-        `Wallet ${account.address.slice(0, 6)}…${account.address.slice(-4)} · tx ${receipt.transactionHash.slice(0, 10)}…`,
+      `${joining && !alreadyIn ? `You're in ${chatName}! ` : "Saved. "}Up to $${usd} a ${per}.\nYou can head back to Messages.`,
       "done",
     );
     form.hidden = true;
@@ -129,10 +132,10 @@ async function submit(event: SubmitEvent): Promise<void> {
     const message = (err as Error).message ?? String(err);
     show(
       /TicketUsed/.test(message)
-        ? "This invite was already used. Ask the treasury in your chat for a new link."
+        ? "This invite was already used. Ask Kitty in your chat for a new link."
         : /NotAllowedError|cancel/i.test(message)
           ? "Face ID was cancelled. Tap the button to try again."
-          : `Something went wrong: ${message.split("\n")[0]}`,
+          : "That didn't go through. Tap the button to try again.",
       "error",
     );
     button.disabled = false;
