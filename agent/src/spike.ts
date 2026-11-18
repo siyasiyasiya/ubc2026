@@ -23,6 +23,7 @@ import { imessage } from "spectrum-ts/providers/imessage";
 import { localIMessage } from "@spectrum-ts/imessage-local";
 
 const mode = process.env.IMESSAGE_MODE ?? "local";
+const BOT_PREFIXES = ["🤖", "🧾", "👀", "🎙️"];
 const allowed = new Set(
   (process.env.ALLOWED_SPACE_IDS ?? "")
     .split(",")
@@ -44,10 +45,23 @@ for await (const [space, message] of app.messages) {
   if (message.direction === "outbound") continue;
 
   const content = message.content;
+  // In local mode, messages from the signed-in account (including the bot's own replies) can arrive
+  // as "inbound" with an empty sender id. Skip them so the bot never answers itself in a loop.
+  const fromSelf = !message.sender?.id;
+  const isBotEcho = content.type === "text" && BOT_PREFIXES.some((p) => content.text.startsWith(p));
+  if (fromSelf || isBotEcho) {
+    console.log(`[${space.id}] skipped own message (${content.type})`);
+    continue;
+  }
   console.log(`[${space.id}] ${content.type} from`, message.sender, "msg", message.id);
 
   if (mode === "local" && !allowed.has(space.id)) {
-    console.log("  not allowlisted, ignoring");
+    // Never log other chats' text. A "#treasury" message marks the chat to allowlist.
+    if (content.type === "text" && content.text.toLowerCase().includes("#treasury")) {
+      console.log(`  CLAIM: add ${space.id} to ALLOWED_SPACE_IDS`);
+    } else {
+      console.log("  not allowlisted, ignoring");
+    }
     continue;
   }
 
