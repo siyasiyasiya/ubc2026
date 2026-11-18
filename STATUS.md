@@ -6,11 +6,9 @@ tested independently — each against the other side's stub.
 
 ## Owners
 
-> Replace the GitHub handles with the real ones. Swap tracks freely.
-
 | Track | Person | GitHub |
 | --- | --- | --- |
-| **A — Money & onchain** | _TBD_ | `@person-a` |
+| **A — Money & onchain** | Neena | `@neenanaikar` |
 | **B — Agent, chat & commerce** | Siya | `@siyasiyasiya` |
 
 ## Git workflow
