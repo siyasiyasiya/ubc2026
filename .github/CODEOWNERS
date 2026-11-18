@@ -1,0 +1,20 @@
+# Code ownership → auto-requests the right reviewer on PRs and marks who owns what.
+# Swap tracks freely by editing the handles below.
+#
+# Track A — Money & onchain:        @neenanaikar
+# Track B — Agent, chat & commerce: @siyasiyasiya
+
+# Shared foundation — both owners review changes (interfaces are a contract).
+/packages/core/        @siyasiyasiya @neenanaikar
+/apps/server/          @siyasiyasiya @neenanaikar
+/STATUS.md             @siyasiyasiya @neenanaikar
+
+# Track A — Money & onchain
+/contracts/            @neenanaikar
+/packages/wallet/      @neenanaikar
+/packages/funding/     @neenanaikar
+
+# Track B — Agent, chat & commerce
+/packages/imessage/    @siyasiyasiya
+/packages/agent/       @siyasiyasiya
+/packages/purchase/    @siyasiyasiya
