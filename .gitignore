@@ -12,3 +12,6 @@ contracts/broadcast/
 
 # logs / scratch
 *.log
+
+# Circle entity-secret recovery files
+recovery_file_*.dat
