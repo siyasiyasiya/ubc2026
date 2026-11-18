@@ -17,6 +17,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@gta/core": "workspace:*"
+    "@gta/core": "workspace:*",
+    "@photon-ai/imessage-kit": "^3.0.0",
+    "better-sqlite3": "^13.2.0"
   }
 }
