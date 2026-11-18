@@ -14,9 +14,11 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@gta/core": "workspace:*"
+    "@anthropic-ai/sdk": "1.10.0",
+    "@gta/core": "workspace:*",
+    "zod": "4.6.7"
   }
 }

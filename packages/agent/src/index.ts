@@ -1,30 +1,15 @@
 /**
- * @gta/agent — the LLM brain.
+ * @gta/agent — the LLM brain (Claude, via the Anthropic SDK tool runner).
  *
- * SKELETON. Responsibilities once built:
- *   - Parse plain-language chat requests into structured intents
- *     ("we're out of paper towels" -> items; "dinner Friday?" -> pay_after).
- *   - Decide the SpendFlow and which store/PurchaseAdapter to use.
- *   - Read receipts via a ReceiptReader and compute splits.
- *   - Drive the core state machine, performing effects through the ports.
+ * - `runTurn`: reads the group chat and decides what to say and which action to take. It can only
+ *   ask the app to propose a split, set the sender's own limit, or cancel a request. It never moves
+ *   money; the app and the core state machine decide that.
+ * - `ClaudeReceiptReader`: the core `ReceiptReader` port, reading receipt photos with vision.
  *
- * DECISION NEEDED before this becomes real: LLM + agent framework.
- * Kept deliberately thin so the model/framework is swappable.
+ * Needs ANTHROPIC_API_KEY. Model: CLAUDE_MODEL (default claude-opus-5-5), effort: AGENT_EFFORT
+ * (default low, so replies feel instant).
  */
 
-import type { Request, SpendFlow } from "@gta/core";
-
-const NOT_IMPLEMENTED = "not implemented: @gta/agent skeleton — LLM + framework undecided";
-
-export interface ParsedIntent {
-  flow: SpendFlow;
-  items?: Array<{ name: string; quantity?: number }>;
-  store?: string;
-  /** Free-form notes the agent extracted (participants, timing, etc.). */
-  notes?: string;
-}
-
-/** STUB. Turns a raw chat request into a structured intent. */
-export async function parseRequest(_request: Request): Promise<ParsedIntent> {
-  throw new Error(NOT_IMPLEMENTED);
-}
+export { NO_REPLY, runTurn, type TreasuryActions, type TurnInput } from "./brain.js";
+export { CHAT_EFFORT, MODEL } from "./claude.js";
+export { ClaudeReceiptReader, NotAReceiptError } from "./receipt.js";

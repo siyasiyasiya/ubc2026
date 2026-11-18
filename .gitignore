@@ -28,5 +28,6 @@ contracts/broadcast/
 # Claude Code personal settings
 .claude/settings.local.json
 
+
 # Bot state
-agent/data/
+apps/server/data/
