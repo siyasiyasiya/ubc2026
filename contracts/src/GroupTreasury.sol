@@ -6,14 +6,17 @@ interface IERC20 {
 }
 
 /// @title GroupTreasury
-/// @notice One contract per group chat. Money stays in each member's own wallet; when a split is
-/// approved by everyone in it, each share is pulled straight to whoever paid, never more than what
-/// is left of that member's recurring (weekly or monthly) limit.
+/// @notice One deployment serves every group chat. A group is keyed by a hash of its chat id, and
+/// membership and limits are per group, so the same person can be in several chats with a
+/// different limit in each, and chats can gain and lose members over time. Money stays in each
+/// member's own wallet (one USDC approval to this contract covers all their groups); when a split
+/// is approved by everyone in it, each share is pulled straight to whoever paid, never more than
+/// what is left of that member's recurring limit in that group.
 ///
-/// Trust model: the operator is the chat agent's key. It can propose splits and LOWER a member's
-/// limit (a chat "lower my limit" is always safe to honour), but it can never raise a limit,
-/// approve on a member's behalf, or send money anywhere except to the payee of an approved split.
-/// Raising a limit and approving a split are transactions from the member's own wallet.
+/// Trust model: the operator is the chat agent's key. It can propose splits, LOWER a member's
+/// limit, and remove someone who left the chat (all of which only reduce what can be pulled). It
+/// can never raise a limit, add a member, approve on a member's behalf, or send money anywhere
+/// except to the payee of a split everyone approved. Those are transactions from members' wallets.
 contract GroupTreasury {
     enum Period {
         Weekly,
@@ -37,6 +40,7 @@ contract GroupTreasury {
 
     struct Spend {
         Status status;
+        bytes32 group;
         address payee;
         uint64 deadline;
         uint32 approvalsNeeded;
@@ -54,16 +58,25 @@ contract GroupTreasury {
     IERC20 public immutable usdc;
     address public immutable operator;
 
-    mapping(address => Member) public members;
+    /// members[group][wallet]
+    mapping(bytes32 => mapping(address => Member)) public members;
     mapping(bytes32 => Spend) internal spends;
     mapping(bytes32 => mapping(address => bool)) public approved;
-    /// debts[debtor][creditor]: shares that could not be pulled.
+    /// debts[debtor][creditor]: shares that could not be pulled, across all groups.
     mapping(address => mapping(address => uint256)) public debts;
 
-    event Joined(address indexed member, uint256 limit, Period period);
-    event Left(address indexed member);
-    event LimitSet(address indexed member, uint256 limit, Period period, address indexed by);
-    event SpendProposed(bytes32 indexed id, address indexed payee, uint256 total, uint64 deadline);
+    event Joined(bytes32 indexed group, address indexed member, uint256 limit, Period period);
+    event Left(bytes32 indexed group, address indexed member, address indexed by);
+    event LimitSet(
+        bytes32 indexed group, address indexed member, uint256 limit, Period period, address by
+    );
+    event SpendProposed(
+        bytes32 indexed id,
+        bytes32 indexed group,
+        address indexed payee,
+        uint256 total,
+        uint64 deadline
+    );
     event SpendApproved(bytes32 indexed id, address indexed member);
     event SpendCancelled(bytes32 indexed id);
     event SharePulled(bytes32 indexed id, address indexed from, address indexed to, uint256 amount);
@@ -100,61 +113,66 @@ contract GroupTreasury {
 
     // --- membership and limits -------------------------------------------------------------
 
-    /// Joins from the member's own wallet with a starting limit. The wallet must also approve this
-    /// contract on the USDC token; the limit here is what caps each period.
-    function join(uint128 limit, Period period) external {
-        if (members[msg.sender].active) revert AlreadyMember();
-        members[msg.sender] = Member(true, period, limit, _window(period), 0);
-        emit Joined(msg.sender, limit, period);
+    /// Joins a group from the member's own wallet with a starting limit. Rejoining after leaving
+    /// (or being removed) is allowed and starts a fresh window.
+    function join(bytes32 group, uint128 limit, Period period) external {
+        if (members[group][msg.sender].active) revert AlreadyMember();
+        members[group][msg.sender] = Member(true, period, limit, _window(period), 0);
+        emit Joined(group, msg.sender, limit, period);
     }
 
-    function leave() external {
-        if (!members[msg.sender].active) revert NotMember();
-        members[msg.sender].active = false;
-        members[msg.sender].limit = 0;
-        emit Left(msg.sender);
+    function leave(bytes32 group) external {
+        _remove(group, msg.sender);
     }
 
-    /// The member sets their own limit, up or down. Changing the period starts a fresh window.
-    function setLimit(uint128 limit, Period period) external {
-        Member storage m = _member(msg.sender);
+    /// The agent removes someone who left the group chat. Only ever reduces what can be pulled.
+    function removeMember(bytes32 group, address member) external onlyOperator {
+        _remove(group, member);
+    }
+
+    /// The member sets their own limit in a group, up or down. Changing the period starts a fresh
+    /// window.
+    function setLimit(bytes32 group, uint128 limit, Period period) external {
+        Member storage m = _member(group, msg.sender);
         if (m.period != period) {
             m.period = period;
             m.windowIndex = _window(period);
             m.spent = 0;
         }
         m.limit = limit;
-        emit LimitSet(msg.sender, limit, period, msg.sender);
+        emit LimitSet(group, msg.sender, limit, period, msg.sender);
     }
 
     /// The agent relays "lower my limit" from the chat. It can never raise one.
-    function lowerLimit(address member, uint128 limit) external onlyOperator {
-        Member storage m = _member(member);
+    function lowerLimit(bytes32 group, address member, uint128 limit) external onlyOperator {
+        Member storage m = _member(group, member);
         if (limit > m.limit) revert OnlyLower();
         m.limit = limit;
-        emit LimitSet(member, limit, m.period, msg.sender);
+        emit LimitSet(group, member, limit, m.period, msg.sender);
     }
 
-    /// What can still be pulled from `member` this period.
-    function remaining(address member) public view returns (uint256) {
-        Member storage m = members[member];
+    /// What can still be pulled from `member` in `group` this period.
+    function remaining(bytes32 group, address member) public view returns (uint256) {
+        Member storage m = members[group][member];
         if (!m.active) return 0;
         uint256 spent = m.windowIndex == _window(m.period) ? m.spent : 0;
         return m.limit > spent ? m.limit - spent : 0;
     }
 
-    /// Timestamp the member's current period ends.
-    function resetsAt(address member) external view returns (uint256) {
-        uint256 len = _length(members[member].period);
-        return ANCHOR + (_window(members[member].period) + 1) * len;
+    /// Timestamp the member's current period in `group` ends.
+    function resetsAt(bytes32 group, address member) external view returns (uint256) {
+        Period period = members[group][member].period;
+        return ANCHOR + (_window(period) + 1) * _length(period);
     }
 
     // --- spends ------------------------------------------------------------------------------
 
-    /// The agent proposes a split. Nothing moves until every participant approves from their wallet.
-    /// The payee may appear in `participants` (their own share is never pulled and needs no approval).
+    /// The agent proposes a split among members of `group`. Nothing moves until every participant
+    /// approves from their wallet. The payee may appear in `participants` (their own share is
+    /// never pulled and needs no approval).
     function propose(
         bytes32 id,
+        bytes32 group,
         address payee,
         address[] calldata participants,
         uint256[] calldata shares,
@@ -167,7 +185,7 @@ contract GroupTreasury {
         uint256 total;
         uint32 needed;
         for (uint256 i; i < participants.length; ++i) {
-            _member(participants[i]);
+            _member(group, participants[i]);
             for (uint256 j; j < i; ++j) {
                 if (participants[j] == participants[i]) revert BadSplit();
             }
@@ -176,8 +194,9 @@ contract GroupTreasury {
         }
         if (needed == 0) revert BadSplit();
 
-        spends[id] = Spend(Status.Proposed, payee, deadline, needed, 0, total, participants, shares);
-        emit SpendProposed(id, payee, total, deadline);
+        spends[id] =
+            Spend(Status.Proposed, group, payee, deadline, needed, 0, total, participants, shares);
+        emit SpendProposed(id, group, payee, total, deadline);
     }
 
     /// A member approves their share of a split (the onchain twin of the 👍 in the chat).
@@ -192,7 +211,8 @@ contract GroupTreasury {
     }
 
     /// Pulls every share to the payer. Anyone may call it once everyone has approved. A share over
-    /// the member's remaining limit, or one the token refuses, is recorded as a debt instead.
+    /// the member's remaining limit (including someone removed since approving), or one the token
+    /// refuses, is recorded as a debt instead.
     function settle(bytes32 id) external {
         Spend storage s = _open(id);
         if (s.approvals < s.approvalsNeeded) revert NotFullyApproved();
@@ -206,11 +226,11 @@ contract GroupTreasury {
             if (from == s.payee || amount == 0) continue;
 
             string memory reason;
-            if (amount > remaining(from)) reason = "over limit";
+            if (amount > remaining(s.group, from)) reason = "over limit";
             else if (!_tryTransferFrom(from, s.payee, amount)) reason = "transfer failed";
 
             if (bytes(reason).length == 0) {
-                _spend(from, amount);
+                _spend(s.group, from, amount);
                 pulled += amount;
                 emit SharePulled(id, from, s.payee, amount);
             } else {
@@ -240,6 +260,7 @@ contract GroupTreasury {
         view
         returns (
             Status status,
+            bytes32 group,
             address payee,
             uint256 total,
             uint64 deadline,
@@ -252,6 +273,7 @@ contract GroupTreasury {
         Spend storage s = spends[id];
         return (
             s.status,
+            s.group,
             s.payee,
             s.total,
             s.deadline,
@@ -264,9 +286,16 @@ contract GroupTreasury {
 
     // --- internals ---------------------------------------------------------------------------
 
-    function _member(address who) internal view returns (Member storage m) {
-        m = members[who];
+    function _member(bytes32 group, address who) internal view returns (Member storage m) {
+        m = members[group][who];
         if (!m.active) revert NotMember();
+    }
+
+    function _remove(bytes32 group, address who) internal {
+        Member storage m = _member(group, who);
+        m.active = false;
+        m.limit = 0;
+        emit Left(group, who, msg.sender);
     }
 
     function _open(bytes32 id) internal view returns (Spend storage s) {
@@ -283,8 +312,8 @@ contract GroupTreasury {
         return false;
     }
 
-    function _spend(address who, uint256 amount) internal {
-        Member storage m = members[who];
+    function _spend(bytes32 group, address who, uint256 amount) internal {
+        Member storage m = members[group][who];
         uint64 window = _window(m.period);
         if (m.windowIndex != window) {
             m.windowIndex = window;
