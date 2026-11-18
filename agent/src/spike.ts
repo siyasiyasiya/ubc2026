@@ -30,6 +30,12 @@ const allowed = new Set(
     .filter(Boolean),
 );
 
+if (mode !== "cloud") {
+  // Spectrum calls Photon's cloud at startup whenever these are set, even with only a local provider.
+  delete process.env.SPECTRUM_PROJECT_ID;
+  delete process.env.SPECTRUM_PROJECT_SECRET;
+}
+
 const provider = mode === "cloud" ? imessage.config() : localIMessage.config();
 const app = await Spectrum({ providers: [provider] });
 console.log(`Photon spike running (${mode}). Allowlisted chats: ${allowed.size || "none yet"}`);
