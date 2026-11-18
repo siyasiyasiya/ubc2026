@@ -15,18 +15,25 @@ Multiple people and multiple Claude Code sessions (desktop app + VS Code) work o
 7. **Never** force-push `main`, commit secrets, or commit directly to `main` (except trivial docs typos).
 8. **Two sessions on the same machine must not edit the same checkout at once.** Give the second session (e.g. VS Code) its own worktree: `git worktree add ../ubc2026-<task> -b feat/<task> origin/main`. Otherwise stick to separate folders (one in `contracts/`, one in `agent/`).
 
-## Repo layout (planned)
+## Repo layout
+
+pnpm monorepo (`pnpm install`, `pnpm typecheck`, `pnpm test`; Vitest).
 
 | Path | What | Tooling |
 | --- | --- | --- |
-| `contracts/` | `GroupTreasury` contract on Arc testnet | Foundry (`forge build`, `forge test`, `forge fmt`) |
-| `agent/` | iMessage bot (Photon) + Claude agent loop + ElevenLabs calling | TypeScript on Node 22 |
-| `web/` | Onboarding page: join group, set weekly limit, add card/wallet | TypeScript |
-| `docs/` | Architecture, agent decision loop, safety limits, demo script | Markdown |
+| `packages/core` (`@gta/core`) | Shared types, money (USDC micro-dollars), ports, request state machine | TypeScript, Vitest |
+| `packages/imessage` | Chat port: Photon (`spectrum-ts`) iMessage adapter | TypeScript |
+| `packages/agent` | Claude agent: intent parsing, proposals, receipt reading | TypeScript |
+| `packages/wallet`, `packages/funding`, `packages/purchase` | Wallet/limits, card-to-USDC funding, store checkout adapters | TypeScript |
+| `apps/server` | Composition root that wires the adapters and runs the bot | TypeScript |
+| `contracts/` | `GroupTreasury` contract (Arc testnet) | Foundry (`forge build`, `forge test`, `forge fmt`) |
+| `agent/` | Working prototype: local iMessage bot + Claude agent (npm). To be folded into `packages/imessage` and `packages/agent` | TypeScript, `node:test` |
+
+Before writing new logic, check `@gta/core` for an existing type or port and use it.
 
 ## Coding standards
 
-- **TypeScript:** `strict: true`, no `any` without a comment explaining why. ESLint + Prettier; run `npm run lint` and `npm run format` before committing.
+- **TypeScript:** `strict: true`, no `any` without a comment explaining why. Run `pnpm typecheck` and `pnpm test` before committing (in `agent/`: `npm run typecheck`, `npm run lint`, `npm test`).
 - **Solidity:** `forge fmt` before committing. Every external function has a test, including revert cases (over limit, unapproved spend, non-member). `forge test` must pass before a PR.
 - **Secrets:** only in `.env` (gitignored). Every new variable gets a placeholder line in `.env.example`.
 - **Money values:** USDC amounts are integers in base units (6 decimals). Never use floats for money.
