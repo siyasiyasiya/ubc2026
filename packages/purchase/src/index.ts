@@ -1,36 +1,50 @@
 /**
- * @gta/purchase — PurchaseAdapter implementations, one per store.
+ * @gta/purchase — PurchaseAdapter implementations (one per checkout backend).
  *
- * SKELETON. Each adapter builds a cart, previews it (screenshot + final total
- * for the group's 👍), and places a REAL order. The first store and its access
- * method (official agent API vs. browser automation) are UNDECIDED.
+ * The demo-critical adapter is `CrossmintPurchaseAdapter`, a REAL store-checkout
+ * built on Crossmint Agent Checkouts: one integration to buy from any online
+ * merchant, pay by the buyer's card, and get a receipt. Blocked merchants are
+ * surfaced as `CrossmintBlockedError`.
  *
- * IMPORTANT: the demo store's adapter must perform a real checkout — do NOT
- * stub placeOrder for anything used in the demo.
+ * Everything stays behind core's `PurchaseAdapter` interface, so a second
+ * adapter (e.g. browser automation) can slot in without touching the core.
  */
 
-import type {
-  BuildCartInput,
-  Cart,
-  PlaceOrderInput,
-  PreviewResult,
-  PurchaseAdapter,
-  Receipt,
-} from "@gta/core";
+export {
+  CrossmintPurchaseAdapter,
+  createCrossmintPurchaseAdapterFromEnv,
+  type CrossmintPurchaseAdapterConfig,
+} from "./crossmint-adapter.js";
 
-const NOT_IMPLEMENTED = "not implemented: @gta/purchase skeleton — store + access method undecided";
+export {
+  CrossmintHttpClient,
+  type CrossmintAgentCheckouts,
+  type CrossmintClientConfig,
+  type CreateRunBody,
+  type CreateOrderIntentBody,
+  type FetchLike,
+  type RunStatus,
+  type WireRun,
+} from "./crossmint-client.js";
 
-/** STUB PurchaseAdapter. Replace per real store. Not for demo checkout. */
-export class StubPurchaseAdapter implements PurchaseAdapter {
-  readonly store = "stub";
+export {
+  CrossmintBlockedError,
+  CrossmintCheckoutError,
+  CrossmintConfigError,
+  type CrossmintBlockedCode,
+} from "./errors.js";
 
-  async buildCart(_input: BuildCartInput): Promise<Cart> {
-    throw new Error(NOT_IMPLEMENTED);
-  }
-  async preview(_cart: Cart): Promise<PreviewResult> {
-    throw new Error(NOT_IMPLEMENTED);
-  }
-  async placeOrder(_input: PlaceOrderInput): Promise<Receipt> {
-    throw new Error(NOT_IMPLEMENTED);
-  }
-}
+export {
+  SummaryCardRenderer,
+  type CheckoutScreenshotRenderer,
+  type ScreenshotContext,
+} from "./screenshot.js";
+
+export {
+  moneyToUsdc,
+  parseDecimalToUsdc,
+  usdcToDecimalString,
+  type CrossmintMoney,
+} from "./money-codec.js";
+
+export { StubPurchaseAdapter } from "./stub-adapter.js";
