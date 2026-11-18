@@ -1,0 +1,20 @@
+# Code ownership → auto-requests the right reviewer on PRs and marks who owns what.
+# Replace @person-a with the teammate's real GitHub handle. Swap tracks freely.
+#
+# Track A — Money & onchain:        @person-a
+# Track B — Agent, chat & commerce: @siyasiyasiya
+
+# Shared foundation — both owners review changes (interfaces are a contract).
+/packages/core/        @siyasiyasiya @person-a
+/apps/server/          @siyasiyasiya @person-a
+/STATUS.md             @siyasiyasiya @person-a
+
+# Track A — Money & onchain
+/contracts/            @person-a
+/packages/wallet/      @person-a
+/packages/funding/     @person-a
+
+# Track B — Agent, chat & commerce
+/packages/imessage/    @siyasiyasiya
+/packages/agent/       @siyasiyasiya
+/packages/purchase/    @siyasiyasiya
