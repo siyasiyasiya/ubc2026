@@ -35,4 +35,4 @@ Get testnet USDC (gas + balances) from the [Circle faucet](https://faucet.circle
 
 | Network | Address |
 | --- | --- |
-| Arc testnet | _not deployed yet_ |
+| Arc testnet | [`0xdB4fd06e628ab6D9bcF48426357783C8c9Fe2A07`](https://testnet.arcscan.app/address/0xdB4fd06e628ab6D9bcF48426357783C8c9Fe2A07) (operator `0xDEbAA02AAB62BDc01dddd5830D3a0D613C80842f`) |
