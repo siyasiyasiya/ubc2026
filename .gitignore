@@ -15,3 +15,6 @@ contracts/broadcast/
 
 # Claude Code agent worktrees (transient)
 .claude/worktrees/
+
+# Circle entity-secret recovery files
+recovery_file_*.dat
