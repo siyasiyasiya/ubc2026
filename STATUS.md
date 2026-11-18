@@ -48,11 +48,11 @@ Owns: `packages/imessage`, `packages/agent`, `packages/purchase`.
 
 | Task | Status | Notes |
 | --- | --- | --- |
-| `PhotonChatPort` — post, image, 👍 reactions, DM | ⬜ todo | real `@photon-ai/imessage-kit`; needs a Mac + Full Disk Access |
-| `agent` — parse requests → intents | ⬜ todo | Claude + Vercel AI SDK (`generateObject`) |
-| `agent` — read receipts → `Receipt` (pay-after) | ⬜ todo | `ReceiptReader` impl (Claude vision via AI SDK) |
-| `agent` — drive the state machine via ports | ⬜ todo | perform effects: post_preview, place_order, pull_shares |
-| `PurchaseAdapter` — **real** store checkout (Crossmint) | ⬜ todo | DEMO-CRITICAL. Crossmint Agent Checkouts API; real checkout, not mocked. |
+| `PhotonChatPort` — post, image, 👍 reactions, DM | ✅ done | real `@photon-ai/imessage-kit` v3; 19 tests. Needs a Mac + Full Disk Access to run live. |
+| `agent` — parse requests → intents | ✅ done | Claude + Vercel AI SDK (`generateObject`); swappable/injectable model. |
+| `agent` — read receipts → `Receipt` (pay-after) | ✅ done | `ClaudeReceiptReader` (Claude vision via AI SDK). |
+| `agent` — drive the state machine via ports | ⬜ todo | server wiring (shared, do last): perform effects post_preview, place_order, pull_shares. |
+| `PurchaseAdapter` — **real** store checkout (Crossmint) | ✅ done | Crossmint Agent Checkouts REST; real (not mocked); 14 tests; `blocked` handled. Needs CROSSMINT creds to run live. |
 | ✅ **Decided:** LLM + framework | ✅ done | **Claude + Vercel AI SDK**, default model **Sonnet 5** (swappable). Needs Anthropic API key (not the Claude subscription). |
 | ✅ **Decided:** store + access method | ✅ done | **Crossmint** Agent Checkouts (universal catalog, buyer's own account via Browser Profiles). agent-browser kept as a swappable fallback behind `PurchaseAdapter`. |
 
