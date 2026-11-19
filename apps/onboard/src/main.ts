@@ -17,7 +17,7 @@ import {
   ContractAddress,
   type WebAuthnCredential,
 } from "@circle-fin/modular-wallets-core";
-import { createPublicClient, encodeFunctionData, isHex, maxUint256, parseUnits, type Hex } from "viem";
+import { createPublicClient, encodeFunctionData, formatUnits, http, isAddress, isHex, maxUint256, parseUnits, type Hex } from "viem";
 import { createBundlerClient, toWebAuthnAccount } from "viem/account-abstraction";
 import { arcTestnet } from "viem/chains";
 import { erc20Abi, treasuryAbi } from "./abi";
@@ -34,6 +34,8 @@ const ticket = params.get("t") ?? "";
 const chatName = params.get("c") ?? "this chat";
 const name = params.get("n") ?? "";
 const joining = ticket !== "";
+/** Top-up link from Kitty ("you're $12 short"): ?a=<account>&c=<chat name>. */
+const topUpAccount = params.get("a") ?? "";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const form = $<HTMLFormElement>("form");
@@ -46,6 +48,14 @@ function show(text: string, kind: "info" | "error" | "done" = "info"): void {
 }
 
 function setup(): void {
+  if (topUpAccount && !group) {
+    $("title").textContent = "Add money";
+    $("lede").textContent = "Top up your Kitty balance with Apple Pay or a debit card.";
+    form.hidden = true;
+    if (!isAddress(topUpAccount)) return show("This link is incomplete. Ask Kitty for a new one.", "error");
+    void showFunding(topUpAccount as Hex);
+    return;
+  }
   $("title").textContent = joining ? `Join ${chatName}` : `Your limit for ${chatName}`;
   $("lede").textContent = joining
     ? `${name ? `Hi ${name}! ` : ""}Set the most ${chatName} can spend from you. It resets on its own, and only you can raise it.`
@@ -130,6 +140,7 @@ async function submit(event: Event, returning = false): Promise<void> {
       "done",
     );
     form.hidden = true;
+    void showFunding(account.address);
   } catch (err) {
     console.error(err);
     const message = (err as Error).message ?? String(err);
@@ -143,6 +154,72 @@ async function submit(event: Event, returning = false): Promise<void> {
     );
     button.disabled = false;
   }
+}
+
+const arc = createPublicClient({ chain: arcTestnet, transport: http() });
+
+/** Dollars in the account. USDC is Arc's native currency, read here with 18 decimals. */
+async function balance(address: Hex): Promise<bigint> {
+  return arc.getBalance({ address });
+}
+
+function dollars(wei: bigint): string {
+  return `$${Number(formatUnits(wei, 18)).toFixed(2)}`;
+}
+
+/**
+ * Shows the balance and an "Add money" button. The Arc Onramp session is fetched up front so the
+ * button can be a plain link: opening a window after an await gets blocked on iOS. The money goes
+ * from Apple Pay / debit card straight to the member's own account; Kitty never holds it.
+ */
+async function showFunding(address: Hex): Promise<void> {
+  const fund = $("fund");
+  const balanceText = $("balance");
+  const add = $<HTMLAnchorElement>("add");
+  fund.hidden = false;
+
+  let start = 0n;
+  try {
+    start = await balance(address);
+    balanceText.textContent = `Balance: ${dollars(start)}`;
+  } catch (err) {
+    console.error(err);
+  }
+
+  try {
+    const res = await fetch("/api/onramp-session", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ address }),
+    });
+    const body = (await res.json()) as { widgetUrl?: string; error?: string };
+    if (!res.ok || !body.widgetUrl) throw new Error(body.error ?? `HTTP ${res.status}`);
+    add.href = body.widgetUrl;
+    add.removeAttribute("aria-disabled");
+  } catch (err) {
+    console.error("onramp session", err);
+    add.hidden = true;
+    balanceText.textContent += " · Adding money isn't available right now.";
+    return;
+  }
+
+  // Watch for the top-up to land; delivered amounts are net of provider fees.
+  add.addEventListener("click", () => {
+    balanceText.textContent = "Waiting for your top-up…";
+    const timer = setInterval(async () => {
+      try {
+        const now = await balance(address);
+        if (now > start) {
+          clearInterval(timer);
+          balanceText.textContent = `Added ${dollars(now - start)}. Balance: ${dollars(now)}`;
+          balanceText.dataset.kind = "done";
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }, 5000);
+    setTimeout(() => clearInterval(timer), 15 * 60 * 1000);
+  }, { once: true });
 }
 
 setup();

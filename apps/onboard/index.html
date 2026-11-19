@@ -80,6 +80,12 @@
       }
       button:disabled { opacity: 0.5; cursor: default; }
       #returning { display: block; margin-top: 12px; text-align: center; font-size: 14px; color: var(--accent); text-decoration: none; }
+      #fund { margin-top: 20px; display: grid; gap: 10px; border-top: 1px solid var(--line); padding-top: 18px; }
+      #balance { font-size: 17px; font-weight: 600; }
+      #balance[data-kind="done"] { color: var(--ok); }
+      a.button { display: block; text-align: center; text-decoration: none; font-weight: 600; font-size: 17px; padding: 14px; border-radius: 14px; background: var(--text); color: var(--card); }
+      a.button[aria-disabled="true"] { opacity: 0.5; pointer-events: none; }
+      .hint { font-size: 13px; color: var(--muted); }
       #status { margin-top: 16px; white-space: pre-line; font-size: 15px; color: var(--muted); }
       #status[data-kind="error"] { color: var(--bad); }
       #status[data-kind="done"] { color: var(--ok); font-weight: 500; }
@@ -106,6 +112,11 @@
         <a id="returning" href="#">Used Kitty before on another phone?</a>
       </form>
       <p id="status" role="status"></p>
+      <div id="fund" hidden>
+        <p id="balance" role="status">Balance: …</p>
+        <a id="add" class="button" href="#" target="_blank" rel="noopener" aria-disabled="true">Add money with Apple Pay</a>
+        <p class="hint">Apple Pay or debit card. The money goes straight to your Kitty balance.</p>
+      </div>
       <footer>Your money stays yours until something is actually bought. You only pay for things you 👍, and never more than this.</footer>
     </main>
     <script type="module" src="/src/main.ts"></script>
