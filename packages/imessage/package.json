@@ -18,7 +18,10 @@
   },
   "dependencies": {
     "@gta/core": "workspace:*",
-    "@spectrum-ts/imessage-local": "12.16.0",
-    "spectrum-ts": "12.16.0"
+    "@photon-ai/imessage-kit": "^3.0.0",
+    "better-sqlite3": "^13.2.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0"
   }
 }

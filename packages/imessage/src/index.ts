@@ -1,33 +1,28 @@
 /**
- * @gta/imessage — the core `ChatPort` on iMessage, via Photon's `spectrum-ts`.
+ * @gta/imessage — the core `ChatPort` on iMessage, via Photon's `@photon-ai/imessage-kit`.
  *
- * Base adapter (send text, receive text/photo, reply into a group) is Neena's,
- * tested live in a real group chat in local mode. This version adds correct 👍
- * tapback handling on top — see `mapReaction` below.
+ * Runs locally through Messages.app on a Mac, as whatever Apple ID is signed in. The process needs
+ * Full Disk Access (it reads ~/Library/Messages/chat.db). We use imessage-kit directly rather than
+ * `spectrum-ts` local mode because, live-tested on Nov 18:
+ *   - spectrum-ts local mode (`@spectrum-ts/imessage-local` 12.16.0) drops every reaction row, so
+ *     👍 tapbacks never reach the bot;
+ *   - spectrum-ts `send()` returns a local id, not the chat.db guid that a later 👍 targets.
+ * imessage-kit delivers reaction rows and reports our own sent rows (with their guids) through
+ * `onFromMeMessage`, so a 👍 on the approval card can be matched to it.
  *
- * Local mode (default, free, supports group chats) runs through Messages.app on a Mac, as whatever
- * Apple ID is signed in there. The terminal running it needs Full Disk Access. Cloud mode uses a
- * Photon Stable cloud line; on the free tier those lines don't support group chats or tapbacks.
+ * Also live-tested: group reaction rows arrive with `participant: null` even though chat.db knows
+ * the sender (`message.handle_id`), so we fall back to a read-only chat.db lookup. Reaction targets
+ * look like `p:0/<guid>`; we strip the prefix so they equal message ids.
  *
- * REACTIONS / TAPBACKS (grounded in spectrum-ts's official `Message` reference + live testing):
- *   - An inbound 👍 "like" tapback arrives as a message whose `content` is
- *     `{ type: "reaction", emoji: "👍", target: Message }`, and the person who reacted is the
- *     message's own `sender` — the SAME field a text message uses. `mapReaction` attributes it by
- *     `message.sender`, so per-member "everyone 👍s to approve" works.
- *   - There is no add/remove flag on the content: an inbound reaction is always an ADD. A tapback
- *     *removal* is an `unsend` of the reaction message, which this SDK version does not surface as a
- *     distinct attributable event — so `mapReaction` is parameterised on `added` for the day it does,
- *     but the live loop only emits adds today.
- *   - `sender` can be transiently undefined until the group chat's participants are registered/
- *     resolved (a setup artifact, not a design limit); we skip those rows rather than mis-attribute.
- *   - TODO(verify-on-mac): confirm inbound-tapback delivery against a live device/line — this is the
- *     one spot to re-check on a real Mac.
+ * Safety: only allowlisted chats are surfaced. Other chats' text is never logged; a message
+ * containing `#treasury` logs only that chat's id so it can be allowlisted.
  */
 
-import fs from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
-import { localIMessage } from "@spectrum-ts/imessage-local";
+
+import Database from "better-sqlite3";
 import type {
   ChatPort,
   ImageRef,
@@ -36,229 +31,323 @@ import type {
   MessageRef,
   Unsubscribe,
 } from "@gta/core";
-import { attachment, Spectrum } from "spectrum-ts";
-import { imessage } from "spectrum-ts/providers/imessage";
+import {
+  IMessageSDK,
+  type DispatchEvents,
+  type IMessageConfig,
+  type Message,
+  type Reaction,
+  type SendRequest,
+} from "@photon-ai/imessage-kit";
 
-/** The emoji the group-treasury flow treats as an "approve". `Emoji.like` in spectrum-ts. */
+/** The emoji the group-treasury flow treats as an "approve". */
 const THUMBS_UP = "👍";
 
 /** A message containing this word reveals its chat id in the logs, so it can be allowlisted. */
 const CLAIM_WORD = "#treasury";
 
-// ----------------------------------------------------------------------------
-// Structural view of the spectrum-ts surface this adapter uses. Declared as thin
-// interfaces (not the full `SpectrumInstance`/`Space`, which are huge) so tests
-// can inject a fully-typed fake. The real app is adapted to this view by a single
-// localized cast at the SDK boundary in `defaultApp` — the only `as` in the file.
-// ----------------------------------------------------------------------------
-
-/** A chat we can reply into. Real spectrum-ts `Space` satisfies this. */
-export interface ReplyTarget {
-  readonly id: string;
-  send(content: unknown): Promise<{ readonly id: string } | undefined>;
-}
+/** How many of our own recent sends to remember, so their echoes are never treated as input. */
+const RECENT_SENDS = 50;
 
 /**
- * The inbound content shapes we read. Real spectrum-ts `Content` is a superset (voice, markdown,
- * group, etc.); the boundary cast in `defaultApp` bridges the two, and any runtime content type not
- * listed here simply matches none of the branches in `handle` and is ignored.
+ * Structural slice of `IMessageSDK` this adapter uses. An interface (not the class) so tests can
+ * inject a fake; the real `IMessageSDK` satisfies it.
  */
-export type InboundContent =
-  | { type: "text"; text: string }
-  | { type: "attachment"; mimeType: string; name: string; read(): Promise<Uint8Array> }
-  | { type: "reaction"; emoji: string; target: { readonly id: string } };
-
-export interface InboundMessage {
-  readonly id: string;
-  readonly direction: "inbound" | "outbound";
-  readonly sender?: { readonly id: string } | null;
-  readonly content: InboundContent;
+export interface PhotonSdk {
+  send(request: SendRequest): Promise<void>;
+  startWatching(events?: DispatchEvents): Promise<void>;
+  stopWatching(): Promise<void>;
+  close(): Promise<void>;
 }
 
-/** The subset of a Spectrum app this adapter drives: a stream of [space, message]. */
-export interface InboundApp {
-  readonly messages: AsyncIterable<readonly [ReplyTarget, InboundMessage]>;
-  /** Open a chat by id, so the bot can post before anyone there has written since startup. */
-  openSpace?(chatId: string): Promise<ReplyTarget>;
-}
+/** Returns the sender's handle for a message id, or null if unknown. */
+export type SenderResolver = (messageId: string) => string | null;
 
 export interface PhotonChatPortConfig {
-  mode?: "local" | "cloud";
-  /** The port ignores every chat not listed here. Required: in local mode it can see all chats. */
+  /** The port ignores every chat not listed here. Required: it can see every chat on the Mac. */
   allowedChatIds: string[];
-  /** Folder for downloaded photos (ImageRef.uri points here). Defaults to a temp folder. */
-  mediaDir?: string;
-  log?: (line: string) => void;
+  /** Only "local" is supported (imessage-kit). Kept so callers can pass their configured mode. */
+  mode?: "local" | "cloud";
+  /** Config forwarded to `new IMessageSDK(...)` (db path, concurrency, debug). */
+  sdkConfig?: IMessageConfig;
+  /** Inject a pre-built SDK (or a fake in tests). Defaults to `new IMessageSDK(sdkConfig)`. */
+  sdk?: PhotonSdk;
   /**
-   * Inject a pre-built app (or a fake in tests). When provided, `mode` is ignored for connecting.
-   * Defaults to a real `Spectrum(...)` instance.
+   * Who sent a message when the SDK leaves `participant` null (group reactions do). Defaults to a
+   * read-only chat.db lookup when the real SDK is used; pass `null` to disable.
    */
-  app?: InboundApp;
+  resolveSender?: SenderResolver | null;
+  /**
+   * While the bot runs on a member's own Apple ID, that member's messages and 👍s are "from me".
+   * Set this to their handle to treat them as that member. The bot's own sends are still skipped.
+   */
+  selfHandle?: string;
+  /** How long postMessage waits for the sent row to appear in chat.db to learn its id. */
+  sentIdTimeoutMs?: number;
+  log?: (line: string) => void;
+  /** Surfaces watcher/dispatch errors (ChatPort has no error channel). */
+  onError?: (error: Error) => void;
+}
+
+/** Reaction targets look like "p:0/<guid>"; message ids are the bare guid. */
+export function normalizeMessageId(id: string): string {
+  return id.replace(/^p:\d+\//, "");
+}
+
+/** Read-only chat.db lookup of a message's sender handle (needs Full Disk Access). */
+export function chatDbSenderResolver(databasePath?: string): SenderResolver {
+  let db: Database.Database | undefined;
+  let stmt: Database.Statement<[string], { handle: string }> | undefined;
+  return (messageId) => {
+    try {
+      db ??= new Database(databasePath ?? path.join(os.homedir(), "Library/Messages/chat.db"), {
+        readonly: true,
+        fileMustExist: true,
+      });
+      stmt ??= db.prepare(
+        "SELECT h.id AS handle FROM message m JOIN handle h ON h.ROWID = m.handle_id WHERE m.guid = ?",
+      );
+      return stmt.get(messageId)?.handle ?? null;
+    } catch {
+      return null;
+    }
+  };
+}
+
+function senderOf(message: Message, resolveSender?: SenderResolver, selfHandle?: string): string | null {
+  if (message.isFromMe) return selfHandle ?? null;
+  return message.participant ?? resolveSender?.(message.id) ?? null;
 }
 
 /**
- * ISOLATED REACTION MAPPING — the ONE place to correct when Photon's reaction surface changes.
- *
- * Maps a spectrum-ts `reaction` content to a core `IncomingReaction`, or returns `null` when the
- * reaction is not the 👍 "like" tapback we treat as an approval (love/laugh/dislike/emphasize/
- * question tapbacks and arbitrary emoji reactions are all ignored).
- *
- * `added` is supplied by the caller: `true` for an inbound reaction event (the only thing the
- * stream yields today), `false` for a removal once this SDK version surfaces removals as
- * attributable events (see the file header). Keeping it a parameter means the add→remove change is
- * a one-liner at the call site, not a change to this mapping.
+ * Map a watcher row to a core `IncomingReaction`, or `null` when it isn't a 👍 we can attribute.
+ * A 👍 is the classic 'like' Tapback or an emoji reaction whose payload is literally 👍.
  */
-export function mapReaction(
-  chatId: string,
-  senderHandle: string,
-  content: { emoji: string; target: { readonly id: string } },
-  added: boolean,
-  at: number,
+export function mapReactionRow(
+  message: Message,
+  resolveSender?: SenderResolver,
+  selfHandle?: string,
 ): IncomingReaction | null {
-  if (content.emoji !== THUMBS_UP) return null;
+  const reaction: Reaction | null = message.reaction;
+  if (!reaction) return null;
+  const isThumbsUp =
+    reaction.kind === "like" || (reaction.kind === "emoji" && reaction.emoji === THUMBS_UP);
+  if (!isThumbsUp || reaction.targetMessageId === null || message.chatId === null) return null;
+  const sender = senderOf(message, resolveSender, selfHandle);
+  if (sender === null) return null;
   return {
-    chatId,
-    senderHandle,
-    targetMessageId: content.target.id,
+    chatId: message.chatId,
+    senderHandle: sender,
+    targetMessageId: normalizeMessageId(reaction.targetMessageId),
     emoji: THUMBS_UP,
-    added,
-    at,
+    added: !reaction.isRemoved,
+    at: message.createdAt.getTime(),
   };
 }
 
-/** Build the real Spectrum app for the given mode. Isolated so tests never touch it. */
-async function defaultApp(mode: "local" | "cloud"): Promise<InboundApp> {
-  if (mode === "local") {
-    // Spectrum contacts Photon's cloud at startup whenever these are set, even for local only.
-    delete process.env.SPECTRUM_PROJECT_ID;
-    delete process.env.SPECTRUM_PROJECT_SECRET;
+/** Map a watcher row to a core `IncomingMessage`, or `null` (no chat, no sender, or a reaction). */
+export function mapMessageRow(
+  message: Message,
+  resolveSender?: SenderResolver,
+  selfHandle?: string,
+): IncomingMessage | null {
+  if (message.reaction || message.chatId === null) return null;
+  const sender = senderOf(message, resolveSender, selfHandle);
+  if (sender === null) return null;
+  const attachments: ImageRef[] = [];
+  for (const att of message.attachments) {
+    // Consumers need a concrete local file; skip ones still transferring.
+    if (att.localPath === null) continue;
+    attachments.push({ uri: att.localPath, mimeType: att.mimeType });
   }
-  const real = await Spectrum({
-    providers: [mode === "cloud" ? imessage.config() : localIMessage.config()],
-  });
-  // Single, localized adaptation at the SDK boundary: we only use `.messages`, `space.get` and
-  // `space.send`, which the real `SpectrumInstance`/`Space` provide. See `InboundApp` above.
-  const spaces = mode === "cloud" ? imessage(real).space : localIMessage(real).space;
   return {
-    messages: real.messages as unknown as InboundApp["messages"],
-    openSpace: async (chatId) => (await spaces.get(chatId)) as unknown as ReplyTarget,
+    chatId: message.chatId,
+    senderHandle: sender,
+    text: message.text ?? "",
+    attachments,
+    at: message.createdAt.getTime(),
   };
 }
+
+type MessageHandler = (msg: IncomingMessage) => void;
+type ReactionHandler = (reaction: IncomingReaction) => void;
 
 export class PhotonChatPort implements ChatPort {
+  private readonly sdk: PhotonSdk;
   private readonly allowed: Set<string>;
-  private readonly spaces = new Map<string, ReplyTarget>();
-  private readonly messageHandlers = new Set<(msg: IncomingMessage) => void>();
-  private readonly reactionHandlers = new Set<(reaction: IncomingReaction) => void>();
+  private readonly resolveSender: SenderResolver | undefined;
+  private readonly selfHandle: string | undefined;
+  private readonly sentIdTimeoutMs: number;
   private readonly log: (line: string) => void;
-  private app: InboundApp | undefined;
+  private readonly onError: (error: Error) => void;
 
-  constructor(private readonly config: PhotonChatPortConfig) {
+  private readonly messageHandlers = new Set<MessageHandler>();
+  private readonly reactionHandlers = new Set<ReactionHandler>();
+  /** Sends waiting to learn their chat.db id from the watcher's from-me rows. */
+  private readonly pendingSends: { chatId: string; text: string; resolve: (id: string) => void }[] = [];
+  /** Texts and guids of our own recent sends, so their echoes are never treated as input. */
+  private readonly recentSendTexts: string[] = [];
+  private readonly ourMessageIds = new Set<string>();
+  private watchStarting: Promise<void> | undefined;
+
+  constructor(config: PhotonChatPortConfig) {
+    if (config.mode === "cloud") {
+      throw new Error("@gta/imessage only supports local mode (imessage-kit on a Mac)");
+    }
+    this.sdk = config.sdk ?? new IMessageSDK(config.sdkConfig);
     this.allowed = new Set(config.allowedChatIds);
+    this.resolveSender =
+      config.resolveSender === null
+        ? undefined
+        : (config.resolveSender ??
+          (config.sdk ? undefined : chatDbSenderResolver(config.sdkConfig?.databasePath)));
+    this.selfHandle = config.selfHandle;
+    this.sentIdTimeoutMs = config.sentIdTimeoutMs ?? 10_000;
     this.log = config.log ?? ((line) => console.log(`[imessage] ${line}`));
+    this.onError = config.onError ?? ((error) => this.log(`watcher error: ${error.message}`));
   }
 
-  /** Connects to Messages (or the cloud line) and delivers events until the stream ends. */
+  /** Starts watching Messages. Resolves once the watcher is running; events keep arriving after. */
   async start(): Promise<void> {
-    const mode = this.config.mode ?? "local";
-    const mediaDir = this.config.mediaDir ?? (await fs.mkdtemp(path.join(os.tmpdir(), "gta-media-")));
-    await fs.mkdir(mediaDir, { recursive: true });
-
-    const app = this.config.app ?? (await defaultApp(mode));
-    this.app = app;
-    this.log(`connected (${this.config.app ? "injected" : mode}), ${this.allowed.size} chat(s) allowlisted`);
-
-    for await (const [space, message] of app.messages) {
-      await this.handle(space, message, mediaDir);
-    }
-  }
-
-  /** Route one inbound [space, message] to the message or reaction handlers. */
-  private async handle(space: ReplyTarget, message: InboundMessage, mediaDir: string): Promise<void> {
-    if (message.direction === "outbound") return;
-    const content = message.content;
-
-    if (!this.allowed.has(space.id)) {
-      // Never log other chats' text. The claim word only reveals the chat id.
-      if (content.type === "text" && content.text.toLowerCase().includes(CLAIM_WORD)) {
-        this.log(`claim: add ${space.id} to the allowlist`);
-      }
-      return;
-    }
-    // Messages from the signed-in Apple ID (including our own replies) can arrive with no sender.
-    const sender = message.sender?.id;
-    if (!sender) return;
-    this.spaces.set(space.id, space);
-    const at = Date.now();
-
-    try {
-      if (content.type === "text") {
-        this.emitMessage({ chatId: space.id, senderHandle: sender, text: content.text, attachments: [], at });
-      } else if (content.type === "attachment" && content.mimeType.startsWith("image/")) {
-        const file = path.join(mediaDir, `${message.id.replace(/[^\w-]/g, "_")}-${content.name}`);
-        await fs.writeFile(file, await content.read());
-        this.emitMessage({
-          chatId: space.id,
-          senderHandle: sender,
-          text: "",
-          attachments: [{ uri: file, mimeType: content.mimeType }],
-          at,
-        });
-      } else if (content.type === "reaction") {
-        // Inbound reaction events are ADDs (see file header); removals are unsends and are not
-        // surfaced as attributable events in this SDK version, so we pass `added: true`.
-        const reaction = mapReaction(space.id, sender, content, true, at);
-        if (reaction) {
-          this.log(`👍 approve on ${content.target.id} from ${sender}`);
-          this.emitReaction(reaction);
-        }
-      }
-    } catch (err) {
-      this.log(`failed on ${content.type} from ${sender}: ${(err as Error).message}`);
-    }
-  }
-
-  private emitMessage(msg: IncomingMessage): void {
-    for (const handler of this.messageHandlers) handler(msg);
-  }
-
-  private emitReaction(reaction: IncomingReaction): void {
-    for (const handler of this.reactionHandlers) handler(reaction);
-  }
-
-  private async space(chatId: string): Promise<ReplyTarget> {
-    const known = this.spaces.get(chatId);
-    if (known) return known;
-    if (!this.allowed.has(chatId)) throw new Error(`Chat ${chatId} isn't allowlisted`);
-    if (!this.app?.openSpace) throw new Error(`Chat ${chatId} hasn't sent anything yet, so it can't be replied to`);
-    const opened = await this.app.openSpace(chatId);
-    this.spaces.set(chatId, opened);
-    return opened;
+    await this.ensureWatching();
+    this.log(`watching (local), ${this.allowed.size} chat(s) allowlisted`);
   }
 
   async postMessage(chatId: string, text: string): Promise<MessageRef> {
-    const sent = await (await this.space(chatId)).send(text);
-    return { id: sent?.id ?? "", chatId };
+    this.rememberSend(text);
+    // Listen before sending so a fast chat.db row isn't missed.
+    const sentId = this.awaitSentId(chatId, text);
+    void this.ensureWatching();
+    await this.sdk.send({ to: chatId, text });
+    const id = await sentId;
+    if (id) this.ourMessageIds.add(id);
+    return id ? { id, chatId } : this.makeRef(chatId);
   }
 
   async postImage(chatId: string, image: ImageRef, caption?: string): Promise<MessageRef> {
-    const space = await this.space(chatId);
-    const sent = await space.send(attachment(image.uri, image.mimeType ? { mimeType: image.mimeType } : {}));
-    if (caption) await space.send(caption);
-    return { id: sent?.id ?? "", chatId };
+    if (caption) this.rememberSend(caption);
+    // imessage-kit sends local file paths; callers must localize remote URIs first.
+    await this.sdk.send({ to: chatId, text: caption, attachments: [image.uri] });
+    return this.makeRef(chatId);
   }
 
-  async sendDirectMessage(_handle: string, _text: string): Promise<MessageRef> {
-    throw new Error("Direct messages aren't supported by the iMessage adapter yet");
+  async sendDirectMessage(handle: string, text: string): Promise<MessageRef> {
+    this.rememberSend(text);
+    // A bare handle (phone/email) routes to a 1-on-1 DM inside the SDK.
+    await this.sdk.send({ to: handle, text });
+    return this.makeRef(handle);
   }
 
-  onMessage(handler: (msg: IncomingMessage) => void): Unsubscribe {
+  onMessage(handler: MessageHandler): Unsubscribe {
     this.messageHandlers.add(handler);
-    return () => this.messageHandlers.delete(handler);
+    void this.ensureWatching();
+    return () => {
+      this.messageHandlers.delete(handler);
+    };
   }
 
-  onReaction(handler: (reaction: IncomingReaction) => void): Unsubscribe {
+  onReaction(handler: ReactionHandler): Unsubscribe {
     this.reactionHandlers.add(handler);
-    return () => this.reactionHandlers.delete(handler);
+    void this.ensureWatching();
+    return () => {
+      this.reactionHandlers.delete(handler);
+    };
+  }
+
+  /** Stop the watcher and release the SDK. Not part of ChatPort; call on shutdown. */
+  async close(): Promise<void> {
+    this.messageHandlers.clear();
+    this.reactionHandlers.clear();
+    await this.sdk.close();
+    this.watchStarting = undefined;
+  }
+
+  /** Fallback id when the sent row's guid wasn't seen in time. A 👍 on it can't be matched. */
+  private makeRef(chatId: string): MessageRef {
+    return { id: `local:${randomUUID()}`, chatId };
+  }
+
+  private rememberSend(text: string): void {
+    this.recentSendTexts.push(text);
+    if (this.recentSendTexts.length > RECENT_SENDS) this.recentSendTexts.shift();
+  }
+
+  /**
+   * `send()` resolves on AppleScript dispatch and never returns the chat.db guid. The watcher's
+   * from-me rows carry it, so wait for the next from-me row in this chat with the same text.
+   */
+  private awaitSentId(chatId: string, text: string): Promise<string | undefined> {
+    return new Promise((resolve) => {
+      const entry = { chatId, text, resolve: (id: string) => resolve(id) };
+      this.pendingSends.push(entry);
+      setTimeout(() => {
+        const i = this.pendingSends.indexOf(entry);
+        if (i >= 0) {
+          this.pendingSends.splice(i, 1);
+          resolve(undefined);
+        }
+      }, this.sentIdTimeoutMs).unref?.();
+    });
+  }
+
+  /** True if a from-me row is one of the bot's own sends (matched now, or seen before). */
+  private isOurSend(message: Message): boolean {
+    if (this.ourMessageIds.has(message.id)) return true;
+    if (message.reaction || message.text === null) return false;
+    const i = this.pendingSends.findIndex(
+      (p) => p.text === message.text && (message.chatId === null || p.chatId === message.chatId),
+    );
+    if (i >= 0) {
+      const [entry] = this.pendingSends.splice(i, 1);
+      this.ourMessageIds.add(message.id);
+      entry?.resolve(message.id);
+      return true;
+    }
+    // A late echo of something we sent after its wait timed out.
+    return this.recentSendTexts.includes(message.text);
+  }
+
+  /** Start the single shared watcher on first use (idempotent; the SDK allows only one). */
+  private ensureWatching(): Promise<void> {
+    this.watchStarting ??= this.sdk
+      .startWatching({
+        onIncomingMessage: (message) => this.dispatch(message),
+        onFromMeMessage: (message) => {
+          if (this.isOurSend(message)) return;
+          if (this.selfHandle) this.dispatch(message);
+        },
+        onError: (error) => this.onError(error),
+      })
+      .catch((error: unknown) => {
+        this.watchStarting = undefined;
+        this.onError(error instanceof Error ? error : new Error(String(error)));
+      });
+    return this.watchStarting;
+  }
+
+  /** Route one watcher row to reaction or message handlers (never both). */
+  private dispatch(message: Message): void {
+    if (message.chatId === null || !this.allowed.has(message.chatId)) {
+      // Never log other chats' text. The claim word only reveals the chat id.
+      if (message.text?.toLowerCase().includes(CLAIM_WORD)) {
+        this.log(`claim: add ${message.chatId} to the allowlist`);
+      }
+      return;
+    }
+    try {
+      if (message.reaction) {
+        const reaction = mapReactionRow(message, this.resolveSender, this.selfHandle);
+        if (reaction) {
+          this.log(`👍 ${reaction.added ? "on" : "removed from"} ${reaction.targetMessageId} by ${reaction.senderHandle}`);
+          for (const handler of this.reactionHandlers) handler(reaction);
+        }
+        return;
+      }
+      const msg = mapMessageRow(message, this.resolveSender, this.selfHandle);
+      if (!msg) return;
+      for (const handler of this.messageHandlers) handler(msg);
+    } catch (err) {
+      this.onError(err instanceof Error ? err : new Error(String(err)));
+    }
   }
 }

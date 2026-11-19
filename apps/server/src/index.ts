@@ -35,7 +35,11 @@ console.log(
     : "wallet: in-memory (set TREASURY_ADDRESS and OPERATOR_PRIVATE_KEY to use Arc)",
 );
 
-const chat = new PhotonChatPort({ mode: config.imessageMode, allowedChatIds: config.allowedChatIds });
+const chat = new PhotonChatPort({
+  mode: config.imessageMode,
+  allowedChatIds: config.allowedChatIds,
+  ...(config.selfHandle ? { selfHandle: config.selfHandle } : {}),
+});
 const store = new Store(config.stateFile);
 const runtime = new GroupRuntime({
   chat,

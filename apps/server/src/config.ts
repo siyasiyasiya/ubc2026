@@ -40,6 +40,8 @@ const period = process.env.DEFAULT_LIMIT_PERIOD === "monthly" ? "monthly" : "wee
 export const config = {
   imessageMode: process.env.IMESSAGE_MODE === "cloud" ? ("cloud" as const) : ("local" as const),
   allowedChatIds: list(process.env.ALLOWED_CHAT_IDS),
+  /** While the bot runs on a member's own Apple ID, that member's handle (their messages count as them). */
+  selfHandle: process.env.SELF_HANDLE?.trim() || undefined,
   names: names(process.env.MEMBER_NAMES),
   wallets: wallets(process.env.MEMBER_WALLETS),
   /** Set both to pull through GroupTreasury on Arc; otherwise the in-memory wallet is used. */
