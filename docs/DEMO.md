@@ -86,15 +86,14 @@ amount in text (as above).
 The chat layer runs on **imessage-kit** (it reads the Mac's Messages database), so native **👍 tapbacks** and **DMs** both work for real.
 
 **Prereqs**
-- A **Mac** signed into iMessage, with **Full Disk Access** granted to your terminal (System Settings → Privacy & Security → Full Disk Access).
-- `apps/server/.env` with `ANTHROPIC_API_KEY`, plus:
-  - `SELF_HANDLE=` the bot Apple ID's phone/email (so it attributes its own messages correctly)
-  - `MEMBER_NAMES=+15550000001=Neena,+15550000002=Siya` (map handles → names)
+- A **Mac** signed into iMessage **on the bot's own Apple ID**, with **Full Disk Access** granted to your terminal (System Settings → Privacy & Security → Full Disk Access).
+- `apps/server/.env` with `ANTHROPIC_API_KEY`. Leave `ALLOWED_CHAT_IDS` and `SELF_HANDLE` **empty**: the bot auto-serves every group chat its Apple ID is in and auto-discovers each chat's members, so there's nothing to configure per chat.
+  - `MEMBER_NAMES` is optional now (names come from the roster); set it only to prettify a handle the roster shows raw.
   - Wallet: leave `TREASURY_ADDRESS` / `OPERATOR_PRIVATE_KEY` empty for the **in-memory** wallet, or set them to settle on **Arc**.
 
 **Run**
 1. `pnpm --filter @gta/server dev`
-2. Send a message containing `#treasury` in your test group → the server logs that chat's id → add it to `ALLOWED_CHAT_IDS` in `.env` and restart.
+2. Add the bot's Apple ID to a group chat. It starts serving that chat automatically and seeds everyone in it as a member.
 3. In the group: `dinner at Uchi, I paid $90, split with Siya and Tristan` → the agent posts the split card → members **tap 👍** on it → `✅ Settled`.
 
 **Onboarding (optional — for the Arc / real-wallet demo)**
