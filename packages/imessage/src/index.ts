@@ -565,22 +565,37 @@ export class PhotonChatPort implements ChatPort {
    * only discovering a just-added group in auto-serve mode goes async.
    */
   private dispatch(message: Message): void {
-    if (this.isHistory(message)) return;
+    // Attachment rows are rare, so trace each one through the gate to diagnose "can't read images":
+    // this reveals whether the row arrives at all and which branch (history/dm/served/…) it takes.
+    const isAttachmentRow = message.hasAttachments || message.attachments.length > 0;
+    const trace = (outcome: string) =>
+      isAttachmentRow &&
+      this.log(
+        `dispatch attachment row ${message.id}: chat …${(message.chatId ?? "null").slice(-8)}, ` +
+          `kind=${message.chatKind}, reaction=${!!message.reaction}, textLen=${message.text?.length ?? 0}, ` +
+          `hasAtt=${message.hasAttachments}, att=${message.attachments.length} -> ${outcome}`,
+      );
+
+    if (this.isHistory(message)) return void trace("skipped (history, predates watcher)");
     const chatId = message.chatId;
-    if (chatId === null) return;
+    if (chatId === null) return void trace("skipped (no chat id)");
     // A 1-on-1 message to the bot is inherently its own conversation: no allowlist, no roster.
     if (message.chatKind === "dm") {
+      trace("deliverDirect (dm)");
       this.deliverDirect(message);
       return;
     }
     if (this.allowed.has(chatId)) {
+      trace("deliver (served)");
       this.deliver(message);
       return;
     }
     if (this.autoServe && !this.notServed.has(chatId)) {
+      trace("discoverThenDeliver (auto-serve)");
       void this.discoverThenDeliver(chatId, message);
       return;
     }
+    trace("ignored (chat not served)");
     // Never log other chats' text. The claim word only reveals the chat id.
     if (message.text?.toLowerCase().includes(CLAIM_WORD)) {
       this.log(`claim: add ${chatId} to the allowlist`);
