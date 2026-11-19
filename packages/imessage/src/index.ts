@@ -46,6 +46,9 @@ const THUMBS_UP = "👍";
 /** A message containing this word reveals its chat id in the logs, so it can be allowlisted. */
 const CLAIM_WORD = "#treasury";
 
+/** Clock slack when deciding a row predates the watcher (chat.db stamps can lag the send). */
+const REPLAY_SLACK_MS = 2000;
+
 /** How many of our own recent sends to remember, so their echoes are never treated as input. */
 const RECENT_SENDS = 50;
 
@@ -239,6 +242,8 @@ export class PhotonChatPort implements ChatPort {
   private readonly recentSendTexts: string[] = [];
   private readonly ourMessageIds = new Set<string>();
   private watchStarting: Promise<void> | undefined;
+  /** Rows created before the watcher started are history, not new input (the watcher replays some). */
+  private watchStartedAt = Number.POSITIVE_INFINITY;
 
   constructor(config: PhotonChatPortConfig) {
     if (config.mode === "cloud") {
@@ -389,10 +394,12 @@ export class PhotonChatPort implements ChatPort {
 
   /** Start the single shared watcher on first use (idempotent; the SDK allows only one). */
   private ensureWatching(): Promise<void> {
+    if (!this.watchStarting) this.watchStartedAt = Date.now() - REPLAY_SLACK_MS;
     this.watchStarting ??= this.sdk
       .startWatching({
         onIncomingMessage: (message) => this.dispatch(message),
         onFromMeMessage: (message) => {
+          if (this.isHistory(message)) return;
           if (this.isOurSend(message)) return;
           if (this.selfHandle) this.dispatch(message);
         },
@@ -406,7 +413,12 @@ export class PhotonChatPort implements ChatPort {
   }
 
   /** Route one watcher row to reaction or message handlers (never both). */
+  private isHistory(message: Message): boolean {
+    return message.createdAt.getTime() < this.watchStartedAt;
+  }
+
   private dispatch(message: Message): void {
+    if (this.isHistory(message)) return;
     if (message.chatId === null || !this.allowed.has(message.chatId)) {
       // Never log other chats' text. The claim word only reveals the chat id.
       if (message.text?.toLowerCase().includes(CLAIM_WORD)) {

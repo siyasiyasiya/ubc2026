@@ -50,7 +50,8 @@ class FakeSdk implements PhotonSdk {
 // Row factories: full, strict-typed Message/Reaction/Attachment with overrides.
 // ----------------------------------------------------------------------------
 
-const AT = new Date("2026-01-02T03:04:05.000Z");
+// A minute ahead of now, so fixture rows always count as new (not replayed history).
+const AT = new Date(Date.now() + 60_000);
 const ALLOWED = ["iMessage;+;chat123", "iMessage;+;chatABC"];
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
@@ -464,5 +465,22 @@ describe("PhotonChatPort sent-message ids without text", () => {
     port.onMessage((m) => seen.push(m));
     sdk.watchEvents?.onFromMeMessage?.(makeMessage({ id: "late", isFromMe: true, participant: null, text: null }));
     expect(seen).toEqual([]);
+  });
+});
+
+describe("PhotonChatPort startup replay", () => {
+  it("ignores rows created before the watcher started", () => {
+    const sdk = new FakeSdk();
+    const port = new PhotonChatPort({ sdk, allowedChatIds: ALLOWED });
+    const messages: IncomingMessage[] = [];
+    const reactions: IncomingReaction[] = [];
+    port.onMessage((m) => messages.push(m));
+    port.onReaction((r) => reactions.push(r));
+    const old = new Date(Date.now() - 60_000);
+    sdk.watchEvents?.onIncomingMessage?.(makeMessage({ createdAt: old }));
+    sdk.watchEvents?.onIncomingMessage?.({ ...makeReactionRow({ kind: "like" }), createdAt: old });
+    sdk.watchEvents?.onIncomingMessage?.(makeMessage({ id: "new", createdAt: new Date() }));
+    expect(messages.map((m) => m.text)).toHaveLength(1);
+    expect(reactions).toEqual([]);
   });
 });
