@@ -19,7 +19,8 @@ import { PhotonChatPort } from "@gta/imessage";
 import { createCrossmintPurchaseAdapterFromEnv } from "@gta/purchase";
 import { SimulatedPurchaseAdapter } from "./simulated-purchase.js";
 import { elevenLabsFromEnv } from "./restaurant-call.js";
-import { usdc } from "@gta/core";
+import { usdc, type Usdc } from "@gta/core";
+import { getAddress } from "viem";
 import { arcClients, arcWalletAdapters, InMemoryWalletAdapter, JoinWatcher, sendWelcomeBalance } from "@gta/wallet";
 import { config, warnIfNoClaudeAuth } from "./config.js";
 import { GroupRuntime } from "./runtime.js";
@@ -53,6 +54,7 @@ const runtime = new GroupRuntime({
   ...restaurantCalls(),
   runTurn,
   runDmTurn,
+  ...testMoney(),
   store,
   defaultLimit: config.defaultLimit,
   names: config.names,
@@ -169,4 +171,23 @@ function restaurantCalls() {
   const calls = elevenLabsFromEnv();
   console.log(calls ? "calls: ElevenLabs voice agent" : "calls: off (set ELEVENLABS_API_KEY, ELEVENLABS_AGENT_ID, ELEVENLABS_PHONE_NUMBER_ID)");
   return calls ? { calls } : {};
+}
+
+/**
+ * Testnet only: members text Kitty "add $20" and get test dollars from the operator's wallet (top
+ * it up at faucet.circle.com). On unless TESTNET_TOPUP=off; capped per request and per day.
+ */
+function testMoney() {
+  if (!config.arc || process.env.TESTNET_TOPUP === "off") return {};
+  const { publicClient, walletClient } = arcClients(config.arc);
+  const maxUsd = Number(process.env.TESTNET_TOPUP_MAX_USD ?? 20);
+  const dailyUsd = Number(process.env.TESTNET_TOPUP_DAILY_USD ?? 50);
+  console.log(`test money: on (text Kitty "add $20"; up to $${maxUsd} a request, $${dailyUsd} a day)`);
+  return {
+    testMoney: {
+      send: (address: string, amount: Usdc) => sendWelcomeBalance(walletClient, publicClient, getAddress(address), amount),
+      maxUsd,
+      dailyUsd,
+    },
+  };
 }

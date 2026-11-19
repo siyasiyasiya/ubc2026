@@ -63,6 +63,9 @@ importers:
       '@resvg/resvg-js':
         specifier: 2.6.2
         version: 2.6.2
+      viem:
+        specifier: ^2.58.0
+        version: 2.58.1(bufferutil@4.2.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@4.6.7)
     devDependencies:
       tsx:
         specifier: ^4.23.15

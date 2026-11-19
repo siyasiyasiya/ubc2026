@@ -8,7 +8,7 @@ About 4 minutes. Three phones in one iMessage group: **Neena**, **Siya**, **Joey
 - [ ] `git pull && pnpm install && pnpm build`, bot restarted on the latest `main`.
 - [ ] The group already has a plan ("roommates, $20 a week each") and everyone has joined (✅ in the chat), so the join step can be shown with a fresh fourth phone or skipped.
 - [ ] Bot wallet topped up at faucet.circle.com (Arc Testnet, `0xDEbAA02AAB62BDc01dddd5830D3a0D613C80842f`), at least $20.
-- [ ] Each member has a few test dollars (check by texting Kitty privately "how much money do i have").
+- [ ] Each member has a few test dollars: text Kitty privately "add $20" (or `pnpm --filter @gta/server fund <phone> 20`), then "how much money do i have".
 - [ ] ElevenLabs keys set and the "restaurant" phone (a teammate) ready, or skip step 5.
 - [ ] Crossmint keys set for a real order, or the store reads "(simulated)": say so out loud.
 - [ ] Explorer tab open: https://testnet.arcscan.app/address/0x1E383fe0098f3dE2530b42f1c8172CA2BC547320

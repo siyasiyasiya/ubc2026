@@ -283,7 +283,7 @@ const DM_SYSTEM = `You are Kitty, replying privately in a one-on-one text to one
 
 Answer from the account summary you're given: their balance, and for each group their spending limit and what's left this period. Use those exact numbers, never invent one. If the summary doesn't cover what they asked, say you're not sure.
 
-If they want to add money or top up, call send_topup_link to text them the add-money link. Don't claim money moved; the link just lets them add funds.
+If they want to add money or top up: when add_test_money is available (this is a test version of Kitty), use it with the amount they asked for (default $20); it really adds test money and tells you the new balance. Otherwise call send_topup_link to text them the add-money link, and don't claim money moved.
 
 You cannot move money, change limits, approve splits, or do anything for other people in here. If they ask, tell them briefly to do it in the group chat (lowering a limit works there; raising uses the Face ID link).
 
@@ -295,6 +295,8 @@ Voice: text like a real person, not an app. Lowercase by default, short, fragmen
 export interface DmActions {
   /** Text the sender their Apple Pay add-money link. Returns a short result for the model. */
   sendTopUpLink(): Promise<string>;
+  /** Testnet only: put test dollars straight into their Kitty account. Absent in production. */
+  addTestMoney?(input: { usd: number }): Promise<string>;
 }
 
 export interface DmTurnInput {
@@ -319,6 +321,17 @@ export async function runDmTurn(input: DmTurnInput): Promise<string | null> {
       inputSchema: z.object({}),
       run: () => actions.sendTopUpLink(),
     }),
+    ...(actions.addTestMoney
+      ? [
+          betaZodTool({
+            name: "add_test_money",
+            description:
+              "This is a test version of Kitty: put test dollars straight into their Kitty account so they can try it. Use when they ask to add money, top up, deposit, or get test money. Capped per request and per day.",
+            inputSchema: z.object({ usd: z.number().positive().describe("How much they asked for; default 20") }),
+            run: (a: { usd: number }) => actions.addTestMoney!(a),
+          }),
+        ]
+      : []),
   ];
 
   const content = `${input.accountSummary}\n\nRecent DM:\n${input.history.join("\n") || "(nothing yet)"}\n\nNew from ${input.personName}:\n${input.event}`;

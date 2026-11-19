@@ -47,6 +47,8 @@ export interface RuntimeDeps {
   receipts: ReceiptReader;
   /** Kitty buys things for the group (pay before). Crossmint for real orders, or a labelled simulation. */
   purchase?: PurchaseAdapter;
+  /** Testnet only: send test dollars to an account (the operator's faucet). Off in production. */
+  testMoney?: { send: (address: string, amount: Usdc) => Promise<string>; maxUsd: number; dailyUsd: number };
   /** Kitty phones restaurants (ElevenLabs voice agent). Off when unset. */
   calls?: RestaurantCaller;
   /** How often to check on a call in progress. Default 5s. */
@@ -130,6 +132,8 @@ export class GroupRuntime {
   private readonly lastReceipt = new Map<string, Receipt>();
   /** Requests being set up right now: the payer and amount are known, so skip the state machine's "Who paid?". */
   private readonly starting = new Set<string>();
+  /** Test dollars sent per account today, so one person can't drain the bot's testnet wallet. */
+  private readonly testMoneySent = new Map<string, { day: string; usd: number }>();
   /** Store work (shopping, placing an order) runs outside the queue so a slow store can't stall the chat. */
   private readonly background = new Set<Promise<void>>();
   /** Chats whose roster we've already pulled from the chat port, so we seed members once per chat. */
@@ -624,6 +628,24 @@ export class GroupRuntime {
     return true;
   }
 
+  /** Testnet: send test dollars to this person's Kitty account, within the per-request and daily caps. */
+  private async addTestMoney(memberships: { record: GroupRecord; member: Member }[], usd: number): Promise<string> {
+    const testMoney = this.deps.testMoney!;
+    const linked = memberships.find((m) => m.member.wallet);
+    if (!linked) return "They don't have a Kitty account yet. Tell them to join in their group chat first.";
+    const address = linked.member.wallet!.address;
+    const day = new Date(this.now()).toISOString().slice(0, 10);
+    const sent = this.testMoneySent.get(address.toLowerCase());
+    const today = sent?.day === day ? sent.usd : 0;
+    const amount = Math.min(Math.round(usd * 100) / 100, testMoney.maxUsd, testMoney.dailyUsd - today);
+    if (amount <= 0) return `They already got $${today} of test money today (limit $${testMoney.dailyUsd}). Try again tomorrow.`;
+    await testMoney.send(address, usdc(amount));
+    this.testMoneySent.set(address.toLowerCase(), { day, usd: today + amount });
+    const balance = await this.walletFor(linked.record).balance?.(linked.member);
+    this.log(`test money: $${amount} to ${address}`);
+    return `Added $${amount} of test money.${balance === undefined ? "" : ` Their balance is now ${formatUsdc(balance)}.`}${amount < usd ? ` (Capped: $${testMoney.maxUsd} per request, $${testMoney.dailyUsd} a day.)` : ""}`;
+  }
+
   /** Sends a DM reply and records it in the DM history. */
   private async sendDm(handle: string, dmKey: string, _name: string, text: string): Promise<void> {
     this.remember(dmKey, `Kitty: ${text}`);
@@ -635,7 +657,9 @@ export class GroupRuntime {
   }
 
   private dmActionsFor(handle: string, dmKey: string, name: string, memberships: { record: GroupRecord; member: Member }[]): DmActions {
+    const testMoney = this.deps.testMoney;
     return {
+      ...(testMoney ? { addTestMoney: ({ usd }: { usd: number }) => this.addTestMoney(memberships, usd) } : {}),
       sendTopUpLink: async () => {
         const linked = memberships.find((m) => m.member.wallet);
         if (!linked) return "They don't have a Kitty account yet, so there's nothing to add money to. Tell them to join in their group first.";

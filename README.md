@@ -168,7 +168,10 @@ cd contracts && forge test            # 54 tests
 #   OPERATOR_PRIVATE_KEY, INVITE_SECRET, ONBOARD_URL, ANTHROPIC_API_KEY.
 #   Optional: CROSSMINT_* for real store orders, ELEVENLABS_* for restaurant calls.
 pnpm --filter @gta/server dev         # the iMessage bot
+pnpm --filter @gta/server fund <phone|address> <usd>   # testnet: send someone test dollars
 ```
+
+**Testing on testnet:** members text Kitty privately "add $20" and get test dollars straight into their Kitty account (from the bot's wallet, up to $20 a request and $50 a day; top the bot up at faucet.circle.com). Real money comes in through Apple Pay (Arc Onramp) instead.
 
 The bot runs on a Mac signed into Messages with **its own Apple ID**, and the terminal needs Full Disk Access (it reads `~/Library/Messages/chat.db`). Add that Apple ID to a group chat and it serves it; with `ALLOWED_CHAT_IDS` empty it serves every group it's in, so never leave it empty on a personal Apple ID. Only one bot can run per Mac (a lock file stops a second one).
 

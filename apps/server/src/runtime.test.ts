@@ -14,7 +14,7 @@ const OUTSIDER = "+1999";
 const CHAT = "group";
 
 /** A runtime whose "agent" proposes a $90 dinner paid by Neena, split three ways. */
-function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapter; wallets?: Record<string, string>; invites?: { baseUrl: string; secret: string }; chats?: string[]; participants?: string[]; chatName?: string; purchase?: PurchaseAdapter; calls?: RestaurantCaller } = {}) {
+function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapter; wallets?: Record<string, string>; invites?: { baseUrl: string; secret: string }; chats?: string[]; participants?: string[]; chatName?: string; purchase?: PurchaseAdapter; calls?: RestaurantCaller; testMoney?: { send: (address: string, amount: bigint) => Promise<string>; maxUsd: number; dailyUsd: number } } = {}) {
   const posted: { id: string; text: string }[] = [];
   const failing = { posts: 0, dms: 0 };
   const dms: { handle: string; text: string }[] = [];
@@ -85,6 +85,8 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
   const dmSummaries: string[] = [];
   const fakeDmTurn: typeof RunDmTurn = async ({ actions, event, accountSummary }) => {
     dmSummaries.push(accountSummary);
+    const test = /test money \$?(\d+)/i.exec(event);
+    if (test && actions.addTestMoney) return actions.addTestMoney({ usd: Number(test[1]) });
     if (event.toLowerCase().includes("add money")) return actions.sendTopUpLink();
     return `summary: ${accountSummary}`;
   };
@@ -97,6 +99,7 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
     ...(opts.chats ? { chats: opts.chats } : {}),
     ...(opts.purchase ? { purchase: opts.purchase } : {}),
     ...(opts.calls ? { calls: opts.calls, callPollMs: 1 } : {}),
+    ...(opts.testMoney ? { testMoney: opts.testMoney as never } : {}),
     receipts: { read: async (): Promise<Receipt> => ({ source: "photo", total: usdc(90), at: 0 }) },
     runTurn: fakeTurn,
     runDmTurn: fakeDmTurn,
@@ -602,6 +605,27 @@ describe("GroupRuntime", () => {
     const t = setup(200, { calls });
     await t.say(NEENA, "book uchi, no number");
     expect(t.posted.at(-1)?.text).toContain("doesn't look like a phone number");
+  });
+
+  it("texting Kitty for test money sends it to your account, within the caps", async () => {
+    const sent: { address: string; amount: bigint }[] = [];
+    const account = "0x00000000000000000000000000000000000000bb";
+    const t = setup(200, {
+      wallets: { [SIYA]: account },
+      testMoney: { send: async (address, amount) => (sent.push({ address, amount }), "0xtx"), maxUsd: 20, dailyUsd: 30 },
+    });
+    await t.say(SIYA, "hi");
+    await t.dm(SIYA, "can i get test money $20");
+    expect(sent).toEqual([{ address: account, amount: usdc(20) }]);
+    expect(t.dms.at(-1)?.text).toContain("Added $20 of test money.");
+
+    await t.dm(SIYA, "test money $50 please");
+    expect(sent.at(-1)!.amount).toBe(usdc(10)); // $30 a day: only $10 left today
+    expect(t.dms.at(-1)?.text).toContain("Capped");
+
+    await t.dm(SIYA, "test money $5");
+    expect(sent).toHaveLength(2);
+    expect(t.dms.at(-1)?.text).toContain("already got $30 of test money today");
   });
 
   it("passes errors back from run() so the join watcher retries instead of skipping", async () => {
