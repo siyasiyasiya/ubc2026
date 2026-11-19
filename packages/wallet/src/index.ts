@@ -87,3 +87,7 @@ export class InMemoryWalletAdapter implements WalletAdapter {
     return outcome;
   }
 }
+
+export { ArcWalletAdapter, arcWalletAdapters, groupIdForChat, pullSpendId } from "./arc.js";
+export type { ArcEnv, ArcWalletAdapterOptions } from "./arc.js";
+export { groupTreasuryAbi } from "./treasury-abi.js";

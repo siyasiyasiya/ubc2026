@@ -12,3 +12,6 @@ evm_version = "paris"
 [fmt]
 line_length = 100
 tab_width = 4
+
+[rpc_endpoints]
+arc_testnet = "${ARC_RPC_URL}"

@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Kitty</title>
+    <style>
+      :root {
+        --bg: #f6f6f4;
+        --card: #ffffff;
+        --text: #1b1b1a;
+        --muted: #6b6b66;
+        --line: #e3e3de;
+        --accent: #0a7cff;
+        --ok: #1f8a4c;
+        --bad: #c23a2b;
+        color-scheme: light dark;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #111110;
+          --card: #1c1c1b;
+          --text: #f1f1ee;
+          --muted: #a2a29c;
+          --line: #2f2f2d;
+          --accent: #3b95ff;
+          --ok: #4cc27f;
+          --bad: #ef6a5a;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100dvh;
+        display: grid;
+        place-items: center;
+        padding: 16px;
+        background: var(--bg);
+        color: var(--text);
+        font: 16px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+      }
+      main {
+        width: 100%;
+        max-width: 420px;
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 20px;
+        padding: 28px 22px;
+      }
+      h1 { font-size: 24px; margin: 0 0 8px; letter-spacing: -0.01em; }
+      p { margin: 0; }
+      #lede { color: var(--muted); margin-bottom: 22px; }
+      label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+      .row { display: flex; gap: 10px; margin-bottom: 18px; }
+      .amount { flex: 1; position: relative; }
+      .amount span { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--muted); }
+      input, select {
+        width: 100%;
+        font: inherit;
+        font-size: 20px;
+        padding: 12px 14px;
+        border-radius: 12px;
+        border: 1px solid var(--line);
+        background: var(--bg);
+        color: var(--text);
+      }
+      input { padding-left: 28px; }
+      select { font-size: 17px; height: 100%; }
+      button {
+        width: 100%;
+        font: inherit;
+        font-weight: 600;
+        font-size: 17px;
+        padding: 14px;
+        border: 0;
+        border-radius: 14px;
+        background: var(--accent);
+        color: #fff;
+        cursor: pointer;
+      }
+      button:disabled { opacity: 0.5; cursor: default; }
+      #returning { display: block; margin-top: 12px; text-align: center; font-size: 14px; color: var(--accent); text-decoration: none; }
+      #fund { margin-top: 20px; display: grid; gap: 10px; border-top: 1px solid var(--line); padding-top: 18px; }
+      #balance { font-size: 17px; font-weight: 600; }
+      #balance[data-kind="done"] { color: var(--ok); }
+      a.button { display: block; text-align: center; text-decoration: none; font-weight: 600; font-size: 17px; padding: 14px; border-radius: 14px; background: var(--text); color: var(--card); }
+      a.button[aria-disabled="true"] { opacity: 0.5; pointer-events: none; }
+      .hint { font-size: 13px; color: var(--muted); }
+      #status { margin-top: 16px; white-space: pre-line; font-size: 15px; color: var(--muted); }
+      #status[data-kind="error"] { color: var(--bad); }
+      #status[data-kind="done"] { color: var(--ok); font-weight: 500; }
+      footer { margin-top: 20px; font-size: 12px; color: var(--muted); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1 id="title">Kitty</h1>
+      <p id="lede"></p>
+      <form id="form">
+        <label for="amount">Your limit</label>
+        <div class="row">
+          <div class="amount">
+            <span>$</span>
+            <input id="amount" name="amount" inputmode="decimal" value="50" autocomplete="off" required />
+          </div>
+          <select name="period" aria-label="Resets every">
+            <option value="weekly">per week</option>
+            <option value="monthly">per month</option>
+          </select>
+        </div>
+        <button id="go" type="submit">Continue with Face ID</button>
+        <a id="returning" href="#">Used Kitty before on another phone?</a>
+      </form>
+      <p id="status" role="status"></p>
+      <div id="fund" hidden>
+        <p id="balance" role="status">Balance: …</p>
+        <a id="add" class="button" href="#" target="_blank" rel="noopener" aria-disabled="true">Add money with Apple Pay</a>
+        <p class="hint">Apple Pay or debit card. The money goes straight to your Kitty balance.</p>
+      </div>
+      <footer>Your money stays yours until something is actually bought. You only pay for things you 👍, and never more than this.</footer>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

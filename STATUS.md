@@ -33,7 +33,7 @@ The pieces work on their own; the demo needs them joined up. In order:
 
 | # | What | Owner | Status | Blocks |
 | --- | --- | --- | --- | --- |
-| 1 | Merge Track A: PR #3 (contract + Face ID page), then PR #7 (Arc wallet adapter, includes #3) | Neena | 🟡 in review | 4, 6 |
+| 1 | Merge Track A: contract, Face ID page, Arc Onramp, `ArcWalletAdapter` | Neena | ✅ merged (#7, included #3) | — |
 | 2 | DMs in `PhotonChatPort` (`sendDirectMessage` throws today) | Siya | ⬜ todo | 3 |
 | 3 | "in" → invite ticket → DM the Face ID link | Neena (runtime hook from Siya) | ⬜ todo | 4 |
 | 4 | Watch `Joined` events → link wallet to handle (`Member.wallet`) → fund new account (testnet) | Neena | ⬜ todo | 6 |
@@ -50,10 +50,10 @@ Owns: `contracts/`, `packages/wallet`, `packages/funding`, `apps/onboard`.
 
 | Task | Status | Notes |
 | --- | --- | --- |
-| `GroupTreasury.sol` + Foundry tests | ✅ done (PR #3) | One deployment for every chat; per-chat members + limits; single-use join tickets; operator relays 👍 (`approveFor`) but can only lower limits / remove members; failed pulls become debts. 49 tests incl. fuzz "operator can't take more than the signed limit". **Arc testnet: `0xDC349427bE00454800D17a7FB7f7946CA5884F98`** |
-| Face ID onboarding page (`apps/onboard`) | ✅ done (PR #3) | **https://kittyagent.vercel.app** — Circle passkey wallet + one gasless batched op (approve USDC + `join`). Tested on a real iPhone. First join = 2 Face ID prompts, later visits = 1. No crypto words shown. |
+| `GroupTreasury.sol` + Foundry tests | ✅ done | One deployment for every chat; per-chat members + limits; single-use join tickets; operator relays 👍 (`approveFor`) but can only lower limits / remove members; failed pulls become debts. 49 tests incl. fuzz "operator can't take more than the signed limit". **Arc testnet: `0xDC349427bE00454800D17a7FB7f7946CA5884F98`** |
+| Face ID onboarding page (`apps/onboard`) | ✅ done | **https://kittyagent.vercel.app** — Circle passkey wallet + one gasless batched op (approve USDC + `join`). Tested on a real iPhone. First join = 2 Face ID prompts, later visits = 1. No crypto words shown. |
 | `WalletAdapter` — in-memory dev impl | ✅ done (on main) | `InMemoryWalletAdapter`, weekly/monthly limits, idempotent pulls. Non-production. |
-| `WalletAdapter` — real impl (Arc) | 🟡 in review (PR #7) | `ArcWalletAdapter`: each pull = one-person split (`propose` → `approveFor` → `settle`), idempotent across restarts, over-limit → onchain debt. Anvil tests + live read on Arc. Full live pull waits on a member joining via the page. |
+| `WalletAdapter` — real impl (Arc) | ✅ done | `ArcWalletAdapter`: each pull = one-person split (`propose` → `approveFor` → `settle`), idempotent across restarts, over-limit → onchain debt. Anvil tests + live read on Arc. Full live pull waits on a member joining via the page. |
 | Funding — add money (Arc Onramp) | 🟡 built, untested on phone | `/api/onramp-session` on Vercel mints an Arc Onramp **sandbox** session delivering USDC straight to the member's account (Kitty never holds funds). Page shows balance + "Add money with Apple Pay"; `?a=<account>` top-up link for "you're short" DMs. **To do:** test on a phone and confirm sandbox USDC lands on Arc testnet. Production needs Circle KYB with our domain. |
 | Invite tickets + DM link | ⬜ todo | Server creates ticket for (handle, chat), DMs `kittyagent.vercel.app/?g=&t=&c=&n=`. Needs Track B DMs. |
 | `Joined` watcher → handle ↔ wallet | ⬜ todo | Poll `Joined(group, member, limit, period, ticket)` in ≤2,000-block chunks (public Arc RPC rate-limits), match ticket → handle, set `Member.wallet`, fund with faucet (`CIRCLE_API_KEY`). |
@@ -88,7 +88,7 @@ Owns: `packages/imessage`, `packages/agent`, `packages/purchase`.
 | --- | --- | --- |
 | `packages/core` — interfaces | ✅ done | frozen contract between tracks; change together only |
 | `apps/server` — wire real adapters | 🟡 pay-after done | Pay-after runs on the in-memory wallet. To do: per-chat Arc adapter, member wallets from `Joined`, pay-before (purchase) wiring. |
-| Open PRs to sort out | 🟡 | #3 + #7 Track A (merge #7, it contains #3). #4 / #5 / #6: check whether main's reconcile already covers them, then merge or close. #1 team workflow. |
+| Open PRs to sort out | 🟡 | #3 + #7 merged. Superseded by main, safe to close: #1 (workflow, c6d610d), #5 (wallet + 👍 rule, f8f014a/12487c5), #6 (`model.ts` no longer exists). #4 (imessage-kit 👍 resolver) stays open as the fallback if spectrum-ts group reactions fail. |
 | README for judges | ⬜ todo | Architecture, how Arc + Circle (passkeys, paymaster, Onramp) are used, contract address, why onchain. Draft explainer: onboarding + "why onchain" page (Neena has the link). |
 | **Decide:** project name | 🟡 working name | **Kitty**, page at `kittyagent.vercel.app`. Passkeys are tied to the domain, so pick the final domain before real users join. Package scope still `@gta/*`. |
 
