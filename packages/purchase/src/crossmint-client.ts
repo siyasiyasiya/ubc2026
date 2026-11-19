@@ -8,6 +8,8 @@
  *
  *   Base:   https://www.crossmint.com/api/unstable
  *   Auth:   X-API-KEY: <server key>   +   x-crossmint-user-id: <stable user id>
+ *           except order intents: X-API-KEY: <client key> + Authorization: Bearer <user JWT>
+ *           (a server key gets "Provided API key must be client specific").
  *
  *   POST /agent-checkouts                      start a checkout run
  *   GET  /agent-checkouts/{runId}              poll status + requiredAction + result
@@ -140,8 +142,12 @@ export interface WireOrderIntent {
 // ---------------------------------------------------------------------------
 
 export interface CrossmintClientConfig {
-  /** Server API key with `agent-checkouts.*` + `order-intents` scopes. */
+  /** Server API key with the `agent-checkouts.*` scopes. */
   apiKey: string;
+  /** Client API key with `order-intents.*` scopes; order intents refuse server keys. */
+  clientApiKey?: string;
+  /** Mints the user JWT that goes with the client key (see crossmint-jwt.ts). */
+  userToken?: (userId: string) => string;
   /** Stable per-user id; MUST match across runs, profiles and order intents. */
   userId: string;
   /** Defaults to https://www.crossmint.com */
@@ -168,12 +174,16 @@ const DEFAULT_BASE_URL = "https://www.crossmint.com";
 
 export class CrossmintHttpClient implements CrossmintAgentCheckouts {
   private readonly apiKey: string;
+  private readonly clientApiKey?: string;
+  private readonly userToken?: (userId: string) => string;
   private readonly userId: string;
   private readonly baseUrl: string;
   private readonly fetchImpl: FetchLike;
 
   constructor(config: CrossmintClientConfig) {
     this.apiKey = config.apiKey;
+    this.clientApiKey = config.clientApiKey;
+    this.userToken = config.userToken;
     this.userId = config.userId;
     this.baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, "");
     const injected = config.fetch;
@@ -194,11 +204,16 @@ export class CrossmintHttpClient implements CrossmintAgentCheckouts {
     };
   }
 
-  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  private async request<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    headers: Record<string, string> = this.headers(),
+  ): Promise<T> {
     const url = `${this.baseUrl}/api/unstable${path}`;
     const res = await this.fetchImpl(url, {
       method,
-      headers: this.headers(),
+      headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const raw = await res.text();
@@ -224,11 +239,14 @@ export class CrossmintHttpClient implements CrossmintAgentCheckouts {
   async answerPayment(runId: string, requestId: string, orderIntentId: string): Promise<void> {
     await this.request<unknown>("POST", `/agent-checkouts/${encodeURIComponent(runId)}/messages`, {
       id: `msg_${Date.now()}`,
-      response: {
-        requestId,
-        action: "submit",
-        answers: { orderIntentId },
-      },
+      parts: [
+        {
+          type: "input_response",
+          requestId,
+          action: "submit",
+          response: { kind: "payment", orderIntentId },
+        },
+      ],
     });
   }
 
@@ -237,6 +255,16 @@ export class CrossmintHttpClient implements CrossmintAgentCheckouts {
   }
 
   createOrderIntent(body: CreateOrderIntentBody): Promise<WireOrderIntent> {
-    return this.request<WireOrderIntent>("POST", "/order-intents", body);
+    if (!this.clientApiKey || !this.userToken) {
+      throw new Error(
+        "Crossmint order intents need a client key and a user JWT " +
+          "(CROSSMINT_CLIENT_API_KEY, CROSSMINT_JWT_PRIVATE_KEY)",
+      );
+    }
+    return this.request<WireOrderIntent>("POST", "/order-intents", body, {
+      "Content-Type": "application/json",
+      "X-API-KEY": this.clientApiKey,
+      Authorization: `Bearer ${this.userToken(this.userId)}`,
+    });
   }
 }

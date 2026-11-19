@@ -23,8 +23,10 @@
  *
  * ── Running a LIVE order ────────────────────────────────────────────────────
  * A real purchase needs a funded Crossmint account and these env vars (see
- * `fromEnv`): CROSSMINT_API_KEY (server key with agent-checkouts.* + order-
- * intents scopes), CROSSMINT_USER_ID, CROSSMINT_PAYMENT_METHOD_ID (a saved
+ * `fromEnv`): CROSSMINT_API_KEY (server key with agent-checkouts.* scopes),
+ * CROSSMINT_CLIENT_API_KEY (client key with order-intents.* scopes; order intents refuse
+ * server keys), CROSSMINT_JWT_PRIVATE_KEY (Kitty signs the user JWT that goes with it;
+ * public key at <ONBOARD_URL>/.well-known/jwks.json), CROSSMINT_USER_ID, CROSSMINT_PAYMENT_METHOD_ID (a saved
  * card registered for order intents), and optionally CROSSMINT_BUYER_PROFILE_ID
  * / CROSSMINT_BROWSER_PROFILE_ID. All credentials must be LIVE/production — the
  * quickstart notes that mixing test + production keys yields 401. Without a
@@ -53,6 +55,7 @@ import {
   type WirePaymentInteraction,
   type WireRun,
 } from "./crossmint-client.js";
+import { CrossmintJwtSigner } from "./crossmint-jwt.js";
 import { CrossmintBlockedError, CrossmintCheckoutError, CrossmintConfigError } from "./errors.js";
 import { moneyToUsdc, usdcToDecimalString } from "./money-codec.js";
 import {
@@ -380,13 +383,29 @@ function requireEnv(env: NodeJS.ProcessEnv, key: string): string {
   return v;
 }
 
+/**
+ * Kitty's JWT signer for Crossmint. The issuer defaults to the Face ID page, which also
+ * serves the public key at /.well-known/jwks.json.
+ */
+export function crossmintJwtSignerFromEnv(env: NodeJS.ProcessEnv = process.env): CrossmintJwtSigner {
+  return new CrossmintJwtSigner({
+    privateKeyPem: requireEnv(env, "CROSSMINT_JWT_PRIVATE_KEY"),
+    kid: env.CROSSMINT_JWT_KID ?? "kitty-1",
+    issuer: env.CROSSMINT_JWT_ISSUER ?? env.ONBOARD_URL ?? "https://kittyagent.vercel.app",
+    audience: env.CROSSMINT_JWT_AUDIENCE,
+  });
+}
+
 /** Build a real `CrossmintPurchaseAdapter` from environment variables. */
 export function createCrossmintPurchaseAdapterFromEnv(
   env: NodeJS.ProcessEnv = process.env,
   overrides: Partial<CrossmintPurchaseAdapterConfig> = {},
 ): CrossmintPurchaseAdapter {
+  const signer = crossmintJwtSignerFromEnv(env);
   const client = new CrossmintHttpClient({
     apiKey: env.CROSSMINT_API_KEY ?? requireEnv(env, "CROSSMINT_SERVER_API_KEY"),
+    clientApiKey: requireEnv(env, "CROSSMINT_CLIENT_API_KEY"),
+    userToken: (userId) => signer.tokenFor(userId),
     userId: requireEnv(env, "CROSSMINT_USER_ID"),
     baseUrl: env.CROSSMINT_BASE_URL,
   });

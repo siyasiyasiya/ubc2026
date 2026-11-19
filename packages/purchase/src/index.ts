@@ -13,6 +13,7 @@
 export {
   CrossmintPurchaseAdapter,
   createCrossmintPurchaseAdapterFromEnv,
+  crossmintJwtSignerFromEnv,
   type CrossmintPurchaseAdapterConfig,
 } from "./crossmint-adapter.js";
 
@@ -46,5 +47,7 @@ export {
   usdcToDecimalString,
   type CrossmintMoney,
 } from "./money-codec.js";
+
+export { CrossmintJwtSigner, type CrossmintJwtConfig } from "./crossmint-jwt.js";
 
 export { StubPurchaseAdapter } from "./stub-adapter.js";

@@ -18,7 +18,7 @@ const RUN_ID = "run_abc";
 const STORE_CHECKOUT: CheckoutMethod = { kind: "store_account", memberId: "m1", store: "SuperMart" };
 
 interface Recorder {
-  calls: Array<{ method: string; path: string; body: unknown }>;
+  calls: Array<{ method: string; path: string; body: unknown; headers: Record<string, string> }>;
   getRunQueue: WireRun[];
 }
 
@@ -34,7 +34,7 @@ function makeFetch(opts: {
     const method = init?.method ?? "GET";
     const path = new URL(url).pathname.replace("/api/unstable", "");
     const body = init?.body ? JSON.parse(init.body) : undefined;
-    rec.calls.push({ method, path, body });
+    rec.calls.push({ method, path, body, headers: init?.headers ?? {} });
 
     let payload: unknown = {};
     if (method === "POST" && path === "/agent-checkouts") {
@@ -55,7 +55,13 @@ function makeFetch(opts: {
 
 function adapter(fetch: FetchLike, renderer?: CheckoutScreenshotRenderer): CrossmintPurchaseAdapter {
   return new CrossmintPurchaseAdapter({
-    client: new CrossmintHttpClient({ apiKey: "sk_test", userId: "u1", fetch }),
+    client: new CrossmintHttpClient({
+      apiKey: "sk_test",
+      clientApiKey: "ck_test",
+      userToken: (userId) => `jwt-for-${userId}`,
+      userId: "u1",
+      fetch,
+    }),
     paymentMethodId: "pm_card_1",
     screenshotRenderer: renderer,
     pollIntervalMs: 0,
@@ -235,9 +241,22 @@ describe("placeOrder", () => {
       amount: { value: "42.50", currency: "USD" },
       merchant: { id: "merch_9", name: "SuperMart" },
     });
-    // The payment was answered with that order intent id.
+    // Order intents refuse server keys: client key + the user's JWT.
+    expect(oi?.headers).toMatchObject({ "X-API-KEY": "ck_test", Authorization: "Bearer jwt-for-u1" });
+    expect(oi?.headers).not.toHaveProperty("x-crossmint-user-id");
+    // The payment was answered with that order intent id, as an input_response part.
     const ans = rec.calls.find((c) => c.path.endsWith("/messages"));
-    expect(ans?.body).toMatchObject({ response: { requestId: "req_pay_1", answers: { orderIntentId: "oi_live_42" } } });
+    expect(ans?.headers).toMatchObject({ "X-API-KEY": "sk_test" });
+    expect(ans?.body).toMatchObject({
+      parts: [
+        {
+          type: "input_response",
+          requestId: "req_pay_1",
+          action: "submit",
+          response: { kind: "payment", orderIntentId: "oi_live_42" },
+        },
+      ],
+    });
   });
 
   it("uses a pre-approved order intent from checkoutAuth and skips authorization", async () => {
@@ -246,7 +265,7 @@ describe("placeOrder", () => {
 
     expect(rec.calls.find((c) => c.path === "/order-intents")).toBeUndefined();
     const ans = rec.calls.find((c) => c.path.endsWith("/messages"));
-    expect(ans?.body).toMatchObject({ response: { answers: { orderIntentId: "oi_preapproved" } } });
+    expect(ans?.body).toMatchObject({ parts: [{ response: { kind: "payment", orderIntentId: "oi_preapproved" } }] });
   });
 
   it("throws CrossmintBlockedError when payment is declined after answering", async () => {
