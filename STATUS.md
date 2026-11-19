@@ -42,10 +42,10 @@ The pieces work on their own; the demo needs them joined up. In order:
 | 7 | README for judges: architecture, Arc + Circle usage, contract address, how to run | both | 🟡 "How Arc and Circle are used" section done | submission |
 | 8 | Demo script + dry run on real phones | both | ⬜ todo | submission |
 | 9 | Short balance: DM a top-up + "pay it back" link, Face ID `payDebt`, "✅ paid back" in chat | Neena | 🟡 built (5fdb335 server, 7652da2 page `?r=`); page not deployed yet, live test pending | demo |
-| 10 | Limit changes from chat: lower → operator `lowerLimit` now; raise → DM Face ID link | Neena | 🟡 built (5fdb335; page prefills `?l=&p=`); live test pending | demo |
-| 11 | 👍 tapbacks on the card (local mode) | Siya | ✅ done (97109f4, reads `chat.db`); live test pending | demo |
+| 10 | Limit changes from chat: lower → operator `lowerLimit` now; raise → DM Face ID link | Neena | ✅ lowering live (Joey $200 → $50, block 72968628); raising: built, one-tap page live | demo |
+| 11 | 👍 tapbacks on the card (local mode) | Siya | ✅ live Nov 18: Joey's tapback approved #1 and his $4 settled on Arc (0x3416…24b2). Card ids sometimes fall back to `local:…`; the runtime matches those (e9fd2f9) and Siya is fixing the guid capture | demo |
 | 13 | One-tap Face ID page: amount decided in chat rides in the link, no form; iMessage link card (og.png) | Neena | 🟡 deployed Nov 18 (70d4f3d); phone test pending | demo |
-| 14 | Limits per chat: recurring (weekly/monthly, refills up to the limit) or one-time (trip); chat picks its plan (`set_group_plan`) | Neena | 🟡 built, contract redeployed; live test pending (everyone rejoins) | demo |
+| 14 | Limits per chat: recurring (weekly/monthly, refills up to the limit) or one-time (trip); chat picks its plan (`set_group_plan`) | Neena | ✅ live: Siya and Joey rejoined the new contract; Siya set "Roommates $10 a week". One-time (trip) not run live yet | demo |
 | 15 | Trip tab: splits settle now or go on the tab until "settle up" (`settle_up`) | Neena | 🟡 built; live test pending | demo |
 | 16 | Leave a chat's Kitty (`leave_kitty` → operator `removeMember`) | Neena | 🟡 built; live test pending | demo |
 | 12 | Neena's own messages: bot runs on her Apple ID, so it ignores her | Neena | 🔲 decide: `SELF_HANDLE` (built, off) or a separate Apple ID for the bot | demo |
