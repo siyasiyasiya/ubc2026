@@ -541,6 +541,38 @@ describe("GroupRuntime", () => {
     expect(t.posted.at(-1)?.text).toContain("merchant blocked the checkout. Nothing was charged.");
   });
 
+  it("asks a new member's name privately before sending their Face ID link", async () => {
+    const invites = { baseUrl: "https://kittyagent.vercel.app", secret: "s3cret" };
+    const DANA = "+1777";
+    const t = setup(200, { invites });
+    await t.say(NEENA, "trip plan please");
+    await t.say(DANA, "join me");
+    // Not in MEMBER_NAMES: the bot asks privately and holds the link.
+    expect(t.dms.at(-1)).toEqual({ handle: DANA, text: expect.stringContaining("what should i call you?") });
+    expect(t.dms.some((d) => d.text.includes("kittyagent.vercel.app"))).toBe(false);
+    expect(t.posted.some((p) => p.text.toLowerCase().includes("what should i call you"))).toBe(false);
+
+    await t.dm(DANA, "what is this?");
+    expect(t.dms.at(-1)?.text).toBe("just your first name is perfect 🙂");
+
+    await t.dm(DANA, "it's dana!");
+    const last = t.dms.at(-1)!;
+    expect(last.text).toContain("nice to meet you, Dana!");
+    const link = new URL(last.text.split(" ").at(-1)!);
+    expect(link.searchParams.get("n")).toBe("Dana");
+    expect(link.searchParams.get("t")).toBe(inviteTicket(invites.secret, CHAT, DANA));
+    expect(t.store.get(CHAT)!.group.members.find((m) => m.id === DANA)?.displayName).toBe("Dana");
+    expect(t.store.get(CHAT)!.awaitingName).toEqual([]);
+  });
+
+  it("skips the name question for someone already in MEMBER_NAMES", async () => {
+    const invites = { baseUrl: "https://kittyagent.vercel.app", secret: "s3cret" };
+    const t = setup(200, { invites });
+    await t.say(NEENA, "trip plan please");
+    await t.say(SIYA, "join me");
+    expect(t.dms.at(-1)?.text).toContain("kittyagent.vercel.app");
+  });
+
   it("passes errors back from run() so the join watcher retries instead of skipping", async () => {
     const t = setup();
     await expect(t.runtime.run(async () => { throw new Error("rpc down"); })).rejects.toThrow("rpc down");

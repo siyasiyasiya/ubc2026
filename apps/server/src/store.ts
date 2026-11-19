@@ -29,6 +29,8 @@ export interface GroupRecord {
   inviteNonces?: Record<string, number>;
   /** The chat's plan: each person's limit here, refilling weekly/monthly or once for a trip. */
   plan?: SpendingLimit;
+  /** Handles we asked "what should I call you?" privately; their Face ID link goes out once they answer. */
+  awaitingName?: string[];
 }
 
 interface StoreFile {

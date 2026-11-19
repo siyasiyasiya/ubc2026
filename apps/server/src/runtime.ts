@@ -72,6 +72,27 @@ function sameMessage(a: string, b: string): boolean {
   return bare(a) === bare(b);
 }
 
+/** A member we only know by handle shows as "…1234" until they tell us their name. */
+function hasRealName(member: Member): boolean {
+  return !member.displayName.startsWith("…");
+}
+
+/** A short reply that reads like a name ("Dana", "it's dana!", "Dana P"), else undefined. */
+const NOT_NAMES = new Set(["what", "who", "why", "how", "huh", "ok", "okay", "yes", "yeah", "no", "nope", "sure", "lol", "hi", "hey", "hello", "thanks", "ty"]);
+
+export function nameFromReply(text: string): string | undefined {
+  if (text.includes("?")) return undefined; // a question back, not a name
+  const cleaned = text
+    .trim()
+    .replace(/^(hi|hey|hello|yo)[,!\s]+/i, "")
+    .replace(/^(i'?m|im|it'?s|its|my name is|call me|this is)\s+/i, "")
+    .replace(/[.!?,🙂😊👋]+$/u, "")
+    .trim();
+  if (!cleaned || cleaned.length > 30 || /[@/:]|\d/.test(cleaned) || cleaned.split(/\s+/).length > 3) return undefined;
+  if (NOT_NAMES.has(cleaned.split(/\s+/)[0]!.toLowerCase())) return undefined;
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+}
+
 /** Contract reasons in words members understand. */
 function plainReason(reason: string | undefined): string {
   if (reason === "transfer failed") return "not enough in their Kitty account";
@@ -223,6 +244,16 @@ export class GroupRuntime {
     if (member.wallet) return `${member.displayName} already has a Kitty account here.`;
     if (!record.plan) {
       return "No link sent: this chat has no plan yet. Ask the group whether it's a trip (one-time limit) or weekly/monthly, and how much each, then call set_group_plan and send the link.";
+    }
+    if (!hasRealName(member)) {
+      // Ask privately, never in the group; the link follows once they answer (handleDirectMessage).
+      record.awaitingName = [...new Set([...(record.awaitingName ?? []), member.id])];
+      this.deps.store.save();
+      await this.deps.chat.sendDirectMessage(
+        member.id,
+        `hey! it's kitty 🐱 i'm setting you up for ${record.group.name}'s kitty. what should i call you? just reply with your name`,
+      );
+      return "Texted them privately asking for their name; their Face ID link goes out as soon as they answer. Don't ask for it in the group.";
     }
     const link = this.inviteLinkFor(record.group.chatId, member.id);
     const where = await this.dm(record, member, `you're invited to ${record.group.name}'s kitty 🎉 one Face ID tap and you're set up: ${link}`);
@@ -525,6 +556,7 @@ export class GroupRuntime {
   }
 
   private async handleDirectMessage(msg: IncomingMessage): Promise<void> {
+    if (await this.takeName(msg)) return;
     const handle = msg.senderHandle;
     const memberships = this.membershipsOf(handle);
     const name = memberships[0]?.member.displayName ?? this.deps.names[handle] ?? `…${handle.slice(-4)}`;
@@ -545,6 +577,35 @@ export class GroupRuntime {
       actions: this.dmActionsFor(handle, dmKey, name, memberships),
     });
     if (reply) await this.sendDm(handle, dmKey, name, reply);
+  }
+
+  /**
+   * The reply to "what should I call you?": save the name everywhere this person is a member, then
+   * send each waiting group's Face ID link. Returns false when no name question is pending.
+   */
+  private async takeName(msg: IncomingMessage): Promise<boolean> {
+    const handle = msg.senderHandle;
+    const waiting = this.deps.store.all().filter((r) => r.awaitingName?.includes(handle));
+    if (waiting.length === 0) return false;
+    const name = nameFromReply(msg.text);
+    if (!name) {
+      await this.deps.chat.sendDirectMessage(handle, "just your first name is perfect 🙂");
+      return true;
+    }
+    for (const record of this.membershipsOf(handle).map((m) => m.record)) {
+      const member = record.group.members.find((m) => m.id === handle);
+      if (member) member.displayName = name;
+    }
+    for (const record of waiting) {
+      record.awaitingName = record.awaitingName!.filter((h) => h !== handle);
+      const member = this.memberFor(record, handle);
+      member.displayName = name;
+      const link = this.inviteLinkFor(record.group.chatId, handle);
+      await this.deps.chat.sendDirectMessage(handle, `nice to meet you, ${name}! one Face ID tap and you're in ${record.group.name}'s kitty: ${link}`);
+    }
+    this.deps.store.save();
+    this.log(`${handle} is now "${name}"`);
+    return true;
   }
 
   /** Sends a DM reply and records it in the DM history. */
