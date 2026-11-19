@@ -44,6 +44,7 @@ The pieces work on their own; the demo needs them joined up. In order:
 | 9 | Short balance: DM a top-up + "pay it back" link, Face ID `payDebt`, "✅ paid back" in chat | Neena | 🟡 built (5fdb335 server, 7652da2 page `?r=`); page not deployed yet, live test pending | demo |
 | 10 | Limit changes from chat: lower → operator `lowerLimit` now; raise → DM Face ID link | Neena | 🟡 built (5fdb335; page prefills `?l=&p=`); live test pending | demo |
 | 11 | 👍 tapbacks on the card (local mode) | Siya | ✅ done (97109f4, reads `chat.db`); live test pending | demo |
+| 13 | One-tap Face ID page: amount decided in chat rides in the link, no form; iMessage link card (og.png) | Neena | 🟡 built, needs Vercel deploy + phone test | demo |
 | 12 | Neena's own messages: bot runs on her Apple ID, so it ignores her | Neena | 🔲 decide: `SELF_HANDLE` (built, off) or a separate Apple ID for the bot | demo |
 
 ---

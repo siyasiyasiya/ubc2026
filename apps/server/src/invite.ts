@@ -27,5 +27,6 @@ console.log(
     chatName: chatName ?? "your group",
     handle,
     displayName: name ?? config.names[handle] ?? "",
+    limit: config.defaultLimit,
   }),
 );

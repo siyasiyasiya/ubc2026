@@ -242,7 +242,10 @@ describe("GroupRuntime", () => {
     await t.say(SIYA, "join me");
     expect(t.dms).toHaveLength(1);
     expect(t.dms[0]!.handle).toBe(SIYA);
-    expect(new URL(t.dms[0]!.text.split(" ").at(-1)!).searchParams.get("t")).toBe(inviteTicket(invites.secret, CHAT, SIYA));
+    const joinLink = new URL(t.dms[0]!.text.split(" ").at(-1)!);
+    expect(joinLink.searchParams.get("t")).toBe(inviteTicket(invites.secret, CHAT, SIYA));
+    expect(joinLink.searchParams.get("l")).toBe("200.00"); // one tap: the starting limit rides in the link
+    expect(joinLink.searchParams.get("p")).toBe("weekly");
     expect(t.posted.at(-1)?.text).toBe("Texted Siya a private Face ID link.");
 
     t.failing.dms = 1;
@@ -298,6 +301,7 @@ describe("GroupRuntime", () => {
     const link = new URL(t.dms[0]!.text.split(" ").at(-1)!);
     expect(link.searchParams.get("r")).toBe(wallets[NEENA]);
     expect(link.searchParams.get("o")).toBe("Neena");
+    expect(link.searchParams.get("m")).toBe("30.00");
     expect(req.number).toBe(1);
 
     await t.runtime.handleDebtPaid({ debtor: wallets[SIYA] as `0x${string}`, creditor: wallets[NEENA] as `0x${string}`, amount: usdc(30), blockNumber: 1n, txHash: "0x01" });

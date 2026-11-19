@@ -7,7 +7,7 @@
  * and the invite CLI can mint links while the bot is running.
  */
 
-import { micros, type SpendingLimit, type Usdc } from "@gta/core";
+import { formatUsdc, micros, type SpendingLimit, type Usdc } from "@gta/core";
 import {
   encodePacked,
   getAddress,
@@ -44,6 +44,8 @@ export interface InviteLinkInput {
   displayName: string;
   /** Which invite this is for the person (0 for the first). */
   nonce?: number;
+  /** Starting limit shown on the page, so joining is one tap with nothing to type. */
+  limit?: SpendingLimit;
 }
 
 /** The link the agent DMs a member: `?g=<group>&t=<ticket>&c=<chat name>&n=<name>`. */
@@ -53,6 +55,10 @@ export function inviteLink(input: InviteLinkInput): string {
   url.searchParams.set("t", inviteTicket(input.secret, input.chatId, input.handle, input.nonce ?? 0));
   url.searchParams.set("c", input.chatName);
   if (input.displayName) url.searchParams.set("n", input.displayName);
+  if (input.limit) {
+    url.searchParams.set("l", formatUsdc(input.limit.amount).slice(1));
+    url.searchParams.set("p", input.limit.period);
+  }
   return url.toString();
 }
 

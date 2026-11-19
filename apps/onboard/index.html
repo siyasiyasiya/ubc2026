@@ -4,6 +4,15 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Kitty</title>
+    <!-- iMessage turns the link into a card from these. Absolute URLs: the preview fetcher needs them. -->
+    <meta property="og:title" content="Kitty" />
+    <meta property="og:description" content="Your group's shared money. Tap to confirm with Face ID." />
+    <meta property="og:site_name" content="Kitty" />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="https://kittyagent.vercel.app/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
     <style>
       :root {
         --bg: #f6f6f4;
@@ -29,11 +38,15 @@
         }
       }
       * { box-sizing: border-box; }
+      /* Section rules like `display: grid` would otherwise beat the hidden attribute. */
+      [hidden] { display: none !important; }
       body {
         margin: 0;
         min-height: 100dvh;
         display: grid;
         place-items: center;
+        /* Without this the column grows to the longest line and the card runs off a phone screen. */
+        grid-template-columns: minmax(0, 1fr);
         padding: 16px;
         background: var(--bg);
         color: var(--text);
@@ -90,6 +103,10 @@
       #status[data-kind="error"] { color: var(--bad); }
       #status[data-kind="done"] { color: var(--ok); font-weight: 500; }
       footer { margin-top: 20px; font-size: 12px; color: var(--muted); }
+      #summary { margin-bottom: 22px; text-align: center; }
+      #big, #owed { font-size: 34px; font-weight: 700; letter-spacing: -0.02em; }
+      #owed { margin-bottom: 18px; text-align: center; }
+      #change { display: inline-block; margin-top: 6px; font-size: 14px; color: var(--accent); text-decoration: none; }
     </style>
   </head>
   <body>
@@ -97,6 +114,11 @@
       <h1 id="title">Kitty</h1>
       <p id="lede"></p>
       <form id="form">
+        <div id="summary" hidden>
+          <p id="big"></p>
+          <a id="change" href="#">Change amount</a>
+        </div>
+        <div id="fields">
         <label for="amount">Your limit</label>
         <div class="row">
           <div class="amount">
@@ -107,6 +129,7 @@
             <option value="weekly">per week</option>
             <option value="monthly">per month</option>
           </select>
+        </div>
         </div>
         <button id="go" type="submit">Continue with Face ID</button>
         <a id="returning" href="#">Used Kitty before on another phone?</a>

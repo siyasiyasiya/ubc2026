@@ -71,9 +71,26 @@ function setup(): void {
     return;
   }
   $("title").textContent = joining ? `Join ${chatName}` : `Your limit for ${chatName}`;
+  // One tap: the amount was decided in the chat and came in the link, so there's nothing to type.
+  oneTap = Boolean(prefill && /^\d+(\.\d{1,2})?$/.test(prefill));
   $("lede").textContent = joining
-    ? `${name ? `Hi ${name}! ` : ""}Set the most ${chatName} can spend from you. It resets on its own, and only you can raise it.`
-    : `Change the most ${chatName} can spend from you.`;
+    ? `${name ? `Hi ${name}! ` : ""}${oneTap ? "This is" : "Set"} the most ${chatName} can spend from you. It resets on its own, and only you can raise it.`
+    : oneTap
+      ? `Your new limit for ${chatName}. Only you can raise it.`
+      : `Change the most ${chatName} can spend from you.`;
+  if (oneTap) {
+    $("summary").hidden = false;
+    $("fields").hidden = true;
+    $("big").textContent = amountText();
+    $("change").addEventListener("click", (e) => {
+      e.preventDefault();
+      oneTap = false;
+      $("summary").hidden = true;
+      $("fields").hidden = false;
+      amount.focus();
+      labelButton();
+    });
+  }
   labelButton();
   if (!isHex(group) || group.length !== 66 || (joining && (!isHex(ticket) || ticket.length !== 66))) {
     show("This link is incomplete. Ask Kitty in your chat for a new one.", "error");
@@ -85,12 +102,19 @@ function setup(): void {
   }
 }
 
-/** The button names the exact amount, so a typo like $10,050 is visible before Face ID. */
-function labelButton(): void {
+let oneTap = false;
+
+/** "$80 a week" from the form, or "" while the amount isn't valid. */
+function amountText(): string {
   const usd = $<HTMLInputElement>("amount").value.trim();
   const per = form.querySelector<HTMLSelectElement>("select")!.value === "monthly" ? "month" : "week";
-  const shown = /^\d+(\.\d{1,2})?$/.test(usd) ? `$${Number(usd).toLocaleString("en-US")} a ${per}` : "";
-  button.textContent = `${joining ? "Join" : "Save"}${shown ? ` · ${shown}` : ""} with Face ID`;
+  return /^\d+(\.\d{1,2})?$/.test(usd) ? `$${Number(usd).toLocaleString("en-US")} a ${per}` : "";
+}
+
+/** The button names the exact amount (unless it's shown big above), so a typo is visible before Face ID. */
+function labelButton(): void {
+  const shown = oneTap ? "" : amountText();
+  button.textContent = `${joining ? "Join" : oneTap ? "Confirm" : "Save"}${shown ? ` · ${shown}` : ""} with Face ID`;
 }
 
 /** An amount far above what the chat asked for (or over $1,000) needs a second tap. */
@@ -241,43 +265,43 @@ async function connect(returning: boolean) {
  */
 function setupPayBack(): void {
   $("title").textContent = `Pay ${creditorName} back`;
-  $("lede").textContent = `A share in ${chatName} didn't go through, so it's saved as owed to ${creditorName}.`;
+  $("lede").textContent = `A share in ${chatName} didn't go through, so you owe ${creditorName}:`;
   form.hidden = true;
   const pay = $<HTMLButtonElement>("pay");
   const owedText = $("owed");
   $("payback").hidden = false;
+  // The link says how much (for display); the tap reads what's really owed before paying.
+  const shown = params.get("m");
+  if (shown && /^\d+(\.\d{1,2})?$/.test(shown)) owedText.textContent = `$${shown}`;
+  pay.textContent = `Pay ${creditorName} back with Face ID`;
   if (!isAddress(creditor) || !clientKey || !treasury) {
     pay.disabled = true;
     return show("This link is incomplete. Ask Kitty in your chat for a new one.", "error");
   }
 
   let session: Awaited<ReturnType<typeof connect>> | undefined;
-  let owed = 0n;
   pay.addEventListener("click", async () => {
     pay.disabled = true;
     try {
-      if (!session) {
-        show("Waiting for Face ID…");
-        session = await connect(true);
-        owed = await session.client.readContract({
-          address: treasury,
-          abi: treasuryAbi,
-          functionName: "debts",
-          args: [session.account.address, creditor as Hex],
-        });
-        if (owed === 0n) {
-          owedText.textContent = `You don't owe ${creditorName} anything. 🎉`;
-          pay.hidden = true;
-          return show("", "done");
-        }
-        owedText.textContent = `You owe ${creditorName} $${formatUnits(owed, 6)}.`;
-        void showFunding(session.account.address);
-        pay.textContent = `Pay $${formatUnits(owed, 6)} back with Face ID`;
-        return show("If your balance is short, add money first.");
+      // A remembered passkey needs no prompt here; the Face ID is for signing the payment below.
+      session ??= await connect(true);
+      const owed = await session.client.readContract({
+        address: treasury,
+        abi: treasuryAbi,
+        functionName: "debts",
+        args: [session.account.address, creditor as Hex],
+      });
+      if (owed === 0n) {
+        owedText.textContent = "All square 🎉";
+        pay.hidden = true;
+        return show(`You don't owe ${creditorName} anything.`, "done");
       }
+      owedText.textContent = `$${formatUnits(owed, 6)}`;
       // USDC is native on Arc (18 decimals); the debt is in 6-decimal USDC units.
       if ((await balance(session.account.address)) < owed * 10n ** 12n) {
-        return show("Your balance is short. Add money first, then tap again.", "error");
+        void showFunding(session.account.address);
+        pay.textContent = "I added money · Pay with Face ID";
+        return show("Your balance is short. Add money below, then tap again.", "error");
       }
       show("Waiting for Face ID…");
       const hash = await session.bundler.sendUserOperation({
@@ -288,9 +312,9 @@ function setupPayBack(): void {
       const { receipt, success } = await session.bundler.waitForUserOperationReceipt({ hash });
       if (!success) throw new Error("The transaction didn't go through.");
       console.info("paid back", receipt.transactionHash);
-      owedText.textContent = `Paid ${creditorName} back $${formatUnits(owed, 6)}.`;
+      owedText.textContent = "All square 🎉";
       pay.hidden = true;
-      show("All square. You can head back to Messages.", "done");
+      show(`Paid ${creditorName} back $${formatUnits(owed, 6)}. You can head back to Messages.`, "done");
     } catch (err) {
       console.error(err);
       const message = (err as Error).message ?? String(err);

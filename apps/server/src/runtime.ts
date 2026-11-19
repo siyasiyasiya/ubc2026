@@ -178,6 +178,7 @@ export class GroupRuntime {
       handle,
       displayName: member.displayName,
       nonce,
+      limit: member.limit,
     });
   }
 
@@ -552,7 +553,11 @@ export class GroupRuntime {
     await this.say(record.group.chatId, `${head} (${formatUsdc(split.total)})\n${lines.join("\n")}`);
     for (const { member, amount, reason } of short) {
       if (!payee?.wallet || !this.deps.invites) continue;
-      const link = this.pageLink(record, member, { r: payee.wallet.address, o: payee.displayName });
+      const link = this.pageLink(record, member, {
+        r: payee.wallet.address,
+        o: payee.displayName,
+        m: formatUsdc(amount).slice(1),
+      });
       await this.dm(
         record,
         member,
