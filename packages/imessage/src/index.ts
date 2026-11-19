@@ -393,11 +393,22 @@ export class PhotonChatPort implements ChatPort {
     return result;
   }
 
-  async postImage(chatId: string, image: ImageRef, caption?: string): Promise<MessageRef> {
-    if (caption) this.rememberSend(caption);
-    // imessage-kit sends local file paths; callers must localize remote URIs first.
-    await this.sdk.send({ to: chatId, text: caption, attachments: [image.uri] });
-    return this.makeRef(chatId);
+  postImage(chatId: string, image: ImageRef, caption?: string): Promise<MessageRef> {
+    const run = async (): Promise<MessageRef> => {
+      if (caption) this.rememberSend(caption);
+      const startedAt = Date.now();
+      // Learn the sent row's id (same as postMessage) so a 👍 on the screenshot card can be matched.
+      const sentId = this.awaitSentId(chatId, caption ?? "", startedAt);
+      void this.ensureWatching();
+      // imessage-kit sends local file paths; callers must localize remote URIs first.
+      await this.sdk.send({ to: chatId, text: caption, attachments: [image.uri] });
+      const id = await sentId;
+      if (id) this.ourMessageIds.add(id);
+      return id ? { id, chatId } : this.makeRef(chatId);
+    };
+    const result = this.sendQueue.then(run, run);
+    this.sendQueue = result.catch(() => undefined);
+    return result;
   }
 
   async sendDirectMessage(handle: string, text: string): Promise<MessageRef> {

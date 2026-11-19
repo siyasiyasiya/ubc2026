@@ -977,18 +977,24 @@ export class GroupRuntime {
   private async perform(record: GroupRecord, request: RequestRecord, effect: Effect): Promise<void> {
     const chatId = record.group.chatId;
     switch (effect.type) {
-      case "post_preview":
+      case "post_preview": {
         request.split = effect.split;
-        // A store checkout image goes first; the 👍 goes on the text card after it.
+        const card = this.cardText(record, request);
+        // Pay-before: post the checkout screenshot WITH the approve text as its caption, so there's
+        // one card people see and 👍 (not a separate text message the reactions would miss).
         if (request.flow === "pay_before" && effect.screenshot.image.uri) {
           try {
-            await this.deps.chat.postImage(chatId, await asPng(effect.screenshot.image));
+            this.remember(chatId, `Treasury: ${card}`);
+            const ref = await this.deps.chat.postImage(chatId, await asPng(effect.screenshot.image), card);
+            request.previewMessageId = ref.id;
+            return;
           } catch (err) {
-            this.log(`#${request.number}: checkout image not posted (${(err as Error).message})`);
+            this.log(`#${request.number}: checkout image not posted (${(err as Error).message}), using a text card`);
           }
         }
-        request.previewMessageId = await this.say(chatId, this.cardText(record, request));
+        request.previewMessageId = await this.say(chatId, card);
         return;
+      }
       case "preview_cart":
         await this.previewCart(record, request, effect.cart);
         return;

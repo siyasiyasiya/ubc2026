@@ -304,7 +304,7 @@ describe("PhotonChatPort send paths", () => {
 
   it("postImage sends the local file path as an attachment with an optional caption", async () => {
     const sdk = new FakeSdk();
-    const port = new PhotonChatPort({ sdk, allowedChatIds: ALLOWED });
+    const port = new PhotonChatPort({ sdk, allowedChatIds: ALLOWED, sentIdTimeoutMs: 10 });
     await port.postImage(
       "iMessage;+;chatABC",
       { uri: "/Users/me/Pictures/cart.png", mimeType: "image/png" },
@@ -317,6 +317,15 @@ describe("PhotonChatPort send paths", () => {
         attachments: ["/Users/me/Pictures/cart.png"],
       },
     ]);
+  });
+
+  it("postImage learns the sent card's id so a 👍 on the screenshot can be matched", async () => {
+    const sdk = new FakeSdk();
+    const port = new PhotonChatPort({ sdk, allowedChatIds: ALLOWED, sentIdTimeoutMs: 1000 });
+    const pending = port.postImage("iMessage;+;chat123", { uri: "/cart.png", mimeType: "image/png" }, "🛒 approve?");
+    await tick();
+    sdk.watchEvents?.onFromMeMessage?.(makeMessage({ id: "card-img", isFromMe: true, participant: null, text: "🛒 approve?" }));
+    expect((await pending).id).toBe("card-img");
   });
 
   it("sendDirectMessage sends to a bare handle", async () => {

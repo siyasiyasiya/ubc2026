@@ -31,7 +31,11 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
       posted.push({ id, text });
       return { id, chatId };
     },
-    postImage: async (chatId) => ({ id: "img", chatId }),
+    postImage: async (chatId, _image, caption) => {
+      const id = `msg-${posted.length + 1}`;
+      posted.push({ id, text: caption ?? "" });
+      return { id, chatId };
+    },
     sendDirectMessage: async (handle, text) => {
       if (failing.dms > 0) {
         failing.dms--;
