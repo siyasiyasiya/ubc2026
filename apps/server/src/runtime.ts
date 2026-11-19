@@ -594,10 +594,12 @@ export class GroupRuntime {
         const limit = status.limit.amount > 0n ? status.limit : member.limit;
         const per = limit.period === "once" ? "in total (one time)" : `per ${limit.period === "weekly" ? "week" : "month"}`;
         const resets = resetsIn(limit, status.resetsAt ?? status.limit.resetsAt, this.now());
-        return `- ${record.group.name}: ${formatUsdc(status.remaining)} left of a ${formatUsdc(limit.amount)} limit ${per}${resets ? `, ${resets}` : ""}`;
+        const activity = this.recentActivity(record, member.id, 5);
+        const history = activity.length ? `\n     recent: ${activity.map((l) => l.replace(/^- /, "")).join(" | ")}` : "";
+        return `- ${record.group.name}: ${formatUsdc(status.remaining)} left of a ${formatUsdc(limit.amount)} limit ${per}${resets ? `, ${resets}` : ""}${history}`;
       }),
     );
-    return `Person: ${name}\n${balanceLine}\n\nTheir groups:\n${groups.join("\n") || "- (none yet)"}`;
+    return `Person: ${name}\n${balanceLine}\n\nTheir groups (and their recent transactions in each, across all their chats):\n${groups.join("\n") || "- (none yet)"}`;
   }
 
   private async handleDirectMessage(msg: IncomingMessage): Promise<void> {
@@ -730,6 +732,32 @@ export class GroupRuntime {
     this.deps.store.save();
   }
 
+  /**
+   * Completed money events in a chat (settled or failed splits and buys), newest first. Pass a
+   * memberId to keep only the ones that person was in (used for the cross-chat DM summary).
+   */
+  private recentActivity(record: GroupRecord, memberId?: string, limit = 8): string[] {
+    const done = record.requests.filter((r) => r.state.name === "done" || r.state.name === "failed");
+    const mine = memberId
+      ? done.filter((r) => r.split && (r.split.payeeMemberId === memberId || memberId in r.split.shares))
+      : done;
+    return mine
+      .slice(-limit)
+      .reverse()
+      .map((r) => {
+        const total = formatUsdc(r.split?.total ?? usdc(0));
+        const payee = r.split ? this.name(record, r.split.payeeMemberId) : "?";
+        const verb = r.flow === "pay_before" ? "bought, paid by" : "split, paid back to";
+        const debts = (r.state as { debts?: { memberId: string; amount: Usdc }[] }).debts ?? [];
+        const status = debts.length
+          ? `owed: ${debts.map((d) => `${this.name(record, d.memberId)} ${formatUsdc(d.amount)}`).join(", ")}`
+          : r.state.name === "failed"
+            ? "didn't go through"
+            : "settled";
+        return `- #${r.number} ${r.title} ${total} (${verb} ${payee}): ${status}`;
+      });
+  }
+
   private async snapshot(record: GroupRecord): Promise<string> {
     const members = await Promise.all(
       record.group.members.map(async (m) => {
@@ -754,7 +782,8 @@ export class GroupRuntime {
     const tab = record.requests
       .filter((r) => r.onTab && r.state.name === "settling")
       .map((r) => `- #${r.number} ${r.title} ${formatUsdc(r.split?.total ?? usdc(0))}`);
-    return `Plan: ${plan}\n\nMembers:\n${members.join("\n") || "- (none yet)"}\n\nOpen requests:\n${open.join("\n") || "- none"}\n\nOn the tab (settles on "settle up"):\n${tab.join("\n") || "- nothing"}`;
+    const recent = this.recentActivity(record);
+    return `Plan: ${plan}\n\nMembers:\n${members.join("\n") || "- (none yet)"}\n\nOpen requests:\n${open.join("\n") || "- none"}\n\nOn the tab (settles on "settle up"):\n${tab.join("\n") || "- nothing"}\n\nRecent transactions in THIS chat (for history questions):\n${recent.join("\n") || "- none yet"}`;
   }
 
   // --- what the agent can do --------------------------------------------------

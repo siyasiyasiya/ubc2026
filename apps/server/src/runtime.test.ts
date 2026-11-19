@@ -255,6 +255,18 @@ describe("GroupRuntime", () => {
     expect(t.dms.at(-1)?.text.toLowerCase()).toContain("group");
   });
 
+  it("a DM summary includes the person's recent transaction history", async () => {
+    const t = setup();
+    const req = await t.proposeDinner();
+    await t.react(SIYA, req.previewMessageId!);
+    await t.react(TRISTAN, req.previewMessageId!);
+    expect(t.request().state.name).toBe("done");
+
+    await t.dm(SIYA, "what are my recent transactions?");
+    expect(t.dmSummaries.at(-1)).toContain("Dinner");
+    expect(t.dmSummaries.at(-1)).toContain("$90.00");
+  });
+
   it("pulls through the chat's own wallet adapter, between members' Kitty accounts", async () => {
     const chats: string[] = [];
     const pulls: PullParams[] = [];
