@@ -310,6 +310,21 @@ export function transition(state: RequestState, event: RequestEvent): Transition
 
     case "awaiting_receipt": {
       if (event.type === "receipt_read") {
+        // No estimate means nobody agreed to an amount yet: everyone in must 👍 the real total.
+        if (state.estimate === undefined) {
+          return ok(
+            {
+              name: "awaiting_approval",
+              split: event.split,
+              screenshot: event.screenshot,
+              approvals: [],
+              requiredApprovers: state.participants,
+              deadline: event.deadline,
+              receipt: event.receipt,
+            },
+            [{ type: "post_preview", screenshot: event.screenshot, split: event.split }],
+          );
+        }
         const over = overByEstimate(event.receipt.total, state.estimate, event.tolerance);
         if (over !== undefined) {
           // Final is higher than the estimate by more than tolerance → re-approve.
