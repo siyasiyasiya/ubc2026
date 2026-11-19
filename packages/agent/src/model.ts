@@ -7,7 +7,7 @@
  * Anthropic API requires a real API key from console.anthropic.com.
  */
 
-import { anthropic } from "@ai-sdk/anthropic";
+import { createAnthropic } from "@ai-sdk/anthropic";
 import type { LanguageModelV1 } from "ai";
 
 /**
@@ -25,5 +25,28 @@ export const CLAUDE_MODEL_ID = "claude-sonnet-5";
  * key. The key is only read when a real request is actually made.
  */
 export function defaultModel(): LanguageModelV1 {
-  return anthropic(CLAUDE_MODEL_ID);
+  provider ??= createAnthropic({ fetch: withoutSamplingParams });
+  return provider(CLAUDE_MODEL_ID);
 }
+
+let provider: ReturnType<typeof createAnthropic> | undefined;
+
+/**
+ * AI SDK v4 always sends `temperature: 0` (its own "TODO v5 remove default 0"), and current
+ * Claude models (Sonnet 5, Opus 4.7 and later) reject `temperature`, `top_p` and `top_k` with a
+ * 400. Strip them from the request body before it goes out.
+ */
+export const withoutSamplingParams: typeof fetch = async (input, init) => {
+  if (typeof init?.body === "string") {
+    try {
+      const body = JSON.parse(init.body) as Record<string, unknown>;
+      delete body.temperature;
+      delete body.top_p;
+      delete body.top_k;
+      init = { ...init, body: JSON.stringify(body) };
+    } catch {
+      // Not JSON: send as-is.
+    }
+  }
+  return fetch(input, init);
+};
