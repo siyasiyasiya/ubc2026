@@ -802,6 +802,23 @@ export class GroupRuntime {
     return `simplest way to settle up:\n${lines.join("\n")}${note}`;
   }
 
+  /** A spending summary ("what did we spend?"): total, per-person breakdown, biggest spender. */
+  private spendingSummary(record: GroupRecord): string {
+    const done = record.requests.filter((r) => r.state.name === "done" && r.split);
+    if (done.length === 0) return "no spending in this chat yet";
+    let total = 0n;
+    const perPerson = new Map<string, bigint>();
+    for (const r of done) {
+      total += r.split!.total;
+      for (const [id, amt] of Object.entries(r.split!.shares)) perPerson.set(id, (perPerson.get(id) ?? 0n) + amt);
+    }
+    const ranked = [...perPerson].sort((a, b) => (b[1] > a[1] ? 1 : b[1] < a[1] ? -1 : a[0] < b[0] ? -1 : 1));
+    const byPerson = ranked.map(([id, amt]) => `${this.name(record, id)} ${formatUsdc(amt as Usdc)}`).join(", ");
+    const top = ranked[0];
+    const topLine = top ? `\nbiggest spender: ${this.name(record, top[0])} (${formatUsdc(top[1] as Usdc)})` : "";
+    return `${record.group.name}: ${formatUsdc(total as Usdc)} across ${done.length} thing${done.length === 1 ? "" : "s"}.\nby person: ${byPerson}${topLine}`;
+  }
+
   private async snapshot(record: GroupRecord): Promise<string> {
     const members = await Promise.all(
       record.group.members.map(async (m) => {
@@ -893,6 +910,7 @@ export class GroupRuntime {
       },
       settleUp: async () => this.settleUp(record),
       netDebts: async () => this.netSettlement(record),
+      spendingSummary: async () => this.spendingSummary(record),
       callRestaurant: async (input) => {
         try {
           return await this.callRestaurant(record, sender, input);

@@ -54,6 +54,7 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
     if (event.includes("join me")) return actions.sendJoinLink({});
     if (event.includes("split by item")) return actions.splitByItem({ payer: "Neena", claims: { Siya: [1], Tristan: [2] } });
     if (event.includes("who owes")) return actions.netDebts();
+    if (event.includes("what did we spend")) return actions.spendingSummary();
     if (event.includes("book uchi")) {
       return actions.callRestaurant({ restaurant: "Uchi", phone: event.includes("no number") ? "ask them" : "(512) 555-0100", partySize: 4, when: "tomorrow 7:30pm" });
     }
@@ -244,6 +245,20 @@ describe("GroupRuntime", () => {
     expect(msg).toContain("settle up");
     expect(msg).toContain("Siya → Neena $30.00");
     expect(msg).toContain("Tristan → Neena $30.00");
+  });
+
+  it("gives a spending summary with per-person totals and the biggest spender", async () => {
+    const t = setup(); // default $200 limit, splits settle
+    const req = await t.proposeDinner(); // $90 dinner, Neena paid, Siya+Tristan each $30
+    await t.react(SIYA, req.previewMessageId!);
+    await t.react(TRISTAN, req.previewMessageId!);
+    expect(t.request().state.name).toBe("done");
+
+    await t.say(NEENA, "what did we spend?");
+    const msg = t.posted.at(-1)!.text;
+    expect(msg).toContain("$90.00"); // total
+    expect(msg).toContain("Neena $30.00"); // each person's share
+    expect(msg).toContain("biggest spender");
   });
 
   it("stays quiet when the agent has nothing to say", async () => {
