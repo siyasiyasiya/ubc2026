@@ -69,7 +69,7 @@ export interface TreasuryActions {
   }): Promise<string>;
   setMyLimit(input: { usd: number; period: "weekly" | "monthly" | "once" }): Promise<string>;
   /** Set the chat's plan: the default limit for everyone here and whether it refills. */
-  setGroupPlan(input: { usd: number; period: "weekly" | "monthly" | "once" }): Promise<string>;
+  setGroupPlan(input: { usd: number; period: "weekly" | "monthly" | "once"; name?: string }): Promise<string>;
   /** Settle everything on the group's tab now. */
   settleUp(): Promise<string>;
   /** The sender leaves this chat's Kitty. */
@@ -144,8 +144,12 @@ export async function runTurn(input: TurnInput): Promise<string | null> {
       inputSchema: z.object({
         usd: z.number().positive().describe("Each person's limit in this chat"),
         period: z.enum(["weekly", "monthly", "once"]).describe("'once' for a trip (never refills)"),
+        name: z
+          .string()
+          .optional()
+          .describe("Short name for this chat's Kitty, e.g. 'Tahoe trip' or 'Roommates'. Shown on invite links. Ask if unknown."),
       }),
-      run: (a) => actions.setGroupPlan(a),
+      run: (a) => actions.setGroupPlan(a.name ? { usd: a.usd, period: a.period, name: a.name } : { usd: a.usd, period: a.period }),
     }),
     betaZodTool({
       name: "settle_up",

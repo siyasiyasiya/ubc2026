@@ -70,6 +70,9 @@ function sameMessage(a: string, b: string): boolean {
 function plainReason(reason: string | undefined): string {
   if (reason === "transfer failed") return "not enough in their Kitty account";
   if (reason === "over limit") return "over their limit";
+  if (reason === "payer hasn't linked a wallet yet") return "the payer isn't set up in Kitty yet";
+  if (reason === "hasn't linked a wallet yet" || reason === "hasn't joined this chat's treasury") return "not set up in Kitty yet";
+  if (reason?.startsWith("Arc error")) return "couldn't reach the network, try again";
   return reason ?? "failed";
 }
 
@@ -225,7 +228,7 @@ export class GroupRuntime {
     const where = await this.dm(
       record,
       member,
-      `tap to confirm your new ${record.group.name} limit, ${formatUsdc(limit.amount)} a ${limit.period === "weekly" ? "week" : "month"}, with Face ID: ${this.pageLink(record, member, { l: formatUsdc(limit.amount).replace("$", ""), p: limit.period })}`,
+      `tap to confirm your new ${record.group.name} limit, ${formatUsdc(limit.amount)} ${perPeriod(limit.period)}, with Face ID: ${this.pageLink(record, member, { l: formatUsdc(limit.amount).replace("$", ""), p: limit.period })}`,
     );
     return `Raising needs ${member.displayName}'s Face ID, so I ${where === "dm" ? "texted them" : "posted"} a link to confirm.`;
   }
@@ -536,12 +539,13 @@ export class GroupRuntime {
         }
       },
       setMyLimit: async ({ usd, period }) => this.setLimit(record, sender, { amount: usdc(usd), period }),
-      setGroupPlan: async ({ usd, period }) => {
+      setGroupPlan: async ({ usd, period, name }) => {
         record.plan = { amount: usdc(usd), period };
+        if (name?.trim()) record.group.name = name.trim();
         if (period === "once") record.group.kind = "trip";
         // People who haven't confirmed a limit yet get the plan in their join link.
         for (const m of record.group.members) if (!m.wallet) m.limit = { ...record.plan };
-        return `This chat's plan is now ${formatUsdc(record.plan.amount)} each ${perPeriod(period)}.`;
+        return `${record.group.name}'s plan is now ${formatUsdc(record.plan.amount)} each ${perPeriod(period)}.`;
       },
       settleUp: async () => this.settleUp(record),
       leave: async () => this.leave(record, sender),
@@ -660,7 +664,9 @@ export class GroupRuntime {
       else {
         failed++;
         const reason = plainReason(outcome.reason);
-        lines.push(`${who} ✗ ${reason} (still owed)`);
+        // These failures happen before anything is attempted onchain, so no debt is recorded.
+        const attempted = !/linked a wallet|hasn't joined|Arc error|not a member/.test(outcome.reason ?? "");
+        lines.push(attempted ? `${who} ✗ ${reason} (still owed)` : `${who} ✗ ${reason}, nothing moved`);
         // Onchain failures become debts the member can pay back later from the Face ID page.
         if (from && outcome.txRef && payee?.wallet) short.push({ member: from, amount, reason });
       }

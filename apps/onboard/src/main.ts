@@ -216,6 +216,14 @@ async function submit(event: Event, returning = false): Promise<void> {
       client.readContract({ address: usdc, abi: erc20Abi, functionName: "allowance", args: [account.address, treasury] }),
     ]);
     const alreadyIn = member[0];
+    // An old invite reopened after joining must not quietly reset the limit to the link's amount
+    // (it put Joey back to $200). Changing a limit only happens from a limit link.
+    if (joining && alreadyIn) {
+      form.hidden = true;
+      show(`You're already in ${chatName}. To change your limit, ask Kitty in the chat.`, "done");
+      void showFunding(account.address);
+      return;
+    }
 
     const calls: { to: Hex; data: Hex }[] = [];
     // One approval covers every chat; the contract's per-chat limit is what caps each pull.

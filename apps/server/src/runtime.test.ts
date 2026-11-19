@@ -153,6 +153,21 @@ describe("GroupRuntime", () => {
     expect(t.posted.at(-1)!.text).toContain("over limit ($20.00 left this week) (still owed)");
   });
 
+  it("says nothing moved (not 'still owed') when someone isn't set up yet", async () => {
+    const inner = new InMemoryWalletAdapter();
+    const wallet: WalletAdapter = {
+      id: "arc-like",
+      getLimitStatus: (m) => inner.getLimitStatus(m),
+      canPull: (m, a) => inner.canPull(m, a),
+      pull: async () => ({ status: "failed", reason: "hasn't linked a wallet yet" }),
+    };
+    const t = setup(200, { wallet });
+    const req = await t.proposeDinner();
+    await t.react(SIYA, req.previewMessageId!);
+    await t.react(TRISTAN, req.previewMessageId!);
+    expect(t.posted.some((p) => p.text.includes("Siya → Neena $30.00 ✗ not set up in Kitty yet, nothing moved"))).toBe(true);
+  });
+
   it("stays quiet when the agent has nothing to say", async () => {
     const t = setup();
     await t.say(SIYA, "lol");
@@ -366,7 +381,7 @@ describe("GroupRuntime", () => {
     const invites = { baseUrl: "https://kittyagent.vercel.app", secret: "s3cret" };
     const t = setup(200, { invites });
     await t.say(NEENA, "trip plan please");
-    expect(t.posted.at(-1)?.text).toBe("This chat's plan is now $200.00 each in total.");
+    expect(t.posted.at(-1)?.text).toBe("Group's plan is now $200.00 each in total.");
     await t.say(SIYA, "join me");
     const link = new URL(t.dms.at(-1)!.text.split(" ").at(-1)!);
     expect(link.searchParams.get("l")).toBe("200.00");
