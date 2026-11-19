@@ -51,6 +51,8 @@ import type { BuildCartInput, PlaceOrderInput, PreviewResult, PurchaseAdapter } 
 import {
   CrossmintHttpClient,
   type CrossmintAgentCheckouts,
+  type FormAnswers,
+  type WireFormField,
   type WireFormInteraction,
   type WireLineItem,
   type WirePaymentInteraction,
@@ -113,6 +115,24 @@ function isForm(run: WireRun): run is WireRun & {
   return run.status === "awaiting_input" && run.requiredAction?.interaction?.kind === "form";
 }
 
+const ALIASES: Record<string, string[]> = {
+  us: ["united states", "united states of america", "usa"],
+};
+
+/** A choice field wants an option's value: match ours to an option label (or value). */
+function choiceFor(field: WireFormField, wanted: string): string | undefined {
+  const w = wanted.trim().toLowerCase();
+  const names = [w, ...(ALIASES[w] ?? [])];
+  const options = (field.input?.options ?? []).filter((o) => !o.disabled);
+  return options.find((o) => names.includes((o.label ?? "").trim().toLowerCase()) || o.value.toLowerCase() === w)
+    ?.value;
+}
+
+/** "Use your saved Link / Shop Pay account?" — always the guest, pay-by-card option. */
+function guestChoice(field: WireFormField): string | undefined {
+  return (field.input?.options ?? []).find((o) => !o.disabled && /guest|pay by card/i.test(o.label ?? ""))?.value;
+}
+
 /** What Kitty can tell a store at checkout. */
 export interface BuyerDetails {
   email?: string;
@@ -141,6 +161,13 @@ function buyerValue(b: BuyerDetails, field: string): string | undefined {
   if (/city|town|locality/.test(f)) return b.city;
   if (/address|street|line ?1/.test(f)) return b.address;
   return undefined;
+}
+
+/** The merchant fields an order intent accepts; anything else in the payment request is dropped. */
+function pickMerchant(m: unknown): unknown {
+  if (!m || typeof m !== "object") return m;
+  const keys = ["name", "url", "countryCode", "acquirerBin", "categoryCode"];
+  return Object.fromEntries(Object.entries(m).filter(([k]) => keys.includes(k)));
 }
 
 function hostnameOf(url: string): string | undefined {
@@ -199,7 +226,7 @@ export class CrossmintPurchaseAdapter implements PurchaseAdapter {
   async buildCart(input: BuildCartInput): Promise<Cart> {
     const startUrl = this.cfg.resolveStartUrl(input);
     const run = await this.cfg.client.createRun({
-      request: { startUrl, task: buildTask(input) },
+      request: { startUrl, task: buildTask(input, this.cfg.store) },
       constraints: {
         maxCost: { amount: usdcToDecimalString(this.cfg.maxCost), currency: "USD" },
       },
@@ -213,6 +240,7 @@ export class CrossmintPurchaseAdapter implements PurchaseAdapter {
     // Poll until the run reaches the payment step (total known) or stops, answering the
     // store's questions (email, name, zip…) along the way.
     const answered = new Set<string>();
+    let formRetries = 0;
     let settled: WireRun;
     for (;;) {
       settled = await this.waitUntil(
@@ -221,7 +249,14 @@ export class CrossmintPurchaseAdapter implements PurchaseAdapter {
       );
       if (!isForm(settled)) break;
       const { requestId, interaction } = settled.requiredAction;
-      await this.cfg.client.answerForm(run.runId, requestId, this.answerFields(run.runId, interaction.fields ?? []));
+      try {
+        await this.cfg.client.answerForm(run.runId, requestId, this.answerFields(run.runId, interaction.fields ?? []));
+      } catch (err) {
+        // The store sometimes swaps in a new form while we answer the old one: re-read and retry.
+        if (!/does not match the requested form/i.test((err as Error).message) || ++formRetries > 3) throw err;
+        await this.cfg.sleep(this.cfg.pollIntervalMs);
+        continue;
+      }
       answered.add(requestId);
     }
     this.throwIfStopped(settled);
@@ -299,15 +334,14 @@ export class CrossmintPurchaseAdapter implements PurchaseAdapter {
   // -- internals -------------------------------------------------------------
 
   /** Answer every field we have a value for; stop (nothing charged) if a required one is unknown. */
-  private answerFields(
-    runId: string,
-    fields: Array<{ key: string; label?: string; required?: boolean }>,
-  ): Record<string, string> {
-    const answers: Record<string, string> = {};
+  private answerFields(runId: string, fields: WireFormField[]): FormAnswers {
+    const answers: FormAnswers = {};
     const missing: string[] = [];
     for (const f of fields) {
-      const value = buyerValue(this.cfg.buyer ?? {}, `${f.key} ${f.label ?? ""}`);
-      if (value) answers[f.key] = value;
+      const text = buyerValue(this.cfg.buyer ?? {}, `${f.key} ${f.label ?? ""}`);
+      const value =
+        f.input?.kind === "choice" ? (text ? choiceFor(f, text) : guestChoice(f)) : text;
+      if (value) answers[f.key] = f.input?.selection?.kind === "many" ? [value] : value;
       else if (f.required) missing.push(f.label ?? f.key);
     }
     if (missing.length > 0) {
@@ -320,13 +354,28 @@ export class CrossmintPurchaseAdapter implements PurchaseAdapter {
 
   private async authorizeCard(pay: WirePaymentInteraction, cart: Cart): Promise<string> {
     const expiresAt = new Date(this.cfg.now() + this.cfg.orderIntentTtlMs).toISOString();
-    const intent = await this.cfg.client.createOrderIntent({
+    const create = () => this.cfg.client.createOrderIntent({
       paymentMethodId: this.cfg.paymentMethodId,
-      amount: pay.amount, // exact figures from the payment request
-      merchant: pay.merchant, // copied unchanged
+      // Exact figures from the payment request, but only the fields order intents accept
+      // (the request's amount also carries kind: "exact" | "maximum", which they reject).
+      amount: { value: pay.amount.value ?? pay.amount.amount ?? "", currency: pay.amount.currency ?? "USD" },
+      merchant: pickMerchant(pay.merchant),
       expiresAt,
       description: `Group order at ${cart.store} (${formatUsdc(cart.total)})`,
     });
+    let intent;
+    try {
+      intent = await create();
+    } catch (err) {
+      // A saved card must be registered for order intents once; do it on first use.
+      if (!/ORDER_INTENT_REGISTRATION_NOT_FOUND/.test((err as Error).message)) throw err;
+      await this.cfg.client.registerCard(this.cfg.paymentMethodId, {
+        email: this.cfg.buyer?.email,
+        countryCode: this.cfg.buyer?.country ?? "US",
+        languageCode: "en-US",
+      });
+      intent = await create();
+    }
     const id = intent.id ?? intent.orderIntentId;
     if (!id) {
       throw new CrossmintCheckoutError("order intent response had no id", { runId: cart.id });
@@ -409,10 +458,15 @@ export class CrossmintPurchaseAdapter implements PurchaseAdapter {
       lineItems = [{ name: "Order", quantity: 1, unitPrice: total }];
     }
 
+    const merchant = pay.merchant as { name?: unknown; url?: unknown } | undefined;
+    const merchantName =
+      typeof merchant?.name === "string" && merchant.name ? merchant.name
+      : typeof merchant?.url === "string" ? hostnameOf(merchant.url)
+      : undefined;
     const store =
-      checkout.kind === "store_account"
+      checkout.kind === "store_account" && checkout.store !== this.cfg.store
         ? checkout.store
-        : (startUrl && hostnameOf(startUrl)) ?? prior?.store ?? this.cfg.store;
+        : merchantName ?? (startUrl && hostnameOf(startUrl)) ?? prior?.store ?? this.cfg.store;
 
     return {
       id: run.runId,
@@ -489,6 +543,7 @@ export function createCrossmintPurchaseAdapterFromEnv(
     apiKey: env.CROSSMINT_API_KEY ?? requireEnv(env, "CROSSMINT_SERVER_API_KEY"),
     clientApiKey: requireEnv(env, "CROSSMINT_CLIENT_API_KEY"),
     userToken: (userId) => signer.tokenFor(userId),
+    clientOrigin: env.ONBOARD_URL,
     userId: requireEnv(env, "CROSSMINT_USER_ID"),
     baseUrl: env.CROSSMINT_BASE_URL,
   });
@@ -529,15 +584,17 @@ function toCartLineItem(li: WireLineItem): CartLineItem {
   return { name, quantity, unitPrice };
 }
 
-function buildTask(input: BuildCartInput): string {
+function buildTask(input: BuildCartInput, genericStore: string): string {
   const items =
     input.items && input.items.length > 0
       ? input.items.map((i) => `${i.quantity ?? 1}× ${i.name}`).join(", ")
       : input.requestText;
+  // Only a real store account is worth naming; otherwise check out as a guest (no Link / Shop Pay
+  // sign-ins, which text a code to someone's phone).
   const account =
-    input.checkout.kind === "store_account"
+    input.checkout.kind === "store_account" && input.checkout.store !== genericStore
       ? ` Use the saved ${input.checkout.store} account.`
-      : "";
+      : " Check out as a guest.";
   return (
     `Buy the following for a group order: ${items}. ` +
     `Pick the best-matching standard option, use standard shipping, and pay by card.` +

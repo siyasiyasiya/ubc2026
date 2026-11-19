@@ -76,10 +76,24 @@ export interface WirePaymentInteraction {
   lineItems?: WireLineItem[];
 }
 
+export interface WireFormField {
+  key: string;
+  label?: string;
+  required?: boolean;
+  /** Text by default; a "choice" is answered with an option's `value`, not its label. */
+  input?: {
+    kind?: "text" | "choice" | string;
+    selection?: { kind?: "one" | "many" };
+    options?: Array<{ value: string; label?: string; disabled?: boolean }>;
+  };
+}
+
 export interface WireFormInteraction {
   kind: "form" | string;
-  fields?: Array<{ key: string; label?: string; required?: boolean }>;
+  fields?: WireFormField[];
 }
+
+export type FormAnswers = Record<string, string | string[]>;
 
 export type WireInteraction = WirePaymentInteraction | WireFormInteraction;
 
@@ -150,6 +164,8 @@ export interface CrossmintClientConfig {
   clientApiKey?: string;
   /** Mints the user JWT that goes with the client key (see crossmint-jwt.ts). */
   userToken?: (userId: string) => string;
+  /** Origin sent with client-key calls; Crossmint requires one, and it must be allowed on the key. */
+  clientOrigin?: string;
   /** Stable per-user id; MUST match across runs, profiles and order intents. */
   userId: string;
   /** Defaults to https://www.crossmint.com */
@@ -167,7 +183,9 @@ export interface CrossmintClientConfig {
 export interface CrossmintAgentCheckouts {
   createRun(body: CreateRunBody): Promise<WireRun>;
   getRun(runId: string): Promise<WireRun>;
-  answerForm(runId: string, requestId: string, answers: Record<string, string>): Promise<void>;
+  answerForm(runId: string, requestId: string, answers: FormAnswers): Promise<void>;
+  /** One-time: register a saved card for order intents (idempotent PUT). */
+  registerCard(paymentMethodId: string, buyer: { email?: string; countryCode: string; languageCode: string }): Promise<void>;
   answerPayment(runId: string, requestId: string, orderIntentId: string): Promise<void>;
   cancelRun(runId: string): Promise<void>;
   createOrderIntent(body: CreateOrderIntentBody): Promise<WireOrderIntent>;
@@ -179,6 +197,7 @@ export class CrossmintHttpClient implements CrossmintAgentCheckouts {
   private readonly apiKey: string;
   private readonly clientApiKey?: string;
   private readonly userToken?: (userId: string) => string;
+  private readonly clientOrigin: string;
   private readonly userId: string;
   private readonly baseUrl: string;
   private readonly fetchImpl: FetchLike;
@@ -187,6 +206,7 @@ export class CrossmintHttpClient implements CrossmintAgentCheckouts {
     this.apiKey = config.apiKey;
     this.clientApiKey = config.clientApiKey;
     this.userToken = config.userToken;
+    this.clientOrigin = config.clientOrigin ?? "https://kittyagent.vercel.app";
     this.userId = config.userId;
     this.baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, "");
     const injected = config.fetch;
@@ -212,8 +232,9 @@ export class CrossmintHttpClient implements CrossmintAgentCheckouts {
     path: string,
     body?: unknown,
     headers: Record<string, string> = this.headers(),
+    apiVersion = "unstable",
   ): Promise<T> {
-    const url = `${this.baseUrl}/api/unstable${path}`;
+    const url = `${this.baseUrl}/api/${apiVersion}${path}`;
     const res = await this.fetchImpl(url, {
       method,
       headers,
@@ -245,7 +266,7 @@ export class CrossmintHttpClient implements CrossmintAgentCheckouts {
     return run;
   }
 
-  async answerForm(runId: string, requestId: string, answers: Record<string, string>): Promise<void> {
+  async answerForm(runId: string, requestId: string, answers: FormAnswers): Promise<void> {
     await this.sendPart(runId, {
       type: "input_response",
       requestId,
@@ -274,17 +295,36 @@ export class CrossmintHttpClient implements CrossmintAgentCheckouts {
     await this.request<unknown>("POST", `/agent-checkouts/${encodeURIComponent(runId)}/cancel`);
   }
 
-  createOrderIntent(body: CreateOrderIntentBody): Promise<WireOrderIntent> {
+  async registerCard(
+    paymentMethodId: string,
+    buyer: { email?: string; countryCode: string; languageCode: string },
+  ): Promise<void> {
+    await this.request<unknown>(
+      "PUT",
+      `/payment-methods/${encodeURIComponent(paymentMethodId)}/order-intent-registration`,
+      buyer,
+      this.clientHeaders(),
+      "2026-09-16",
+    );
+  }
+
+  /** Client key + user JWT + origin: what card endpoints require (server keys are refused). */
+  private clientHeaders(): Record<string, string> {
     if (!this.clientApiKey || !this.userToken) {
       throw new Error(
-        "Crossmint order intents need a client key and a user JWT " +
+        "Crossmint card calls need a client key and a user JWT " +
           "(CROSSMINT_CLIENT_API_KEY, CROSSMINT_JWT_PRIVATE_KEY)",
       );
     }
-    return this.request<WireOrderIntent>("POST", "/order-intents", body, {
+    return {
       "Content-Type": "application/json",
       "X-API-KEY": this.clientApiKey,
       Authorization: `Bearer ${this.userToken(this.userId)}`,
-    });
+      Origin: this.clientOrigin,
+    };
+  }
+
+  createOrderIntent(body: CreateOrderIntentBody): Promise<WireOrderIntent> {
+    return this.request<WireOrderIntent>("POST", "/order-intents", body, this.clientHeaders());
   }
 }

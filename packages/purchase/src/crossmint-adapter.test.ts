@@ -78,7 +78,7 @@ const paymentRun = (overrides: Partial<WireRun> = {}): WireRun => ({
     requestId: "req_pay_1",
     interaction: {
       kind: "payment",
-      amount: { value: "42.50", currency: "USD" },
+      amount: { kind: "exact", value: "42.50", currency: "USD" } as never,
       merchant: { id: "merch_9", name: "SuperMart" },
       lineItems: [
         { name: "Paper towels", quantity: 2, unitPrice: { value: "8.00", currency: "USD" } },
@@ -119,7 +119,20 @@ describe("buildCart with store questions", () => {
         fields: [
           { key: "email", label: "Email address (for the download link)", required: false },
           { key: "full_name", label: "Full name (cardholder name)", required: false },
-          { key: "country", label: "Country", required: true },
+          {
+            key: "country",
+            label: "Country",
+            required: true,
+            input: {
+              kind: "choice",
+              selection: { kind: "one" },
+              options: [
+                { value: "option-231", label: "United Kingdom" },
+                { value: "option-232", label: "United States" },
+                { value: "option-233", label: "United States Minor Outlying Islands" },
+              ],
+            },
+          },
           { key: "zip", label: "ZIP / postal code", required: false },
         ],
       },
@@ -141,12 +154,45 @@ describe("buildCart with store questions", () => {
           action: "submit",
           response: {
             kind: "form",
-            answers: { email: "kitty@example.com", full_name: "Ada Lovelace", country: "US", zip: "43065" },
+            answers: { email: "kitty@example.com", full_name: "Ada Lovelace", country: "option-232", zip: "43065" },
           },
         },
       ],
     });
     expect(cart.total).toBe(42_500_000n);
+  });
+
+  it("picks 'continue as guest' when the store offers a saved Link account", async () => {
+    const link = live({
+      runId: RUN_ID,
+      status: "awaiting_input",
+      requiredAction: {
+        requestId: "req_link",
+        interaction: {
+          kind: "form",
+          fields: [
+            {
+              key: "link_choice",
+              label: "Saved information at checkout",
+              required: true,
+              input: {
+                kind: "choice",
+                selection: { kind: "one" },
+                options: [
+                  { value: "use_link", label: "Use the saved Link account" },
+                  { value: "guest", label: "Continue as guest and pay by card" },
+                ],
+              },
+            },
+            { key: "link_code", label: "6-digit code (only if using Link)", required: false },
+          ],
+        },
+      },
+    });
+    const { fetch, rec } = makeFetch({ getRunQueue: [link, live(paymentRun())] });
+    await adapter(fetch).buildCart(BUILD_INPUT);
+    const sent = rec.calls.find((c) => c.path.endsWith("/messages"));
+    expect(sent?.body).toMatchObject({ parts: [{ response: { kind: "form", answers: { link_choice: "guest" } } }] });
   });
 
   it("stops without charging when the store needs something Kitty doesn't have", async () => {
@@ -303,10 +349,16 @@ describe("placeOrder", () => {
     expect(oi?.body).toMatchObject({
       paymentMethodId: "pm_card_1",
       amount: { value: "42.50", currency: "USD" },
-      merchant: { id: "merch_9", name: "SuperMart" },
+      merchant: { name: "SuperMart" },
     });
+    expect(oi?.body).not.toHaveProperty("amount.kind");
+    expect(oi?.body).not.toHaveProperty("merchant.id");
     // Order intents refuse server keys: client key + the user's JWT.
-    expect(oi?.headers).toMatchObject({ "X-API-KEY": "ck_test", Authorization: "Bearer jwt-for-u1" });
+    expect(oi?.headers).toMatchObject({
+      "X-API-KEY": "ck_test",
+      Authorization: "Bearer jwt-for-u1",
+      Origin: "https://kittyagent.vercel.app",
+    });
     expect(oi?.headers).not.toHaveProperty("x-crossmint-user-id");
     // The payment was answered with that order intent id, as an input_response part.
     const ans = rec.calls.find((c) => c.path.endsWith("/messages"));
@@ -330,6 +382,30 @@ describe("placeOrder", () => {
     });
     await expect(adapter(fetch).placeOrder({ cart })).rejects.toThrow(/one-time verification/);
     expect(rec.calls.find((c) => c.path.endsWith("/messages"))).toBeUndefined();
+  });
+
+  it("registers the card for order intents on first use, then charges", async () => {
+    const { fetch: base, rec } = makeFetch({ getRunQueue: [paymentRun(), succeeded], orderIntent: { id: "oi_after_reg" } });
+    let refused = false;
+    const fetch: FetchLike = async (url, init) => {
+      if (!refused && url.endsWith("/order-intents")) {
+        refused = true;
+        return {
+          ok: false,
+          status: 404,
+          text: async () => '{"code":"ORDER_INTENT_REGISTRATION_NOT_FOUND"}',
+        };
+      }
+      return base(url, init);
+    };
+    await adapter(fetch).placeOrder({ cart });
+
+    const reg = rec.calls.find((c) => c.path.endsWith("/order-intent-registration"));
+    expect(reg?.method).toBe("PUT");
+    expect(reg?.body).toEqual({ email: "kitty@example.com", countryCode: "US", languageCode: "en-US" });
+    expect(reg?.headers).toMatchObject({ "X-API-KEY": "ck_test", Authorization: "Bearer jwt-for-u1" });
+    const ans = rec.calls.find((c) => c.path.endsWith("/messages"));
+    expect(ans?.body).toMatchObject({ parts: [{ response: { orderIntentId: "oi_after_reg" } }] });
   });
 
   it("uses a pre-approved order intent from checkoutAuth and skips authorization", async () => {

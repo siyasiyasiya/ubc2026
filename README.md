@@ -44,7 +44,7 @@ As of Nov 19, 2026, run live in a real iMessage group on Arc testnet unless note
 | Trip tab: splits wait until "settle up" | ✅ live |
 | A share that can't be pulled becomes an onchain debt, and the member gets a pay-back link | ✅ live up to the pay-back tap |
 | Raise a limit (one-tap Face ID link), leave a chat's Kitty, private balance questions by text | 🟡 built and tested, live run pending |
-| Kitty buys it (pay before): checkout card, 👍s, order, shares paid back to the card | 🟡 built and tested on a simulated store; real orders need Crossmint production keys |
+| Kitty buys it (pay before): checkout card, 👍s, order, shares paid back to the card | 🟡 real Crossmint order placed from the terminal (a $1 Gumroad item, $1.07 charged); from the chat: live run pending |
 | Restaurant calls (ElevenLabs) | 🟡 built and tested against the documented API; needs ElevenLabs keys and a phone number |
 | Using members' existing store accounts, Link one-time cards, connecting an existing wallet | ⬜ not built |
 
@@ -65,7 +65,7 @@ For things like paper towels, tickets or an Airbnb.
 
 If a store blocks the agent, the request ends with "nothing was charged".
 
-**How the card is charged:** Crossmint only authorizes a card charge (an "order intent") with a client key plus a signed-in user token. Kitty has no separate login service, so it signs short-lived user tokens itself (RS256, Crossmint's "Custom tokens" option) and publishes the public key at `kittyagent.vercel.app/api/jwks`. The card is saved once on `kittyagent.vercel.app/card.html` inside Crossmint's own form, so card numbers never touch Kitty; Kitty only keeps the card's id.
+**How the card is charged:** Crossmint only authorizes a card charge (an "order intent") with a client key plus a signed-in user token. Kitty has no separate login service, so it signs short-lived user tokens itself (RS256, Crossmint's "Custom tokens" option) and publishes the public key at `kittyagent.vercel.app/api/jwks`. The card is saved once on `kittyagent.vercel.app/card.html` inside Crossmint's own form, so card numbers never touch Kitty; Kitty only keeps the card's id. On first use Kitty registers the card for order intents. At checkout the store's questions (email for the receipt, name, ZIP, country) are answered from the buyer details in `.env`, only the fields asked; Kitty always checks out as a guest, and stops without charging if a store needs something it doesn't have.
 
 ### 2. A member already paid (pay after)
 
