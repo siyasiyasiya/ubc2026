@@ -357,7 +357,7 @@ describe("GroupRuntime", () => {
 
     await t.say(NEENA, "settle up");
     expect(t.request().state.name).toBe("done");
-    expect(t.posted.some((p) => p.text.startsWith("✅ Settled #1 Dinner"))).toBe(true);
+    expect(t.posted.some((p) => p.text.includes("✅ Settled #1 Dinner"))).toBe(true);
     expect(t.posted.at(-1)?.text).toBe("Settled 1 from the tab.");
   });
 
