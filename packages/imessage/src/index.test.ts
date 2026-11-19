@@ -533,6 +533,21 @@ describe("PhotonChatPort getParticipants", () => {
   });
 });
 
+describe("PhotonChatPort getChatName", () => {
+  it("returns the chat's display name, or null when there is none or lookup is off", async () => {
+    const named = new PhotonChatPort({
+      sdk: new FakeSdk(),
+      allowedChatIds: ALLOWED,
+      resolveChatName: (id) => (id === "iMessage;+;chat123" ? "Cabo Trip" : null),
+    });
+    expect(await named.getChatName("iMessage;+;chat123")).toBe("Cabo Trip");
+    expect(await named.getChatName("iMessage;+;other")).toBeNull();
+
+    const off = new PhotonChatPort({ sdk: new FakeSdk(), allowedChatIds: ALLOWED, resolveChatName: null });
+    expect(await off.getChatName("iMessage;+;chat123")).toBeNull();
+  });
+});
+
 describe("PhotonChatPort auto-serve", () => {
   it("serves every group chat it's in when no allowlist is set", async () => {
     const sdk = new FakeSdk();

@@ -159,6 +159,8 @@ export interface ChatPort {
    * for each person to speak. Returns an empty list when the roster can't be read.
    */
   getParticipants(chatId: string): Promise<string[]>;
+  /** The group chat's display name (the title people gave it), or null if it has none. */
+  getChatName(chatId: string): Promise<string | null>;
 }
 
 // ----------------------------------------------------------------------------

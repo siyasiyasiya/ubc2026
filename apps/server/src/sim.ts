@@ -43,6 +43,9 @@ const chat: ChatPort = {
   async getParticipants() {
     return Object.values(handles);
   },
+  async getChatName() {
+    return null;
+  },
 };
 
 const store = new Store(process.env.SIM_STATE_FILE);

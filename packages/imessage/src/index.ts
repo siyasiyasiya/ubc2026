@@ -79,6 +79,9 @@ export type SentIdLookup = (chatId: string, sinceMs: number, exclude: ReadonlySe
 /** Returns the participant handles of a (group) chat, or an empty list if unknown. */
 export type ParticipantsResolver = (chatId: string) => string[];
 
+/** Returns a chat's display name, or null if it has none (unnamed groups) or can't be read. */
+export type ChatNameResolver = (chatId: string) => string | null;
+
 export interface PhotonChatPortConfig {
   /**
    * Explicit chat allowlist. Leave empty to auto-serve every group chat the bot is in (via
@@ -102,6 +105,11 @@ export interface PhotonChatPortConfig {
    * real SDK is used; pass `null` to disable (getParticipants then returns an empty list).
    */
   resolveParticipants?: ParticipantsResolver | null;
+  /**
+   * How to read a chat's display name. Defaults to a read-only chat.db lookup when the real SDK is
+   * used; pass `null` to disable (getChatName then returns null).
+   */
+  resolveChatName?: ChatNameResolver | null;
   /**
    * While the bot runs on a member's own Apple ID, that member's messages and 👍s are "from me".
    * Set this to their handle to treat them as that member. The bot's own sends are still skipped.
@@ -203,6 +211,25 @@ export function chatDbParticipants(databasePath?: string): ParticipantsResolver 
   };
 }
 
+/** Read-only chat.db lookup of a chat's display name. Empty/absent names (unnamed groups) return null. */
+export function chatDbChatName(databasePath?: string): ChatNameResolver {
+  let db: Database.Database | undefined;
+  let stmt: Database.Statement<[string, string], { display_name: string | null }> | undefined;
+  return (chatId) => {
+    try {
+      db ??= new Database(databasePath ?? path.join(os.homedir(), "Library/Messages/chat.db"), {
+        readonly: true,
+        fileMustExist: true,
+      });
+      stmt ??= db.prepare("SELECT display_name FROM chat WHERE guid = ? OR chat_identifier = ?");
+      const name = stmt.get(chatId, chatId)?.display_name?.trim();
+      return name ? name : null;
+    } catch {
+      return null;
+    }
+  };
+}
+
 function senderOf(message: Message, resolveSender?: SenderResolver, selfHandle?: string): string | null {
   if (message.isFromMe) return selfHandle ?? null;
   return message.participant ?? resolveSender?.(message.id) ?? null;
@@ -272,6 +299,7 @@ export class PhotonChatPort implements ChatPort {
   private refreshing: Promise<void> | undefined;
   private readonly resolveSender: SenderResolver | undefined;
   private readonly resolveParticipants: ParticipantsResolver | undefined;
+  private readonly resolveChatName: ChatNameResolver | undefined;
   private readonly selfHandle: string | undefined;
   private readonly sentIdTimeoutMs: number;
   private readonly sentIdPollMs: number;
@@ -309,6 +337,10 @@ export class PhotonChatPort implements ChatPort {
         ? undefined
         : (config.resolveParticipants ??
           (config.sdk ? undefined : chatDbParticipants(config.sdkConfig?.databasePath)));
+    this.resolveChatName =
+      config.resolveChatName === null
+        ? undefined
+        : (config.resolveChatName ?? (config.sdk ? undefined : chatDbChatName(config.sdkConfig?.databasePath)));
     this.selfHandle = config.selfHandle;
     this.sentIdTimeoutMs = config.sentIdTimeoutMs ?? 10_000;
     this.sentIdPollMs = config.sentIdPollMs ?? 250;
@@ -378,6 +410,11 @@ export class PhotonChatPort implements ChatPort {
   async getParticipants(chatId: string): Promise<string[]> {
     if (!this.resolveParticipants) return [];
     return [...new Set(this.resolveParticipants(chatId))].filter((h) => h !== this.selfHandle);
+  }
+
+  /** The chat's display name from chat.db, or null if it has none. */
+  async getChatName(chatId: string): Promise<string | null> {
+    return this.resolveChatName ? this.resolveChatName(chatId) : null;
   }
 
   onMessage(handler: MessageHandler): Unsubscribe {

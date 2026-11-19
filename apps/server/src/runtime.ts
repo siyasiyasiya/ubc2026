@@ -421,11 +421,16 @@ export class GroupRuntime {
     if (this.seededRosters.has(chatId)) return;
     this.seededRosters.add(chatId);
     try {
+      const name = await this.deps.chat.getChatName(chatId);
+      if (name && name !== record.group.name) {
+        record.group.name = name;
+        this.deps.store.save();
+      }
       const handles = await this.deps.chat.getParticipants(chatId);
       for (const handle of handles) this.memberFor(record, handle);
       if (handles.length) {
         this.deps.store.save();
-        this.log(`seeded ${handles.length} member(s) from the roster of ${chatId}`);
+        this.log(`seeded ${handles.length} member(s) from the roster of ${chatId}${name ? ` ("${name}")` : ""}`);
       }
     } catch (err) {
       this.seededRosters.delete(chatId); // a later event retries
