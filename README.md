@@ -74,15 +74,65 @@ The pieces the system needs. Only the iMessage layer and checkout have been chos
 | Component | What it does | Choice |
 | --- | --- | --- |
 | Chat interface | Where members send requests, approve spends and get texted one-on-one | iMessage via [Photon](https://photon.codes) |
-| Agent | An LLM with tools that turns requests into proposals, reads receipts and tracks splits | Not chosen |
+| Agent | An LLM with tools that turns requests into proposals, reads receipts and tracks splits | Claude (Sonnet 5) through the Anthropic SDK tool runner |
 | Member wallets | Hold each member's USDC and enforce their recurring spending limit | Circle passkey (Face ID) smart wallets; limits enforced by the group contract |
 | Funding | Converts a card payment to USDC, or connects an existing wallet | Apple Pay through Arc Onramp |
-| Store access | Lets the agent build carts and place orders on members' existing accounts across stores | Not chosen |
+| Store access | Lets the agent build carts and place orders on members' existing accounts across stores | Crossmint Agent Checkouts |
 | Group contract | Records approvals and pulls each member's share to whoever paid | [`GroupTreasury`](contracts/README.md), driven by `ArcWalletAdapter` in `packages/wallet` |
 | Chain | Where the contract runs and USDC moves | Arc (USDC is gas) |
 | Checkout wallet | Issues one-time cards so the agent can pay real merchants | [Link agent wallet](https://docs.stripe.com/agentic-commerce/agents/link-agent-wallet) |
 
+## How Arc and Circle are used
+
+Members only see iMessage, one web page and Face ID. Underneath, every rule about money is enforced by a contract on **Arc testnet** that the agent can't change.
+
+**Deployed:** `GroupTreasury` at [`0xDC349427bE00454800D17a7FB7f7946CA5884F98`](https://testnet.arcscan.app/address/0xDC349427bE00454800D17a7FB7f7946CA5884F98) (Arc testnet, chain 5042002). Details in [`contracts/README.md`](contracts/README.md).
+
+### Joining a group's kitty
+
+1. In the group chat, a member replies "in". The server makes a single-use invite ticket for that person and chat, derived from a server secret (`packages/wallet/src/join.ts`).
+2. The agent DMs them a link to the Face ID page (`apps/onboard`, live at [kittyagent.vercel.app](https://kittyagent.vercel.app)).
+3. Face ID creates a **Circle passkey wallet** (an ERC-4337 smart account; we never hold its key). The member picks their limit for this chat, and one **gasless batched operation** (Circle paymaster) approves USDC for the contract and calls `join(group, limit, period, ticket)`.
+4. The server's `JoinWatcher` sees the `Joined` event, matches the ticket to the member's handle, links their account, and posts "✅ Siya is in." (the limit stays private).
+5. Money comes in through **Arc Onramp** (Apple Pay or debit card → USDC delivered straight to the member's account; Kitty never holds funds). On testnet, the operator also sends each new member a small welcome balance.
+
+### Paying someone back
+
+1. The agent proposes a split, and each participant 👍s the approval card in the chat.
+2. `ArcWalletAdapter` (`packages/wallet/src/arc.ts`) turns each share into `propose` → `approveFor` (the relayed 👍) → `settle` on `GroupTreasury`.
+3. `settle` pulls the share straight from the member's account to whoever paid, never more than what's left of the limit the member signed for that chat. A share it can't pull becomes an onchain debt.
+
+### What the contract guarantees
+
+| Rule | Enforced by |
+| --- | --- |
+| One deployment serves every chat, with a separate limit per chat | `members[keccak256("chat:" + chatId)][account]` |
+| Only the member can join or raise their limit | `join` / `setLimit` come from their passkey wallet (Face ID) |
+| The agent's key can only reduce exposure | Operator-only `lowerLimit` (can't raise), `removeMember`, `propose`, `approveFor`, `cancel` |
+| No pull beyond the member's signed limit | `settle` checks `remaining(group, member)`; a fuzz test shows the operator alone can't take more |
+| Invites can't be replayed | Each ticket can be used once |
+
+### Why Arc
+
+- **Fees are paid in dollars.** USDC is Arc's gas token, so nobody buys a second coin.
+- **About one-second finality**, fast enough to post "✅ Settled" in the chat right away.
+- **Circle passkey wallets and paymaster on Arc** make onboarding a Face ID tap with no seed phrase and no gas.
+
+### Run it
+
+```bash
+pnpm install && pnpm build
+cd contracts && forge test            # 49 tests
+# apps/server/.env: ARC_RPC_URL, TREASURY_ADDRESS, OPERATOR_PRIVATE_KEY, TREASURY_DEPLOY_BLOCK, INVITE_SECRET (see .env.example)
+pnpm --filter @gta/server dev         # iMessage bot; uses Arc when the settings above are present
+pnpm --filter @gta/server invite <chatId> <phone> [name] [chat name]   # Face ID link, until DMs ship
+```
+
+**Known limit:** an invite ticket isn't bound to an account, so whoever submits it first (say, from a forwarded link) is linked to that member. The fix is for the server to sign each join for the joining account.
+
 ## Open question: individual wallets vs a shared multisig
+
+**Decided: individual wallets**, with limits enforced by the group contract on Arc. See [How Arc and Circle are used](#how-arc-and-circle-are-used). The comparison is kept for context.
 
 Two ways to structure the group's money are still being compared.
 
