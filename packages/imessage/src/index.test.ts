@@ -61,6 +61,10 @@ class FakeSdk implements PhotonSdk {
   emit(message: Message): void {
     this.watchEvents?.onIncomingMessage?.(message);
   }
+  /** Simulate the group/direct hooks, which (unlike onIncomingMessage) fire for attachment rows. */
+  emitGroup(message: Message): void {
+    this.watchEvents?.onGroupMessage?.(message);
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -425,6 +429,33 @@ describe("PhotonChatPort watcher", () => {
     expect(received).toHaveLength(1);
     expect(received[0]?.text).toBe("here's the receipt");
     expect(received[0]?.attachments).toEqual([]);
+  });
+
+  it("delivers an attachment from onGroupMessage (the hook that fires for attachment rows)", () => {
+    const sdk = new FakeSdk();
+    const port = new PhotonChatPort({ sdk, allowedChatIds: ALLOWED, pollAttachments: false });
+    const received: IncomingMessage[] = [];
+    port.onMessage((m) => received.push(m));
+
+    const row = makeMessage({ id: "g-1", text: "￼", hasAttachments: true, attachments: [makeAttachment()] });
+    sdk.emitGroup(row);
+    sdk.emit(row); // onIncomingMessage also fires in the real SDK; must not double-deliver
+
+    expect(received).toHaveLength(1);
+    expect(received[0]?.attachments).toHaveLength(1);
+  });
+
+  it("onGroupMessage ignores plain text (so group text isn't delivered twice)", () => {
+    const sdk = new FakeSdk();
+    const port = new PhotonChatPort({ sdk, allowedChatIds: ALLOWED, pollAttachments: false });
+    const received: IncomingMessage[] = [];
+    port.onMessage((m) => received.push(m));
+
+    const row = makeMessage({ id: "t-1", text: "buy milk" });
+    sdk.emit(row); // onIncomingMessage handles text
+    sdk.emitGroup(row); // onGroupMessage must skip it (no attachment)
+
+    expect(received).toHaveLength(1);
   });
 
   it("delivers an incoming attachment the live watcher missed, via the chat.db poller", async () => {

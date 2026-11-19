@@ -422,9 +422,8 @@ export class PhotonChatPort implements ChatPort {
           if (m.isFromMe) continue; // our own sends (and screenshots we post) aren't input
           if (this.deliveredWithAttachment.has(m.id)) continue;
           if (!PhotonChatPort.attachmentReady(m)) continue; // still downloading; next scan will catch it
-          this.deliveredWithAttachment.add(m.id);
           this.log(`attachment poller delivering ${m.id} (${m.attachments.length} file[s]) the watcher missed`);
-          this.dispatch(m);
+          this.dispatch(m); // deliver() claims the id, so a later scan won't re-deliver it
         }
         if (this.deliveredWithAttachment.size > 5000) this.deliveredWithAttachment.clear();
       } catch (err) {
@@ -602,7 +601,7 @@ export class PhotonChatPort implements ChatPort {
    * attachment-bearing rows (rare), so it's quiet; with IMESSAGE_DEBUG=on, every row, to tell
    * "the watcher never fired" apart from "it fired with an empty, not-yet-flushed attachment row".
    */
-  private traceWatcher(source: "incoming" | "from-me", message: Message): void {
+  private traceWatcher(source: "incoming" | "from-me" | "group" | "direct", message: Message): void {
     const isAttachmentRow = message.hasAttachments || message.attachments.length > 0;
     if (!isAttachmentRow && process.env.IMESSAGE_DEBUG !== "on") return;
     this.log(
@@ -619,6 +618,19 @@ export class PhotonChatPort implements ChatPort {
       .startWatching({
         onIncomingMessage: (message) => {
           this.traceWatcher("incoming", message);
+          void this.dispatch(message);
+        },
+        // onIncomingMessage doesn't fire for incoming attachment messages in this SDK, but
+        // onGroupMessage / onDirectMessage do. Handle only attachment rows here so a plain group/DM
+        // message isn't dispatched twice; the deliveredWithAttachment set dedupes against the poller.
+        onGroupMessage: (message) => {
+          if (!(message.hasAttachments || message.attachments.length > 0)) return;
+          this.traceWatcher("group", message);
+          void this.dispatch(message);
+        },
+        onDirectMessage: (message) => {
+          if (!(message.hasAttachments || message.attachments.length > 0)) return;
+          this.traceWatcher("direct", message);
           void this.dispatch(message);
         },
         onFromMeMessage: (message) => {
@@ -705,9 +717,12 @@ export class PhotonChatPort implements ChatPort {
         }
         return;
       }
-      // Log every attachment row's state so a "can't read images" report can be diagnosed from the
-      // terminal: did the file arrive, what type is it, is it still transferring, is it on disk?
+      // Attachment messages can arrive from several hooks (onGroupMessage/onDirectMessage) and the
+      // poller; claim the id once so it's delivered exactly once. deliverWhenReady un-claims on a
+      // timeout so a slow download is retried by the poller.
       if (message.hasAttachments || message.attachments.length > 0) {
+        if (this.deliveredWithAttachment.has(message.id)) return;
+        this.deliveredWithAttachment.add(message.id);
         const states = message.attachments
           .map((a) => `${a.mimeType || "?"} ${a.transferStatus}${a.localPath ? " on-disk" : " no-file"}`)
           .join(", ");
@@ -780,7 +795,8 @@ export class PhotonChatPort implements ChatPort {
         return;
       }
     }
-    // Timed out: emit what we last had so any text still reaches the agent.
+    // Timed out: un-claim so the poller retries once the file lands, and emit any text we had.
+    this.deliveredWithAttachment.delete(provisional.id);
     this.log(`attachment never finished downloading (${provisional.id}), delivering without it`);
     this.emitMessage(provisional);
   }
