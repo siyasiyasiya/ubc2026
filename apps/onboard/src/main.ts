@@ -95,6 +95,7 @@ function showBigAmount(): void {
 }
 
 function setup(): void {
+  if (group) $("chat").textContent = chatName;
   if (creditor) return setupPayBack();
   if (params.get("v") === "1") return setupStatus();
   const amount = $<HTMLInputElement>("amount");
@@ -105,7 +106,6 @@ function setup(): void {
   // Typing replaces the amount rather than adding digits to it ("100" + "50" became $10,050).
   amount.addEventListener("focus", () => amount.select());
   wireAmountPickers();
-  if (group) $("chat").textContent = chatName;
   if (topUpAccount && !group) {
     $("title").textContent = "Add money";
     $("lede").textContent = "Top up your Kitty balance with Apple Pay or a debit card.";
@@ -114,7 +114,7 @@ function setup(): void {
     void showFunding(topUpAccount as Hex);
     return;
   }
-  $("title").textContent = joining ? `Join ${chatName}` : `Your limit for ${chatName}`;
+  $("title").textContent = joining ? `Join ${chatName}` : `Spending cap for ${chatName}`;
   // One tap: the amount was decided in the chat and came in the link, so there's nothing to type.
   oneTap = Boolean(prefill && /^\d+(\.\d{1,2})?$/.test(prefill));
   $("lede").textContent = joining
@@ -278,7 +278,7 @@ async function submit(event: Event, returning = false): Promise<void> {
     // (it put Joey back to $200). Changing a limit only happens from a limit link.
     if (joining && alreadyIn) {
       form.hidden = true;
-      show(`You're already in ${chatName}. To change your limit, ask Kitty in the chat.`, "done");
+      show(`You're already in ${chatName}. To change your spending cap, ask Kitty in the chat.`, "done");
       void showFunding(account.address);
       return;
     }
@@ -377,7 +377,8 @@ function setupPayBack(): void {
   // The link says how much (for display); the tap reads what's really owed before paying.
   const shown = params.get("m");
   if (shown && /^\d+(\.\d{1,2})?$/.test(shown)) owedText.textContent = `$${shown}`;
-  pay.textContent = `Pay ${creditorName} back with Face ID`;
+  // The button's Face ID glyph says how; the words stay on one line.
+  pay.textContent = `Pay ${creditorName} back`;
   if (!isAddress(creditor) || !clientKey || !treasury) {
     pay.disabled = true;
     return show("This link is incomplete. Ask Kitty in your chat for a new one.", "error");
