@@ -33,13 +33,13 @@ Owns: `contracts/`, `packages/wallet`, `packages/funding`.
 
 | Task | Status | Notes |
 | --- | --- | --- |
-| `GroupTreasury.sol` + Foundry tests | ⬜ todo | members, pull each share to payer, record debt on failed pull. Chain-agnostic EVM. |
-| `WalletAdapter` — in-memory dev impl | ⬜ todo | lets the server/state machine run with no chain. Label non-production. |
-| `WalletAdapter` — real impl | ⬜ todo | pull share within recurring limit. Blocked on decisions below. |
-| `funding` — card→USDC / connect wallet | ⬜ todo | blocked on funding provider decision. |
-| **Decide:** chain (Arc / Base / other) | 🔲 decision | ask Siya before choosing |
-| **Decide:** wallet provider + limit enforcement | 🔲 decision | onchain spend permissions vs provider policy vs permits |
-| **Decide:** funding provider | 🔲 decision | |
+| `GroupTreasury.sol` + Foundry tests | ✅ done | one contract for every chat, per-chat limits, relayed 👍, debts. Deployed on Arc testnet (see `contracts/README.md`). |
+| `WalletAdapter` — in-memory dev impl | ✅ done | `InMemoryWalletAdapter`, used by the server and simulator. |
+| `WalletAdapter` — real impl | ✅ done | `ArcWalletAdapter`: each pull is a one-person split (propose → approveFor → settle), idempotent across restarts. Tested against the real contract on anvil. One instance per chat via `arcWalletAdapters(env)(chatId)`. |
+| `funding` — card→USDC / connect wallet | 🟡 in progress | Apple Pay through Arc Onramp on the Face ID onboarding page (`apps/onboard`). |
+| ✅ **Decided:** chain | ✅ done | **Arc** testnet. |
+| ✅ **Decided:** wallet provider + limit enforcement | ✅ done | **Circle passkey wallets**; limits enforced onchain by `GroupTreasury`. |
+| ✅ **Decided:** funding provider | ✅ done | **Arc Onramp** (Apple Pay). |
 | **Decide:** optional onchain components | 🔲 decision | mandates, cart/receipt fingerprints, ledger/netting, track record, escrow |
 
 ## Track B — Agent, chat & commerce
@@ -61,7 +61,7 @@ Owns: `packages/imessage`, `packages/agent`, `packages/purchase`.
 | Task | Status | Notes |
 | --- | --- | --- |
 | `packages/core` — interfaces | ✅ done | frozen contract between tracks; change together only |
-| `apps/server` — wire real adapters | ⬜ todo | do **together, last**, once both sides are real |
+| `apps/server` — wire real adapters | ⬜ todo | do **together, last**. Wallet side is ready: swap `InMemoryWalletAdapter` for `arcWalletAdapters(...)(chatId)`; needs `ARC_RPC_URL`, `OPERATOR_PRIVATE_KEY`, `TREASURY_ADDRESS`, plus mapping each member's handle to the wallet from the `Joined` event. |
 | **Decide:** project name | 🔲 decision | currently `@gta/*` placeholder scope |
 
 **Legend:** ✅ done · 🟡 in progress · ⬜ todo · 🔲 decision needed
