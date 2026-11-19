@@ -246,12 +246,17 @@ describe("GroupRuntime", () => {
     const invites = { baseUrl: "https://kittyagent.vercel.app", secret: "s3cret" };
     const t = setup(200, { invites });
     await t.say(SIYA, "join me");
+    expect(t.dms).toHaveLength(0); // no plan yet: ask the chat first, never send the server's default
+    expect(t.posted.at(-1)?.text).toContain("no plan yet");
+
+    await t.say(NEENA, "trip plan please");
+    await t.say(SIYA, "join me");
     expect(t.dms).toHaveLength(1);
     expect(t.dms[0]!.handle).toBe(SIYA);
     const joinLink = new URL(t.dms[0]!.text.split(" ").at(-1)!);
     expect(joinLink.searchParams.get("t")).toBe(inviteTicket(invites.secret, CHAT, SIYA));
-    expect(joinLink.searchParams.get("l")).toBe("200.00"); // one tap: the starting limit rides in the link
-    expect(joinLink.searchParams.get("p")).toBe("weekly");
+    expect(joinLink.searchParams.get("l")).toBe("200.00"); // the chat's plan, not DEFAULT_LIMIT_USD
+    expect(joinLink.searchParams.get("p")).toBe("once");
     expect(t.posted.at(-1)?.text).toBe("Texted Siya a private Face ID link.");
 
     t.failing.dms = 1;

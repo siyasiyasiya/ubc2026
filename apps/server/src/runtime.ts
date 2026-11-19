@@ -184,13 +184,17 @@ export class GroupRuntime {
       handle,
       displayName: member.displayName,
       nonce,
-      limit: member.limit,
+      // Only an amount the chat chose rides in the link; never the server's placeholder default.
+      ...(record.plan ? { limit: record.plan } : {}),
     });
   }
 
   /** Texts `member` their Face ID join link. Already set up: says so instead. */
   async sendJoinLink(record: GroupRecord, member: Member): Promise<string> {
     if (member.wallet) return `${member.displayName} already has a Kitty account here.`;
+    if (!record.plan) {
+      return "No link sent: this chat has no plan yet. Ask the group whether it's a trip (one-time limit) or weekly/monthly, and how much each, then call set_group_plan and send the link.";
+    }
     const link = this.inviteLinkFor(record.group.chatId, member.id);
     const where = await this.dm(record, member, `you're invited to ${record.group.name}'s kitty 🎉 one Face ID tap and you're set up: ${link}`);
     return where === "dm"
