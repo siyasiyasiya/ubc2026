@@ -543,9 +543,14 @@ export class PhotonChatPort implements ChatPort {
     return message.text !== null && this.recentSendTexts.includes(message.text);
   }
 
-  /** Log an attachment-bearing watcher row at the very entry, before any filtering, to debug drops. */
+  /**
+   * Log a watcher row at the very entry, before any filtering, to debug drops. By default only
+   * attachment-bearing rows (rare), so it's quiet; with IMESSAGE_DEBUG=on, every row, to tell
+   * "the watcher never fired" apart from "it fired with an empty, not-yet-flushed attachment row".
+   */
   private traceWatcher(source: "incoming" | "from-me", message: Message): void {
-    if (!(message.hasAttachments || message.attachments.length > 0)) return;
+    const isAttachmentRow = message.hasAttachments || message.attachments.length > 0;
+    if (!isAttachmentRow && process.env.IMESSAGE_DEBUG !== "on") return;
     this.log(
       `watcher ${source} row ${message.id}: chat …${(message.chatId ?? "null").slice(-8)}, ` +
         `isFromMe=${message.isFromMe}, kind=${message.chatKind}, reaction=${!!message.reaction}, ` +
