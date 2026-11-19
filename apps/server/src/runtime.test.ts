@@ -116,6 +116,22 @@ describe("GroupRuntime", () => {
     expect(t.request().state.name).toBe("awaiting_approval");
   });
 
+  it("matches a 👍 to the sender's open card when the card only has a local id", async () => {
+    const t = setup();
+    const req = await t.proposeDinner();
+    req.previewMessageId = "local:abc"; // the chat port never saw the sent row's real guid
+    await t.react(SIYA, "REAL-GUID-1");
+    await t.react(TRISTAN, "REAL-GUID-1");
+    expect(t.request().state.name).toBe("done");
+  });
+
+  it("ignores a 👍 on some other message when the card has a real id", async () => {
+    const t = setup();
+    await t.proposeDinner();
+    await t.react(SIYA, "SOME-OTHER-MESSAGE");
+    expect(t.request().state.name).toBe("awaiting_approval");
+  });
+
   it("accepts a bare 👍 text reply as approval", async () => {
     const t = setup();
     await t.proposeDinner();

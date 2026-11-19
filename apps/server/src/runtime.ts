@@ -438,11 +438,22 @@ export class GroupRuntime {
   private async handleReaction(reaction: IncomingReaction): Promise<void> {
     const emoji = APPROVE_WORDS.has(reaction.emoji.trim().toLowerCase()) ? APPROVAL_EMOJI : reaction.emoji;
     const record = this.groupFor(reaction.chatId);
-    const request = record.requests.find(
-      (r) => r.previewMessageId && sameMessage(r.previewMessageId, reaction.targetMessageId),
-    );
-    if (!request || request.state.name !== "awaiting_approval") return;
     const member = this.memberFor(record, reaction.senderHandle);
+    const request =
+      record.requests.find((r) => r.previewMessageId && sameMessage(r.previewMessageId, reaction.targetMessageId)) ??
+      // The chat port couldn't learn the card's real id (it fell back to "local:…"), so a 👍 can't
+      // be matched by id. Treat an approving 👍 like the "👍" text: the sender's latest open card.
+      (emoji === APPROVAL_EMOJI && reaction.added
+        ? [...record.requests]
+            .reverse()
+            .find(
+              (r) =>
+                r.previewMessageId?.startsWith("local:") &&
+                r.state.name === "awaiting_approval" &&
+                r.state.requiredApprovers.includes(member.id),
+            )
+        : undefined);
+    if (!request || request.state.name !== "awaiting_approval") return;
     await this.apply(record, request, { type: "reaction", memberId: member.id, emoji, added: reaction.added, at: this.now() });
     this.deps.store.save();
   }
