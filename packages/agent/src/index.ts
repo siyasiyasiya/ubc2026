@@ -1,27 +1,15 @@
 /**
- * @gta/agent — the LLM brain.
+ * @gta/agent — the LLM brain (Claude, via the Anthropic SDK tool runner).
  *
- * Responsibilities:
- *   - Parse plain-language chat requests into structured intents
- *     ("we're out of paper towels" -> items; "dinner Friday?" -> pay_after).
- *   - Read receipt photos into structured `Receipt`s.
+ * - `runTurn`: reads the group chat and decides what to say and which action to take. It can only
+ *   ask the app to propose a split, set the sender's own limit, or cancel a request. It never moves
+ *   money; the app and the core state machine decide that.
+ * - `ClaudeReceiptReader`: the core `ReceiptReader` port, reading receipt photos with vision.
  *
- * Implemented with Claude (Claude Sonnet 5 by default) via the Vercel AI SDK
- * (`ai` + `@ai-sdk/anthropic`), using `generateObject` with Zod schemas for
- * typed structured output. The model is swappable via a single config constant
- * (`CLAUDE_MODEL_ID`) and injectable per call so tests can supply a mock.
- *
- * Auth: the Anthropic provider reads `ANTHROPIC_API_KEY` from the environment.
- * A Claude subscription (claude.ai login) does NOT work — an API key is required.
+ * Needs ANTHROPIC_API_KEY. Model: CLAUDE_MODEL (default claude-sonnet-5), effort: AGENT_EFFORT
+ * (default low, so replies feel instant).
  */
 
-export { CLAUDE_MODEL_ID, defaultModel } from "./model.js";
-export {
-  parseRequest,
-  type ParsedIntent,
-  type ParseRequestOptions,
-} from "./parse-request.js";
-export {
-  ClaudeReceiptReader,
-  type ClaudeReceiptReaderOptions,
-} from "./receipt-reader.js";
+export { NO_REPLY, runTurn, type TreasuryActions, type TurnInput } from "./brain.js";
+export { CHAT_EFFORT, MODEL } from "./claude.js";
+export { ClaudeReceiptReader, NotAReceiptError } from "./receipt.js";
