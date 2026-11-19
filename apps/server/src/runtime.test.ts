@@ -14,10 +14,15 @@ const CHAT = "group";
 /** A runtime whose "agent" proposes a $90 dinner paid by Neena, split three ways. */
 function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapter; wallets?: Record<string, string>; invites?: { baseUrl: string; secret: string }; chats?: string[] } = {}) {
   const posted: { id: string; text: string }[] = [];
+  const failing = { posts: 0 };
   const onMessage: ((m: IncomingMessage) => void)[] = [];
   const onReaction: ((r: IncomingReaction) => void)[] = [];
   const chat: ChatPort = {
     async postMessage(chatId, text) {
+      if (failing.posts > 0) {
+        failing.posts--;
+        throw new Error("chat unreachable");
+      }
       const id = `msg-${posted.length + 1}`;
       posted.push({ id, text });
       return { id, chatId };
@@ -68,7 +73,7 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
     await say(NEENA, "split dinner with siya and tristan");
     return request();
   };
-  return { posted, say, react, proposeDinner, request, runtime, store };
+  return { posted, failing, say, react, proposeDinner, request, runtime, store };
 }
 
 describe("GroupRuntime", () => {
@@ -201,6 +206,23 @@ describe("GroupRuntime", () => {
     });
     expect(joined).toEqual({ chatId: "fresh-chat", handle: TRISTAN });
     expect(t.store.get("fresh-chat")!.group.members.find((m) => m.id === TRISTAN)?.displayName).toBe("Tristan");
+  });
+
+  it("still announces a join when the first post failed and the watcher retries", async () => {
+    const invites = { baseUrl: "https://kittyagent.vercel.app", secret: "s3cret" };
+    const t = setup(200, { invites, chats: [CHAT] });
+    const event = {
+      group: groupIdForChat(CHAT),
+      account: "0x00000000000000000000000000000000000000d4" as const,
+      ticket: inviteTicket(invites.secret, CHAT, SIYA),
+      limit: { amount: usdc(10), period: "weekly" as const },
+      blockNumber: 1n,
+      txHash: "0x01" as const,
+    };
+    t.failing.posts = 1;
+    await expect(t.runtime.handleJoin(event)).rejects.toThrow("chat unreachable");
+    expect(await t.runtime.handleJoin(event)).toEqual({ chatId: CHAT, handle: SIYA });
+    expect(t.posted.at(-1)?.text).toBe("✅ Siya is in.");
   });
 
   it("passes errors back from run() so the join watcher retries instead of skipping", async () => {

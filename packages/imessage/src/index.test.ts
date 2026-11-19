@@ -250,6 +250,23 @@ describe("PhotonChatPort send", () => {
     await expect(port.postMessage(CHAT, "hi")).rejects.toThrow(/hasn't sent anything/);
   });
 
+  it("opens an allowlisted chat by id when nobody has written there since startup", async () => {
+    const space = new FakeSpace(CHAT);
+    const opened: string[] = [];
+    const app: InboundApp = {
+      messages: new FakeApp([]).messages,
+      openSpace: async (id) => (opened.push(id), space),
+    };
+    const port = new PhotonChatPort({ allowedChatIds: [CHAT], app, log: () => {} });
+    await port.start();
+
+    await port.postMessage(CHAT, "✅ Siya is in.");
+    await port.postMessage(CHAT, "again");
+    expect(space.sends).toEqual(["✅ Siya is in.", "again"]);
+    expect(opened).toEqual([CHAT]); // opened once, then cached
+    await expect(port.postMessage("iMessage;+;other", "hi")).rejects.toThrow(/isn't allowlisted/);
+  });
+
   it("sendDirectMessage is not supported yet", async () => {
     const port = new PhotonChatPort({ allowedChatIds: [CHAT], app: new FakeApp([]), log: () => {} });
     await expect(port.sendDirectMessage("+15559990000", "hi")).rejects.toThrow(/aren't supported/i);

@@ -78,6 +78,8 @@ export interface InboundMessage {
 /** The subset of a Spectrum app this adapter drives: a stream of [space, message]. */
 export interface InboundApp {
   readonly messages: AsyncIterable<readonly [ReplyTarget, InboundMessage]>;
+  /** Open a chat by id, so the bot can post before anyone there has written since startup. */
+  openSpace?(chatId: string): Promise<ReplyTarget>;
 }
 
 export interface PhotonChatPortConfig {
@@ -134,9 +136,13 @@ async function defaultApp(mode: "local" | "cloud"): Promise<InboundApp> {
   const real = await Spectrum({
     providers: [mode === "cloud" ? imessage.config() : localIMessage.config()],
   });
-  // Single, localized adaptation at the SDK boundary: we only use `.messages` and `space.send`,
-  // both of which the real `SpectrumInstance`/`Space` provide. See `InboundApp` above.
-  return real as unknown as InboundApp;
+  // Single, localized adaptation at the SDK boundary: we only use `.messages`, `space.get` and
+  // `space.send`, which the real `SpectrumInstance`/`Space` provide. See `InboundApp` above.
+  const spaces = mode === "cloud" ? imessage(real).space : localIMessage(real).space;
+  return {
+    messages: real.messages as unknown as InboundApp["messages"],
+    openSpace: async (chatId) => (await spaces.get(chatId)) as unknown as ReplyTarget,
+  };
 }
 
 export class PhotonChatPort implements ChatPort {
@@ -145,6 +151,7 @@ export class PhotonChatPort implements ChatPort {
   private readonly messageHandlers = new Set<(msg: IncomingMessage) => void>();
   private readonly reactionHandlers = new Set<(reaction: IncomingReaction) => void>();
   private readonly log: (line: string) => void;
+  private app: InboundApp | undefined;
 
   constructor(private readonly config: PhotonChatPortConfig) {
     this.allowed = new Set(config.allowedChatIds);
@@ -158,6 +165,7 @@ export class PhotonChatPort implements ChatPort {
     await fs.mkdir(mediaDir, { recursive: true });
 
     const app = this.config.app ?? (await defaultApp(mode));
+    this.app = app;
     this.log(`connected (${this.config.app ? "injected" : mode}), ${this.allowed.size} chat(s) allowlisted`);
 
     for await (const [space, message] of app.messages) {
@@ -218,19 +226,23 @@ export class PhotonChatPort implements ChatPort {
     for (const handler of this.reactionHandlers) handler(reaction);
   }
 
-  private space(chatId: string): ReplyTarget {
-    const space = this.spaces.get(chatId);
-    if (!space) throw new Error(`Chat ${chatId} hasn't sent anything yet, so it can't be replied to`);
-    return space;
+  private async space(chatId: string): Promise<ReplyTarget> {
+    const known = this.spaces.get(chatId);
+    if (known) return known;
+    if (!this.allowed.has(chatId)) throw new Error(`Chat ${chatId} isn't allowlisted`);
+    if (!this.app?.openSpace) throw new Error(`Chat ${chatId} hasn't sent anything yet, so it can't be replied to`);
+    const opened = await this.app.openSpace(chatId);
+    this.spaces.set(chatId, opened);
+    return opened;
   }
 
   async postMessage(chatId: string, text: string): Promise<MessageRef> {
-    const sent = await this.space(chatId).send(text);
+    const sent = await (await this.space(chatId)).send(text);
     return { id: sent?.id ?? "", chatId };
   }
 
   async postImage(chatId: string, image: ImageRef, caption?: string): Promise<MessageRef> {
-    const space = this.space(chatId);
+    const space = await this.space(chatId);
     const sent = await space.send(attachment(image.uri, image.mimeType ? { mimeType: image.mimeType } : {}));
     if (caption) await space.send(caption);
     return { id: sent?.id ?? "", chatId };

@@ -198,14 +198,15 @@ export class GroupRuntime {
       if (!handle) continue;
       const member = this.memberFor(record, handle);
       const already = member.wallet?.address.toLowerCase() === event.account.toLowerCase();
-      member.wallet = { address: event.account };
-      member.limit = { ...event.limit };
-      this.deps.store.save();
       if (!already) {
         this.log(`${member.displayName} joined ${chatId} with ${event.account}`);
+        // Post before saving: if the post throws, the watcher retries and this member still looks new.
         // Limits stay private (they're set in the member's own Face ID page), so don't post the amount.
         await this.say(chatId, `✅ ${member.displayName} is in.`);
       }
+      member.wallet = { address: event.account };
+      member.limit = { ...event.limit };
+      this.deps.store.save();
       return { chatId, handle };
     }
     this.log(`join with unknown ticket ${event.ticket.slice(0, 10)}… from ${event.account}`);
