@@ -26,7 +26,7 @@
  * `fromEnv`): CROSSMINT_API_KEY (server key with agent-checkouts.* scopes),
  * CROSSMINT_CLIENT_API_KEY (client key with order-intents.* scopes; order intents refuse
  * server keys), CROSSMINT_JWT_PRIVATE_KEY (Kitty signs the user JWT that goes with it;
- * public key at <ONBOARD_URL>/.well-known/jwks.json), CROSSMINT_USER_ID, CROSSMINT_PAYMENT_METHOD_ID (a saved
+ * public key at <ONBOARD_URL>/api/jwks), CROSSMINT_USER_ID, CROSSMINT_PAYMENT_METHOD_ID (a saved
  * card registered for order intents), and optionally CROSSMINT_BUYER_PROFILE_ID
  * / CROSSMINT_BROWSER_PROFILE_ID. All credentials must be LIVE/production — the
  * quickstart notes that mixing test + production keys yields 401. Without a
@@ -396,7 +396,7 @@ function requireEnv(env: NodeJS.ProcessEnv, key: string): string {
 
 /**
  * Kitty's JWT signer for Crossmint. The issuer defaults to the Face ID page, which also
- * serves the public key at /.well-known/jwks.json.
+ * serves the public key at /api/jwks.
  */
 export function crossmintJwtSignerFromEnv(env: NodeJS.ProcessEnv = process.env): CrossmintJwtSigner {
   return new CrossmintJwtSigner({

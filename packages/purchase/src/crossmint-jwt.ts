@@ -4,7 +4,7 @@
  * Crossmint only accepts card authorizations (order intents) and card saving
  * from a client key plus a user JWT. We don't run a separate auth provider, so
  * Kitty signs short-lived RS256 tokens itself; Crossmint verifies them against
- * the public key served at `<ONBOARD_URL>/.well-known/jwks.json`.
+ * the public key served at `<ONBOARD_URL>/api/jwks`.
  */
 
 import { createPrivateKey, createPublicKey, sign, type KeyObject } from "node:crypto";

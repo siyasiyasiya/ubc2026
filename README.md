@@ -65,7 +65,7 @@ For things like paper towels, tickets or an Airbnb.
 
 If a store blocks the agent, the request ends with "nothing was charged".
 
-**How the card is charged:** Crossmint only authorizes a card charge (an "order intent") with a client key plus a signed-in user token. Kitty has no separate login service, so it signs short-lived user tokens itself (RS256, Crossmint's "Custom tokens" option) and publishes the public key at `kittyagent.vercel.app/.well-known/jwks.json`. The card is saved once on `kittyagent.vercel.app/card.html` inside Crossmint's own form, so card numbers never touch Kitty; Kitty only keeps the card's id.
+**How the card is charged:** Crossmint only authorizes a card charge (an "order intent") with a client key plus a signed-in user token. Kitty has no separate login service, so it signs short-lived user tokens itself (RS256, Crossmint's "Custom tokens" option) and publishes the public key at `kittyagent.vercel.app/api/jwks`. The card is saved once on `kittyagent.vercel.app/card.html` inside Crossmint's own form, so card numbers never touch Kitty; Kitty only keeps the card's id.
 
 ### 2. A member already paid (pay after)
 
