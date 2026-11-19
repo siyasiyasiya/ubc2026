@@ -65,6 +65,8 @@ For things like paper towels, tickets or an Airbnb.
 
 If a store blocks the agent, the request ends with "nothing was charged".
 
+**How the card is charged:** Crossmint only authorizes a card charge (an "order intent") with a client key plus a signed-in user token. Kitty has no separate login service, so it signs short-lived user tokens itself (RS256, Crossmint's "Custom tokens" option) and publishes the public key at `kittyagent.vercel.app/.well-known/jwks.json`. The card is saved once on `kittyagent.vercel.app/card.html` inside Crossmint's own form, so card numbers never touch Kitty; Kitty only keeps the card's id.
+
 ### 2. A member already paid (pay after)
 
 For things like dinner, a bar tab or a ride, where the real amount isn't known until the end.
@@ -169,6 +171,8 @@ cd contracts && forge test            # 54 tests
 #   Optional: CROSSMINT_* for real store orders, ELEVENLABS_* for restaurant calls.
 pnpm --filter @gta/server dev         # the iMessage bot
 pnpm --filter @gta/server fund <phone|address> <usd>   # testnet: send someone test dollars
+pnpm --filter @gta/server crossmint card               # link to save the card Kitty pays stores with
+pnpm --filter @gta/server crossmint buy "<item or URL>"  # real test order, asks "yes" before charging
 ```
 
 **Testing on testnet:** members text Kitty privately "add $20" and get test dollars straight into their Kitty account (from the bot's wallet, up to $20 a request and $50 a day; top the bot up at faucet.circle.com). Real money comes in through Apple Pay (Arc Onramp) instead.

@@ -12,7 +12,8 @@
     "sim": "tsx --env-file-if-exists=.env src/sim.ts",
     "test": "vitest run --passWithNoTests",
     "invite": "tsx --env-file-if-exists=.env src/invite.ts",
-    "fund": "tsx --env-file-if-exists=.env src/fund.ts"
+    "fund": "tsx --env-file-if-exists=.env src/fund.ts",
+    "crossmint": "tsx --env-file-if-exists=.env src/crossmint.ts"
   },
   "dependencies": {
     "@gta/agent": "workspace:*",
