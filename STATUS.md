@@ -34,13 +34,17 @@ The pieces work on their own; the demo needs them joined up. In order:
 | # | What | Owner | Status | Blocks |
 | --- | --- | --- | --- | --- |
 | 1 | Merge Track A: contract, Face ID page, Arc Onramp, `ArcWalletAdapter` | Neena | ✅ merged (#7, included #3) | — |
-| 2 | DMs in `PhotonChatPort` (`sendDirectMessage` throws today) | Siya | ⬜ todo | 3 |
-| 3 | "in" → invite ticket → DM the Face ID link | Neena (runtime hook from Siya) | ⬜ todo | 4 |
-| 4 | Watch `Joined` events → link wallet to handle (`Member.wallet`) → fund new account (testnet) | Neena | ⬜ todo | 6 |
-| 5 | Runtime picks the wallet adapter per chat (`RuntimeDeps.wallet` is one adapter today) | shared | ⬜ todo | 6 |
-| 6 | Swap `InMemoryWalletAdapter` for `arcWalletAdapters(...)(chatId)` and run the pay-after flow live | shared | ⬜ todo | demo |
-| 7 | README for judges: architecture, Arc + Circle usage, contract address, how to run | both | ⬜ todo | submission |
+| 2 | DMs in `PhotonChatPort` | Siya | ✅ done (97109f4, imessage-kit `send({ to: handle })`) | 3 |
+| 3 | "in" → invite ticket → DM the Face ID link | Neena | 🟡 in progress (invite CLI works today) | demo |
+| 4 | Watch `Joined` events → link wallet to handle (`Member.wallet`) → fund new account (testnet) | Neena | ✅ done, live: Siya, Tristan, Joey joined Nov 18 | — |
+| 5 | Runtime picks the wallet adapter per chat | shared | ✅ done (#9) | — |
+| 6 | Pay-after flow live on Arc | shared | ✅ ran live Nov 18: card → 👍 → settle onchain. Joey's $10 share failed (only $5 in his account) and became an onchain debt, so we need step 9 | — |
+| 7 | README for judges: architecture, Arc + Circle usage, contract address, how to run | both | 🟡 "How Arc and Circle are used" section done | submission |
 | 8 | Demo script + dry run on real phones | both | ⬜ todo | submission |
+| 9 | Short balance: DM a top-up + "pay it back" link, Face ID `payDebt`, "✅ paid back" in chat | Neena | 🟡 in progress | demo |
+| 10 | Limit changes from chat: lower → operator `lowerLimit` now; raise → DM Face ID link | Neena | 🟡 in progress | demo |
+| 11 | 👍 tapbacks on the card (local mode) | Siya | ✅ done (97109f4, reads `chat.db`); live test pending | demo |
+| 12 | Neena's own messages: bot runs on her Apple ID, so it ignores her | Neena | 🔲 decide: `SELF_HANDLE` (built, off) or a separate Apple ID for the bot | demo |
 
 ---
 
@@ -55,10 +59,10 @@ Owns: `contracts/`, `packages/wallet`, `packages/funding`, `apps/onboard`.
 | `WalletAdapter` — in-memory dev impl | ✅ done (on main) | `InMemoryWalletAdapter`, weekly/monthly limits, idempotent pulls. Non-production. |
 | `WalletAdapter` — real impl (Arc) | ✅ done | `ArcWalletAdapter`: each pull = one-person split (`propose` → `approveFor` → `settle`), idempotent across restarts, over-limit → onchain debt. Anvil tests + live read on Arc. Full live pull waits on a member joining via the page. |
 | Funding — add money (Arc Onramp) | 🟡 built, untested on phone | `/api/onramp-session` on Vercel mints an Arc Onramp **sandbox** session delivering USDC straight to the member's account (Kitty never holds funds). Page shows balance + "Add money with Apple Pay"; `?a=<account>` top-up link for "you're short" DMs. **To do:** test on a phone and confirm sandbox USDC lands on Arc testnet. Production needs Circle KYB with our domain. |
-| Invite tickets + DM link | ⬜ todo | Server creates ticket for (handle, chat), DMs `kittyagent.vercel.app/?g=&t=&c=&n=`. Needs Track B DMs. |
-| `Joined` watcher → handle ↔ wallet | ⬜ todo | Poll `Joined(group, member, limit, period, ticket)` in ≤2,000-block chunks (public Arc RPC rate-limits), match ticket → handle, set `Member.wallet`, fund with faucet (`CIRCLE_API_KEY`). |
-| Limit changes from chat | ⬜ todo | "Lower my limit" → operator `lowerLimit`. "Raise my limit" → DM a Face ID link (`?g=&c=`, no ticket) → member's `setLimit`. Needs the agent's `set_my_limit` tool to route this way. |
-| "You're short" top-up DM | ⬜ todo | When a share fails for low balance, DM `kittyagent.vercel.app/?a=<account>&c=<chat>`. |
+| Invite tickets + DM link | 🟡 in progress | Tickets, links and `pnpm --filter @gta/server invite <chatId> <phone> <name>` done (fresh ticket per invite). To do: agent tool so "in" DMs the link. |
+| `Joined` watcher → handle ↔ wallet | ✅ done, live | `JoinWatcher` polls in ≤2,000-block windows, matches ticket → handle, posts "✅ X is in", sends a testnet welcome balance ($5 from the operator; Circle faucet API is 403 for our key). |
+| Limit changes from chat | 🟡 in progress | "Lower my limit" → operator `lowerLimit`. "Raise my limit" → DM a Face ID link (`?g=&c=`, no ticket) → member's `setLimit`. |
+| Short balance → top-up + pay back | 🟡 in progress | Found live: a share bigger than the member's balance becomes an onchain debt with no way to repay. Adding: DM a link to add money and pay back with Face ID (`payDebt`), and "✅ X paid Y back" in chat. |
 | ✅ **Decided:** chain | ✅ | **Arc testnet** — USDC is gas, ~1s finality, Circle passkey wallets + paymaster. |
 | ✅ **Decided:** wallets + limit enforcement | ✅ | **Circle passkey (modular) wallets**, one per person; **limits enforced by `GroupTreasury`**, one per chat, signed by the member with Face ID. 👍 relayed by the agent, capped by that limit. |
 | ✅ **Decided:** funding | ✅ | **Arc Onramp** (Apple Pay / debit → USDC on Arc, delivered to the member). Fallbacks: Coinbase Onramp or Crossmint → Base, then CCTP to Arc. |
@@ -70,8 +74,8 @@ Owns: `packages/imessage`, `packages/agent`, `packages/purchase`.
 
 | Task | Status | Notes |
 | --- | --- | --- |
-| `PhotonChatPort` — post, image, 👍 reactions | ✅ done | **spectrum-ts**; attributed 👍 via `message.sender`; 15 tests. ⚠️ Local group-reaction delivery still to verify on a Mac — if it doesn't, port PR #4's `chat.db` sender-resolver (imessage-kit) as fallback. |
-| `PhotonChatPort` — **DMs** | ⬜ todo | `sendDirectMessage` throws. **Blocks Track A onboarding** (the Face ID link is sent by DM). |
+| `PhotonChatPort` — post, image, 👍 reactions | ✅ done | Switched to **imessage-kit** (97109f4): spectrum-ts local mode drops every tapback. Group 👍 senders are read from `chat.db`. Posting to a chat no longer needs an inbound message first (a38bb07). |
+| `PhotonChatPort` — **DMs** | ✅ done | `sendDirectMessage` sends to the bare handle. |
 | `agent` — parse requests → intents + `runTurn` | ✅ done | **Claude via Anthropic SDK** tool-runner (`runTurn`); model `claude-sonnet-5`. |
 | `agent` — read receipts → `Receipt` (pay-after) | ✅ done | `ClaudeReceiptReader` (Claude vision). |
 | `agent` — drive the state machine via ports | ✅ done | `apps/server` runtime + sim orchestration (pay-after flow); 5 runtime tests. |
@@ -87,7 +91,7 @@ Owns: `packages/imessage`, `packages/agent`, `packages/purchase`.
 | Task | Status | Notes |
 | --- | --- | --- |
 | `packages/core` — interfaces | ✅ done | frozen contract between tracks; change together only |
-| `apps/server` — wire real adapters | 🟡 pay-after done | Pay-after runs on the in-memory wallet. To do: per-chat Arc adapter, member wallets from `Joined`, pay-before (purchase) wiring. |
+| `apps/server` — wire real adapters | 🟡 pay-after live on Arc | Per-chat `ArcWalletAdapter`, wallets from `Joined`, live in a real group. To do: pay-before (purchase) wiring. |
 | Open PRs to sort out | 🟡 | #3 + #7 merged. Superseded by main, safe to close: #1 (workflow, c6d610d), #5 (wallet + 👍 rule, f8f014a/12487c5), #6 (`model.ts` no longer exists). #4 (imessage-kit 👍 resolver) stays open as the fallback if spectrum-ts group reactions fail. |
 | README for judges | ⬜ todo | Architecture, how Arc + Circle (passkeys, paymaster, Onramp) are used, contract address, why onchain. Draft explainer: onboarding + "why onchain" page (Neena has the link). |
 | **Decide:** project name | 🟡 working name | **Kitty**, page at `kittyagent.vercel.app`. Passkeys are tied to the domain, so pick the final domain before real users join. Package scope still `@gta/*`. |
@@ -95,7 +99,7 @@ Owns: `packages/imessage`, `packages/agent`, `packages/purchase`.
 ## Ops notes
 
 - **Secrets:** `contracts/.env` (gitignored): Arc RPC, operator key, treasury address, `CIRCLE_API_KEY`, `CIRCLE_CLIENT_KEY`. Vercel project `kittyagent` holds `CIRCLE_API_KEY` (secret), `VITE_CLIENT_KEY`, `VITE_TREASURY_ADDRESS`. ⚠️ Rotate the Circle API key (it was exposed in a session log).
-- **Operator wallet** `0xDEbAA02AAB62BDc01dddd5830D3a0D613C80842f` pays gas for proposals/settles; ~19.8 test USDC left. Top up at faucet.circle.com (Arc Testnet).
+- **Operator wallet** `0xDEbAA02AAB62BDc01dddd5830D3a0D613C80842f` pays gas and $5 welcome balances; ~21.8 test USDC on Nov 18 (each join costs $5). Top up at faucet.circle.com (Arc Testnet).
 - **Vercel deploys** run from a copy of `apps/onboard` outside git, because the git commit email isn't on the Vercel team. Add it to the team (or connect the repo) to deploy from git.
 
 **Legend:** ✅ done · 🟡 in progress · ⬜ todo · 🔲 decision needed
