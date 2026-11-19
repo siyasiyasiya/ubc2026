@@ -73,6 +73,11 @@ function plainReason(reason: string | undefined): string {
   return reason ?? "failed";
 }
 
+/** Pick a random variant so the chain-driven status lines don't read like the same template every time. */
+function pick<T>(variants: readonly T[]): T {
+  return variants[Math.floor(Math.random() * variants.length)]!;
+}
+
 export class GroupRuntime {
   private readonly history = new Map<string, string[]>();
   /** The last receipt each group posted, attached to the next proposal that matches its total. */
@@ -187,7 +192,7 @@ export class GroupRuntime {
   async sendJoinLink(record: GroupRecord, member: Member): Promise<string> {
     if (member.wallet) return `${member.displayName} already has a Kitty account here.`;
     const link = this.inviteLinkFor(record.group.chatId, member.id);
-    const where = await this.dm(record, member, `Set up your Kitty account for ${record.group.name} (one Face ID tap): ${link}`);
+    const where = await this.dm(record, member, `you're invited to ${record.group.name}'s kitty 🎉 one Face ID tap and you're set up: ${link}`);
     return where === "dm"
       ? `Texted ${member.displayName} a private Face ID link.`
       : `Couldn't text ${member.displayName} privately, so the link went in the group.`;
@@ -214,7 +219,7 @@ export class GroupRuntime {
     const where = await this.dm(
       record,
       member,
-      `Confirm your new ${record.group.name} limit (${formatUsdc(limit.amount)} a ${limit.period === "weekly" ? "week" : "month"}) with Face ID: ${this.pageLink(record, member, { l: formatUsdc(limit.amount).replace("$", ""), p: limit.period })}`,
+      `tap to confirm your new ${record.group.name} limit, ${formatUsdc(limit.amount)} a ${limit.period === "weekly" ? "week" : "month"}, with Face ID: ${this.pageLink(record, member, { l: formatUsdc(limit.amount).replace("$", ""), p: limit.period })}`,
     );
     return `Raising needs ${member.displayName}'s Face ID, so I ${where === "dm" ? "texted them" : "posted"} a link to confirm.`;
   }
@@ -280,7 +285,15 @@ export class GroupRuntime {
       member.limit = { ...event.limit };
       this.deps.store.save();
       if (changed && event.by.toLowerCase() === event.account.toLowerCase()) {
-        await this.say(record.group.chatId, `✅ ${member.displayName} updated their limit.`);
+        await this.say(
+          record.group.chatId,
+          pick([
+            `${member.displayName}'s limit is updated ✅`,
+            `done, ${member.displayName}'s new limit is live`,
+            `${member.displayName} just tweaked their limit`,
+            `limit updated for ${member.displayName} ✅`,
+          ]),
+        );
       }
     }
   }
@@ -292,7 +305,15 @@ export class GroupRuntime {
       const debtor = record.group.members.find((m) => is(m, event.debtor));
       const creditor = record.group.members.find((m) => is(m, event.creditor));
       if (!debtor || !creditor) continue;
-      await this.say(record.group.chatId, `✅ ${debtor.displayName} paid ${creditor.displayName} back ${formatUsdc(event.amount)}.`);
+      await this.say(
+        record.group.chatId,
+        pick([
+          `${debtor.displayName} squared up with ${creditor.displayName} (${formatUsdc(event.amount)}) 🤝`,
+          `${debtor.displayName} paid ${creditor.displayName} back ${formatUsdc(event.amount)}, nice`,
+          `${formatUsdc(event.amount)} from ${debtor.displayName} to ${creditor.displayName}, settled`,
+          `${debtor.displayName} got ${creditor.displayName} their ${formatUsdc(event.amount)} back ✅`,
+        ]),
+      );
       return;
     }
   }
@@ -326,7 +347,15 @@ export class GroupRuntime {
         this.log(`${member.displayName} joined ${chatId} with ${event.account}`);
         // Post before saving: if the post throws, the watcher retries and this member still looks new.
         // Limits stay private (they're set in the member's own Face ID page), so don't post the amount.
-        await this.say(chatId, `✅ ${member.displayName} is in.`);
+        await this.say(
+          chatId,
+          pick([
+            `${member.displayName}'s in 🎉`,
+            `welcome ${member.displayName}, you're all set`,
+            `boom, ${member.displayName} just joined`,
+            `${member.displayName}'s in the kitty now ✅`,
+          ]),
+        );
       }
       member.wallet = { address: event.account };
       member.limit = { ...event.limit };
@@ -597,8 +626,10 @@ export class GroupRuntime {
       }
     }
     await this.apply(record, request, { type: "settle_complete", at: this.now() });
+    // A cheery lead-in only when everything cleared; a partial settle stays plain so the ⚠️ reads as real.
+    const lead = failed === 0 ? `${pick(["all squared up 🎉", "money moved 💸", "settled up"])}\n` : "";
     const head = failed === 0 ? `✅ Settled #${request.number} ${request.title}` : `⚠️ Partly settled #${request.number} ${request.title}`;
-    await this.say(record.group.chatId, `${head} (${formatUsdc(split.total)})\n${lines.join("\n")}`);
+    await this.say(record.group.chatId, `${lead}${head} (${formatUsdc(split.total)})\n${lines.join("\n")}`);
     for (const { member, amount, reason } of short) {
       if (!payee?.wallet || !this.deps.invites) continue;
       const link = this.pageLink(record, member, {
@@ -609,7 +640,7 @@ export class GroupRuntime {
       await this.dm(
         record,
         member,
-        `Your ${formatUsdc(amount)} share of ${request.title} didn't go through (${reason}), so it's saved as owed to ${payee.displayName}. Add money and pay it back with Face ID: ${link}`,
+        `heads up: your ${formatUsdc(amount)} share of ${request.title} didn't go through (${reason}), so it's owed to ${payee.displayName} for now. add money and pay it back with Face ID: ${link}`,
       );
     }
   }

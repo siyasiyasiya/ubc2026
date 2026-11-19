@@ -183,7 +183,7 @@ describe("GroupRuntime", () => {
     const siya = t.store.get(CHAT)!.group.members.find((m) => m.id === SIYA)!;
     expect(siya.wallet?.address).toBe(account);
     expect(siya.limit).toEqual({ amount: usdc(40), period: "monthly" });
-    expect(t.posted.at(-1)?.text).toBe("✅ Siya is in.");
+    expect(t.posted.at(-1)?.text).toMatch(/Siya\b.*\b(in|joined|set|kitty)\b/i);
 
     const stranger = await t.runtime.handleJoin({ ...base, ticket: inviteTicket("guess", CHAT, SIYA), limit: { amount: usdc(1), period: "weekly" } });
     expect(stranger).toBeUndefined();
@@ -239,7 +239,7 @@ describe("GroupRuntime", () => {
     t.failing.posts = 1;
     await expect(t.runtime.handleJoin(event)).rejects.toThrow("chat unreachable");
     expect(await t.runtime.handleJoin(event)).toEqual({ chatId: CHAT, handle: SIYA });
-    expect(t.posted.at(-1)?.text).toBe("✅ Siya is in.");
+    expect(t.posted.at(-1)?.text).toMatch(/Siya\b.*\b(in|joined|set|kitty)\b/i);
   });
 
   it("texts a join link to someone who isn't set up, and falls back to the group if DMs fail", async () => {
@@ -256,7 +256,7 @@ describe("GroupRuntime", () => {
 
     t.failing.dms = 1;
     await t.say(TRISTAN, "join me");
-    expect(t.posted.some((p) => p.text.startsWith("Tristan: Set up your Kitty account"))).toBe(true);
+    expect(t.posted.some((p) => p.text.startsWith("Tristan:") && p.text.includes("kitty"))).toBe(true);
   });
 
   it("lowers a limit onchain right away but sends a Face ID link to raise it", async () => {
@@ -311,7 +311,10 @@ describe("GroupRuntime", () => {
     expect(req.number).toBe(1);
 
     await t.runtime.handleDebtPaid({ debtor: wallets[SIYA] as `0x${string}`, creditor: wallets[NEENA] as `0x${string}`, amount: usdc(30), blockNumber: 1n, txHash: "0x01" });
-    expect(t.posted.at(-1)?.text).toBe("✅ Siya paid Neena back $30.00.");
+    const paid = t.posted.at(-1)?.text ?? "";
+    expect(paid).toContain("Siya");
+    expect(paid).toContain("Neena");
+    expect(paid).toContain("$30.00");
   });
 
   it("confirms a member's own Face ID limit change without the amount", async () => {
@@ -320,7 +323,9 @@ describe("GroupRuntime", () => {
     await t.say(SIYA, "hi");
     const base = { group: groupIdForChat(CHAT), account, blockNumber: 1n, txHash: "0x01" as const };
     await t.runtime.handleLimitSet({ ...base, limit: { amount: usdc(75), period: "weekly" }, by: account });
-    expect(t.posted.at(-1)?.text).toBe("✅ Siya updated their limit.");
+    const limitMsg = t.posted.at(-1)?.text ?? "";
+    expect(limitMsg).toContain("Siya");
+    expect(limitMsg).toContain("limit");
     expect(t.store.get(CHAT)!.group.members.find((m) => m.id === SIYA)!.limit.amount).toBe(usdc(75));
     const posts = t.posted.length;
     await t.runtime.handleLimitSet({ ...base, limit: { amount: usdc(10), period: "weekly" }, by: "0x00000000000000000000000000000000000000ee" });
