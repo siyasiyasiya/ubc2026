@@ -41,8 +41,13 @@ As of Nov 19, 2026, run live in a real iMessage group on Arc testnet unless note
 | Join with one Face ID tap from a private invite text (name asked privately first) | ✅ live |
 | Per-chat plan and limits (weekly / monthly / one-time), lower a limit from the chat | ✅ live |
 | Split a bill, everyone 👍s the card (real iMessage tapbacks), shares settle onchain | ✅ live |
+| Read the receipt from a photo or a PDF (merchant, tax, tip, line items), handwritten tip included | ✅ live |
 | Trip tab: splits wait until "settle up" | ✅ live |
 | A share that can't be pulled becomes an onchain debt, and the member gets a pay-back link | ✅ live up to the pay-back tap |
+| Itemized split: "i had the pasta and a sake", tax and tip shared proportionally | 🟡 built and tested, live run pending |
+| Settle-up netting: the fewest who-pays-whom transfers (advisory; payback still runs pairwise) | 🟡 built and tested, live run pending |
+| Kitty wrapped: spending summary (total, per person, top spender) in the chat or a DM | 🟡 built and tested, live run pending |
+| Proactive nudges for stale approval cards and unpaid debts (off by default, `NUDGES=on`) | 🟡 built and tested, off for demos |
 | Raise a limit (one-tap Face ID link), leave a chat's Kitty, private balance questions by text | 🟡 built and tested, live run pending |
 | Kitty buys it (pay before): checkout card, 👍s, order, shares paid back to the card | 🟡 real Crossmint order placed from the terminal (a $1 Gumroad item, $1.07 charged); from the chat: live run pending |
 | Restaurant calls (ElevenLabs) | 🟡 built and tested against the documented API; needs ElevenLabs keys and a phone number |
@@ -72,7 +77,7 @@ If a store blocks the agent, the request ends with "nothing was charged".
 For things like dinner, a bar tab or a ride, where the real amount isn't known until the end.
 
 1. Before: members say they're in. Nothing is charged yet.
-2. After: whoever paid sends a photo of the receipt to the chat.
+2. After: whoever paid sends a photo or PDF of the receipt to the chat.
 3. The agent reads the total, including tax and tip, and posts a card with the split (evenly, or by what each person ordered).
 4. Everyone in the split 👍s the card. Then each share is pulled from their account and sent to whoever paid, or held on the tab until "settle up".
 
