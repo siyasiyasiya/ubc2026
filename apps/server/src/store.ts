@@ -21,12 +21,16 @@ export interface RequestRecord {
 export interface GroupRecord {
   group: Group;
   requests: RequestRecord[];
+  /** Latest Face ID invite nonce per handle; tickets for nonces 0..n are valid. */
+  inviteNonces?: Record<string, number>;
 }
 
 interface StoreFile {
   groups: Record<string, GroupRecord>;
   /** Next Arc block the Face ID join watcher should scan. */
   joinCursor?: bigint;
+  /** Accounts already sent a testnet welcome balance, so a replayed join never pays twice. */
+  welcomed?: string[];
 }
 
 // USDC amounts are bigints; JSON can't hold them natively.
@@ -62,6 +66,17 @@ export class Store {
 
   set joinCursor(block: bigint | undefined) {
     this.data.joinCursor = block;
+  }
+
+  hasWelcomed(account: string): boolean {
+    return (this.data.welcomed ?? []).includes(account.toLowerCase());
+  }
+
+  markWelcomed(account: string, welcomed = true): void {
+    const set = new Set(this.data.welcomed ?? []);
+    if (welcomed) set.add(account.toLowerCase());
+    else set.delete(account.toLowerCase());
+    this.data.welcomed = [...set];
   }
 
   put(record: GroupRecord): void {

@@ -46,8 +46,9 @@ export const config = {
   arc: (() => {
     const operatorPrivateKey = hex(process.env.OPERATOR_PRIVATE_KEY);
     const treasury = hex(process.env.TREASURY_ADDRESS);
+    const deployBlock = process.env.TREASURY_DEPLOY_BLOCK ? BigInt(process.env.TREASURY_DEPLOY_BLOCK) : undefined;
     return operatorPrivateKey && treasury
-      ? { rpcUrl: process.env.ARC_RPC_URL || undefined, operatorPrivateKey, treasury }
+      ? { rpcUrl: process.env.ARC_RPC_URL || undefined, operatorPrivateKey, treasury, ...(deployBlock !== undefined ? { deployBlock } : {}) }
       : undefined;
   })(),
   defaultLimit: {

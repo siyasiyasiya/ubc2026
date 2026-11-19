@@ -45,6 +45,7 @@ const runtime = new GroupRuntime({
   names: config.names,
   wallets: config.wallets,
   ...(config.invites ? { invites: config.invites } : {}),
+  chats: config.allowedChatIds,
 });
 runtime.attach();
 startJoinWatcher();
@@ -62,28 +63,46 @@ function startJoinWatcher(): void {
   const { publicClient, walletClient: operator } = arcClients(config.arc);
   const welcome = usdc(config.welcomeUsd);
 
-  void (async () => {
-    const fromBlock = store.joinCursor ?? config.treasuryDeployBlock ?? (await publicClient.getBlockNumber());
-    const watcher = new JoinWatcher({
-      publicClient,
-      treasury: config.arc!.treasury,
-      fromBlock,
-      log: (line) => console.log(`[join] ${line}`),
-      onCursor: (next) => {
-        store.joinCursor = next;
-        store.save();
-      },
-      onJoin: (event) =>
-        runtime.serial(async () => {
-          const joined = await runtime.handleJoin(event);
-          if (!joined || welcome <= 0n) return;
-          // Only top up an empty account, so rejoining or a replayed event doesn't pay twice.
-          if ((await publicClient.getBalance({ address: event.account })) > 0n) return;
-          const tx = await sendWelcomeBalance(operator, publicClient, event.account, welcome);
-          console.log(`[join] sent ${config.welcomeUsd} test dollars to ${event.account} (${tx})`);
-        }),
-    });
-    console.log(`join watcher: scanning from block ${fromBlock}`);
-    watcher.start();
-  })();
+  const start = async (): Promise<void> => {
+    try {
+      const fromBlock = store.joinCursor ?? config.treasuryDeployBlock ?? (await publicClient.getBlockNumber());
+      const watcher = new JoinWatcher({
+        publicClient,
+        treasury: config.arc!.treasury,
+        fromBlock,
+        log: (line) => console.log(`[join] ${line}`),
+        onCursor: (next) => {
+          store.joinCursor = next;
+          store.save();
+        },
+        // `run` passes errors back, so a failed join stops the cursor and the window is retried.
+        onJoin: async (event) => {
+          const joined = await runtime.run(() => runtime.handleJoin(event));
+          if (joined) void welcomeIfNew(event.account);
+        },
+      });
+      console.log(`join watcher: scanning from block ${fromBlock}`);
+      watcher.start();
+    } catch (err) {
+      console.log(`join watcher: couldn't start (${(err as Error).message?.split("\n")[0]}), retrying in 10s`);
+      setTimeout(() => void start(), 10_000);
+    }
+  };
+
+  /** Testnet only. Outside the runtime queue so chats don't wait on a confirmation. Once per account. */
+  const welcomeIfNew = async (account: `0x${string}`): Promise<void> => {
+    if (welcome <= 0n || store.hasWelcomed(account)) return;
+    store.markWelcomed(account);
+    store.save();
+    try {
+      const tx = await sendWelcomeBalance(operator, publicClient, account, welcome);
+      console.log(`[join] sent ${config.welcomeUsd} test dollars to ${account} (${tx})`);
+    } catch (err) {
+      store.markWelcomed(account, false);
+      store.save();
+      console.log(`[join] welcome balance to ${account} failed: ${(err as Error).message?.split("\n")[0]}`);
+    }
+  };
+
+  void start();
 }

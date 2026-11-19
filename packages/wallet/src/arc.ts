@@ -53,7 +53,7 @@ export function pullSpendId(chatId: string, idempotencyKey: string): Hex {
 }
 
 /** The public Arc RPC rejects `eth_getLogs` ranges much larger than this. */
-const LOG_WINDOW_BLOCKS = 2_000n;
+export const LOG_WINDOW_BLOCKS = 2_000n;
 /** How far back a restart-recovery lookup goes (about 1M blocks). */
 const LOG_WINDOWS = 500;
 

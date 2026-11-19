@@ -20,12 +20,17 @@ import {
   type Transport,
   type WalletClient,
 } from "viem";
-import { groupIdForChat } from "./arc.js";
+import { groupIdForChat, LOG_WINDOW_BLOCKS } from "./arc.js";
 import { groupTreasuryAbi } from "./treasury-abi.js";
 
-/** The single-use ticket for `handle` joining `chatId`. Keep `secret` server-side. */
-export function inviteTicket(secret: string, chatId: string, handle: string): Hex {
-  return keccak256(encodePacked(["string", "string", "string", "string", "string"], [secret, "\n", chatId, "\n", handle]));
+/**
+ * The single-use ticket for `handle` joining `chatId`. Keep `secret` server-side. Tickets are used
+ * up onchain, so each new invite for the same person (say, after they left or lost their phone)
+ * takes the next `nonce`.
+ */
+export function inviteTicket(secret: string, chatId: string, handle: string, nonce = 0): Hex {
+  const parts = [secret, "\n", chatId, "\n", handle, ...(nonce > 0 ? ["\n", String(nonce)] : [])];
+  return keccak256(encodePacked(parts.map(() => "string"), parts));
 }
 
 export interface InviteLinkInput {
@@ -36,13 +41,15 @@ export interface InviteLinkInput {
   chatName: string;
   handle: string;
   displayName: string;
+  /** Which invite this is for the person (0 for the first). */
+  nonce?: number;
 }
 
 /** The link the agent DMs a member: `?g=<group>&t=<ticket>&c=<chat name>&n=<name>`. */
 export function inviteLink(input: InviteLinkInput): string {
   const url = new URL(input.baseUrl);
   url.searchParams.set("g", groupIdForChat(input.chatId));
-  url.searchParams.set("t", inviteTicket(input.secret, input.chatId, input.handle));
+  url.searchParams.set("t", inviteTicket(input.secret, input.chatId, input.handle, input.nonce ?? 0));
   url.searchParams.set("c", input.chatName);
   if (input.displayName) url.searchParams.set("n", input.displayName);
   return url.toString();
@@ -71,9 +78,6 @@ export interface JoinWatcherOptions {
   log?: (line: string) => void;
 }
 
-/** The public Arc RPC rejects `eth_getLogs` ranges much larger than this. */
-const WINDOW = 2_000n;
-
 /** Polls the treasury for `Joined` events and hands each one to `onJoin`. */
 export class JoinWatcher {
   private next: bigint;
@@ -100,7 +104,7 @@ export class JoinWatcher {
   async poll(): Promise<void> {
     const head = await this.opts.publicClient.getBlockNumber({ cacheTime: 0 });
     while (this.next <= head) {
-      const to = this.next + WINDOW - 1n < head ? this.next + WINDOW - 1n : head;
+      const to = this.next + LOG_WINDOW_BLOCKS - 1n < head ? this.next + LOG_WINDOW_BLOCKS - 1n : head;
       const logs = await this.opts.publicClient.getContractEvents({
         address: this.opts.treasury,
         abi: groupTreasuryAbi,
