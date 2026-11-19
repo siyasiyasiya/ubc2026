@@ -90,8 +90,8 @@ Owns: `packages/imessage`, `packages/agent`, `packages/purchase`.
 | `agent` — parse requests → intents + `runTurn` | ✅ done | **Claude via Anthropic SDK** tool-runner (`runTurn`); model `claude-sonnet-5`. |
 | `agent` — read receipts → `Receipt` (pay-after) | ✅ done | `ClaudeReceiptReader` (Claude vision). |
 | `agent` — drive the state machine via ports | ✅ done | `apps/server` runtime + sim orchestration (pay-after flow); 5 runtime tests. |
-| `agent` — join + limit tools | ⬜ todo | "in" → hand off to the invite flow; `set_my_limit` → lower onchain / send Face ID link to raise. |
-| `agent` — no crypto words in chat | ⬜ todo | Members see "your Kitty account", "$50", "Face ID" — never wallet, USDC, transaction, Arc, onchain, gas, passkey. |
+| `agent` — join + limit tools | ✅ done | `send_join_link`, limit changes (lower onchain, raise via Face ID link), `set_group_plan`, `leave_kitty`, `settle_up`. See critical path #3, #10, #14–16. |
+| `agent` — no crypto words in chat | ✅ done | Members see "your Kitty account", "$50", "Face ID" — never wallet, USDC, transaction, Arc, onchain, gas, passkey. |
 | `PurchaseAdapter` — **real** store checkout (Crossmint) | ✅ done | Crossmint Agent Checkouts REST; real (not mocked); 14 tests; `blocked` handled. Needs CROSSMINT creds to run live. |
 | ✅ **Decided:** LLM + framework | ✅ done | **Claude + raw Anthropic SDK** (no web UI → dropped Vercel AI SDK), model **Sonnet 5**. Needs Anthropic API key (not the Claude subscription). |
 | ✅ **Decided:** iMessage SDK | ✅ done | **imessage-kit** (local; reads `chat.db`). spectrum-ts local mode drops tapbacks and has no DMs — so it couldn't do 👍 approvals or onboarding DMs. Switched in 97109f4. |
@@ -102,15 +102,15 @@ Owns: `packages/imessage`, `packages/agent`, `packages/purchase`.
 | Task | Status | Notes |
 | --- | --- | --- |
 | `packages/core` — interfaces | ✅ done | frozen contract between tracks; change together only |
-| `apps/server` — wire real adapters | 🟡 pay-after live on Arc | Per-chat `ArcWalletAdapter`, wallets from `Joined`, live in a real group. To do: pay-before (purchase) wiring. |
+| `apps/server` — wire real adapters | ✅ pay-after live on Arc; pay-before wired | Per-chat `ArcWalletAdapter`, wallets from `Joined`, live in a real group. Pay-before (`buy_for_group`, 7b10415) runs on a simulated store until Crossmint production keys are set. |
 | Open PRs to sort out | 🟡 | #3 + #7 merged. Superseded by main, safe to close: #1 (workflow, c6d610d), #5 (wallet + 👍 rule, f8f014a/12487c5), #6 (`model.ts` no longer exists). #4 (imessage-kit 👍 resolver) superseded by the imessage-kit switch (97109f4), safe to close. |
-| README for judges | ⬜ todo | Architecture, how Arc + Circle (passkeys, paymaster, Onramp) are used, contract address, why onchain. Draft explainer: onboarding + "why onchain" page (Neena has the link). |
+| README for judges | ✅ updated Nov 19 (de73739) | Architecture, Arc + Circle usage, contract address, run steps. Final pass before submission. |
 | **Decide:** project name | 🟡 working name | **Kitty**, page at `kittyagent.vercel.app`. Passkeys are tied to the domain, so pick the final domain before real users join. Package scope still `@gta/*`. |
 
 ## Ops notes
 
 - **Secrets:** `contracts/.env` (gitignored): Arc RPC, operator key, treasury address, `CIRCLE_API_KEY`, `CIRCLE_CLIENT_KEY`. Vercel project `kittyagent` holds `CIRCLE_API_KEY` (secret), `VITE_CLIENT_KEY`, `VITE_TREASURY_ADDRESS`. ⚠️ Rotate the Circle API key (it was exposed in a session log).
-- **Operator wallet** `0xDEbAA02AAB62BDc01dddd5830D3a0D613C80842f` pays gas and $5 welcome balances; ~21.8 test USDC on Nov 18 (each join costs $5). Top up at faucet.circle.com (Arc Testnet).
+- **Operator wallet** `0xDEbAA02AAB62BDc01dddd5830D3a0D613C80842f` pays gas and $5 welcome balances; ~$105.68 test USDC on Nov 19 (each join costs $5; "add $20" also draws from it). Top up at faucet.circle.com (Arc Testnet).
 - **Vercel deploys** run from a copy of `apps/onboard` outside git, because the git commit email isn't on the Vercel team. Add it to the team (or connect the repo) to deploy from git.
 
 **Legend:** ✅ done · 🟡 in progress · ⬜ todo · 🔲 decision needed
