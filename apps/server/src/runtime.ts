@@ -31,6 +31,7 @@ import {
   type WalletAdapter,
 } from "@gta/core";
 import type { runTurn as RunTurn, TreasuryActions } from "@gta/agent";
+import { groupIdForChat, inviteLink, inviteTicket, type JoinEvent } from "@gta/wallet";
 import type { GroupRecord, RequestRecord, Store } from "./store.js";
 
 export interface RuntimeDeps {
@@ -43,8 +44,12 @@ export interface RuntimeDeps {
   defaultLimit: SpendingLimit;
   /** Display names by handle, e.g. { "+18475551234": "Tristan" }. */
   names: Record<string, string>;
-  /** Kitty account (wallet) address by handle. Filled by the Face ID join watcher; config for now. */
+  /** Kitty account (wallet) address by handle from config. The Face ID join watcher fills in the rest. */
   wallets?: Record<string, string>;
+  /** Face ID invite links: the page's URL and the secret tickets are derived from. */
+  invites?: { baseUrl: string; secret: string };
+  /** Chats the bot serves (ALLOWED_CHAT_IDS), so a CLI invite to a chat it hasn't seen still matches. */
+  chats?: string[];
   now?: () => number;
   log?: (line: string) => void;
 }
@@ -84,6 +89,16 @@ export class GroupRuntime {
     return this.queue;
   }
 
+  /** Like `serial`, but the caller gets the result or the error (the queue still carries on). */
+  run<T>(task: () => Promise<T>): Promise<T> {
+    const result = this.queue.then(task);
+    this.queue = result.then(
+      () => undefined,
+      (err) => this.log(`error: ${(err as Error).stack ?? err}`),
+    );
+    return result;
+  }
+
   // --- groups and members ---------------------------------------------------
 
   private groupFor(chatId: string): GroupRecord {
@@ -108,8 +123,9 @@ export class GroupRuntime {
       };
       record.group.members.push(member);
     }
+    // Config only fills a gap; an account linked through a Face ID join wins.
     const address = this.deps.wallets?.[handle];
-    if (address && member.wallet?.address !== address) member.wallet = { address };
+    if (address && !member.wallet) member.wallet = { address };
     return member;
   }
 
@@ -132,6 +148,68 @@ export class GroupRuntime {
       throw new Error(`No member called "${nameOrHandle}". Members: ${names}`);
     }
     return member;
+  }
+
+  // --- Face ID onboarding ----------------------------------------------------
+
+  /** A fresh Face ID link that lets `handle` join this chat's kitty (each call is a new ticket). */
+  inviteLinkFor(chatId: string, handle: string): string {
+    const invites = this.deps.invites;
+    if (!invites) throw new Error("Invites aren't configured (set INVITE_SECRET).");
+    const record = this.groupFor(chatId);
+    const member = this.memberFor(record, handle);
+    const nonces = (record.inviteNonces ??= {});
+    const nonce = handle in nonces ? nonces[handle]! + 1 : 0;
+    nonces[handle] = nonce;
+    this.deps.store.save();
+    return inviteLink({
+      baseUrl: invites.baseUrl,
+      secret: invites.secret,
+      chatId,
+      chatName: record.group.name,
+      handle,
+      displayName: member.displayName,
+      nonce,
+    });
+  }
+
+  /**
+   * A `Joined` event from the contract: find whose ticket it is, link their Kitty account and the
+   * limit they signed, and say so in the chat. Returns who joined, or undefined for a ticket we
+   * didn't issue. Safe to call twice for the same event (the watcher retries a failed window).
+   *
+   * Known limit: a ticket isn't bound to an account, so whoever submits it first (say, from a
+   * forwarded link) is linked. Binding needs the server to sign each join for the joining account.
+   */
+  async handleJoin(event: JoinEvent): Promise<{ chatId: string; handle: string } | undefined> {
+    const secret = this.deps.invites?.secret;
+    if (!secret) return undefined;
+    const chatIds = new Set([...this.deps.store.all().map((r) => r.group.chatId), ...(this.deps.chats ?? [])]);
+    for (const chatId of chatIds) {
+      if (groupIdForChat(chatId) !== event.group) continue;
+      const record = this.groupFor(chatId);
+      // Members the bot has seen, plus known names (CLI invites before someone has spoken).
+      const handles = new Set([...record.group.members.map((m) => m.id), ...Object.keys(this.deps.names)]);
+      const handle = [...handles].find((h) => {
+        const latest = record.inviteNonces?.[h] ?? 0;
+        for (let n = 0; n <= latest; n++) if (inviteTicket(secret, chatId, h, n) === event.ticket) return true;
+        return false;
+      });
+      if (!handle) continue;
+      const member = this.memberFor(record, handle);
+      const already = member.wallet?.address.toLowerCase() === event.account.toLowerCase();
+      member.wallet = { address: event.account };
+      member.limit = { ...event.limit };
+      this.deps.store.save();
+      if (!already) {
+        this.log(`${member.displayName} joined ${chatId} with ${event.account}`);
+        // Limits stay private (they're set in the member's own Face ID page), so don't post the amount.
+        await this.say(chatId, `✅ ${member.displayName} is in.`);
+      }
+      return { chatId, handle };
+    }
+    this.log(`join with unknown ticket ${event.ticket.slice(0, 10)}… from ${event.account}`);
+    return undefined;
   }
 
   // --- chat -----------------------------------------------------------------

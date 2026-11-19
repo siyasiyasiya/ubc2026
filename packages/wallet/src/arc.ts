@@ -53,7 +53,7 @@ export function pullSpendId(chatId: string, idempotencyKey: string): Hex {
 }
 
 /** The public Arc RPC rejects `eth_getLogs` ranges much larger than this. */
-const LOG_WINDOW_BLOCKS = 2_000n;
+export const LOG_WINDOW_BLOCKS = 2_000n;
 /** How far back a restart-recovery lookup goes (about 1M blocks). */
 const LOG_WINDOWS = 500;
 
@@ -249,14 +249,29 @@ export interface ArcEnv {
 }
 
 /**
+ * The Arc RPC client and the operator's signer. Every caller shares viem's global nonce manager
+ * for the operator, so adapters, the join watcher and welcome transfers don't collide on nonces.
+ */
+export interface ArcClients {
+  publicClient: PublicClient;
+  walletClient: WalletClient<Transport, Chain, Account>;
+}
+
+export function arcClients(env: ArcEnv, chain: Chain = arcTestnet): ArcClients {
+  const transport = http(env.rpcUrl);
+  const account = privateKeyToAccount(env.operatorPrivateKey, { nonceManager });
+  return {
+    publicClient: createPublicClient({ chain, transport }) as PublicClient,
+    walletClient: createWalletClient({ chain, transport, account }) as WalletClient<Transport, Chain, Account>,
+  };
+}
+
+/**
  * Builds one adapter per chat that share an RPC connection and the operator's nonce manager, so
  * pulls in different chats don't collide on nonces.
  */
 export function arcWalletAdapters(env: ArcEnv, chain: Chain = arcTestnet): (chatId: string) => ArcWalletAdapter {
-  const transport = http(env.rpcUrl);
-  const account = privateKeyToAccount(env.operatorPrivateKey, { nonceManager });
-  const publicClient = createPublicClient({ chain, transport });
-  const walletClient = createWalletClient({ chain, transport, account });
+  const { publicClient, walletClient } = arcClients(env, chain);
   const byChat = new Map<string, ArcWalletAdapter>();
   return (chatId) => {
     let adapter = byChat.get(chatId);
@@ -264,7 +279,7 @@ export function arcWalletAdapters(env: ArcEnv, chain: Chain = arcTestnet): (chat
       adapter = new ArcWalletAdapter({
         treasury: getAddress(env.treasury),
         chatId,
-        publicClient: publicClient as PublicClient,
+        publicClient,
         walletClient,
         ...(env.deployBlock !== undefined ? { deployBlock: env.deployBlock } : {}),
       });

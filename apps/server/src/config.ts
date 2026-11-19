@@ -46,13 +46,22 @@ export const config = {
   arc: (() => {
     const operatorPrivateKey = hex(process.env.OPERATOR_PRIVATE_KEY);
     const treasury = hex(process.env.TREASURY_ADDRESS);
+    const deployBlock = process.env.TREASURY_DEPLOY_BLOCK ? BigInt(process.env.TREASURY_DEPLOY_BLOCK) : undefined;
     return operatorPrivateKey && treasury
-      ? { rpcUrl: process.env.ARC_RPC_URL || undefined, operatorPrivateKey, treasury }
+      ? { rpcUrl: process.env.ARC_RPC_URL || undefined, operatorPrivateKey, treasury, ...(deployBlock !== undefined ? { deployBlock } : {}) }
       : undefined;
   })(),
   defaultLimit: {
     amount: usdc(Number(process.env.DEFAULT_LIMIT_USD ?? 200)),
     period,
   } satisfies SpendingLimit,
+  /** Face ID invites: tickets are derived from this secret, so keep it out of git and stable. */
+  invites: process.env.INVITE_SECRET
+    ? { secret: process.env.INVITE_SECRET, baseUrl: process.env.ONBOARD_URL || "https://kittyagent.vercel.app" }
+    : undefined,
+  /** Where the join watcher starts the first time (the treasury's deploy block). */
+  treasuryDeployBlock: process.env.TREASURY_DEPLOY_BLOCK ? BigInt(process.env.TREASURY_DEPLOY_BLOCK) : undefined,
+  /** Testnet only: dollars the operator sends each new member so the demo works before they add money. */
+  welcomeUsd: Number(process.env.WELCOME_USD ?? 5),
   stateFile: process.env.STATE_FILE ?? path.resolve(here, "../data/state.json"),
 };

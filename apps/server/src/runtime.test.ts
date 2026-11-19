@@ -1,6 +1,6 @@
 import { usdc, type ChatPort, type IncomingMessage, type IncomingReaction, type PullParams, type Receipt, type WalletAdapter } from "@gta/core";
 import type { runTurn as RunTurn } from "@gta/agent";
-import { InMemoryWalletAdapter } from "@gta/wallet";
+import { groupIdForChat, InMemoryWalletAdapter, inviteTicket } from "@gta/wallet";
 import { describe, expect, it } from "vitest";
 import { GroupRuntime } from "./runtime.js";
 import { Store } from "./store.js";
@@ -12,7 +12,7 @@ const OUTSIDER = "+1999";
 const CHAT = "group";
 
 /** A runtime whose "agent" proposes a $90 dinner paid by Neena, split three ways. */
-function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapter; wallets?: Record<string, string> } = {}) {
+function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapter; wallets?: Record<string, string>; invites?: { baseUrl: string; secret: string }; chats?: string[] } = {}) {
   const posted: { id: string; text: string }[] = [];
   const onMessage: ((m: IncomingMessage) => void)[] = [];
   const onReaction: ((r: IncomingReaction) => void)[] = [];
@@ -42,6 +42,8 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
     chat,
     wallet: opts.wallet ?? new InMemoryWalletAdapter(),
     ...(opts.wallets ? { wallets: opts.wallets } : {}),
+    ...(opts.invites ? { invites: opts.invites } : {}),
+    ...(opts.chats ? { chats: opts.chats } : {}),
     receipts: { read: async (): Promise<Receipt> => ({ source: "photo", total: usdc(90), at: 0 }) },
     runTurn: fakeTurn,
     store,
@@ -66,7 +68,7 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
     await say(NEENA, "split dinner with siya and tristan");
     return request();
   };
-  return { posted, say, react, proposeDinner, request };
+  return { posted, say, react, proposeDinner, request, runtime, store };
 }
 
 describe("GroupRuntime", () => {
@@ -142,5 +144,68 @@ describe("GroupRuntime", () => {
     expect(fromSiya.from.wallet?.address).toBe(wallets[SIYA]);
     expect(fromSiya.to).toEqual({ kind: "wallet", address: wallets[NEENA] });
     expect(pulls.find((p) => p.from.id === TRISTAN)?.from.wallet).toBeUndefined(); // hasn't joined yet
+  });
+
+  it("links a Face ID join to the invited member and announces it without the limit", async () => {
+    const invites = { baseUrl: "https://kittyagent.vercel.app", secret: "s3cret" };
+    const t = setup(200, { invites });
+    await t.say(SIYA, "hi");
+    const link = new URL(t.runtime.inviteLinkFor(CHAT, SIYA));
+    expect(link.searchParams.get("t")).toBe(inviteTicket(invites.secret, CHAT, SIYA));
+    expect(link.searchParams.get("n")).toBe("Siya");
+
+    const account = "0x00000000000000000000000000000000000000Cc" as const;
+    const base = { group: groupIdForChat(CHAT), account, blockNumber: 1n, txHash: "0x01" as const };
+    const joined = await t.runtime.handleJoin({ ...base, ticket: inviteTicket(invites.secret, CHAT, SIYA), limit: { amount: usdc(40), period: "monthly" } });
+    expect(joined).toEqual({ chatId: CHAT, handle: SIYA });
+    const siya = t.store.get(CHAT)!.group.members.find((m) => m.id === SIYA)!;
+    expect(siya.wallet?.address).toBe(account);
+    expect(siya.limit).toEqual({ amount: usdc(40), period: "monthly" });
+    expect(t.posted.at(-1)?.text).toBe("✅ Siya is in.");
+
+    const stranger = await t.runtime.handleJoin({ ...base, ticket: inviteTicket("guess", CHAT, SIYA), limit: { amount: usdc(1), period: "weekly" } });
+    expect(stranger).toBeUndefined();
+  });
+
+  it("gives a new ticket per invite, so someone can rejoin, and handles a replayed join once", async () => {
+    const invites = { baseUrl: "https://kittyagent.vercel.app", secret: "s3cret" };
+    const t = setup(200, { invites });
+    const first = new URL(t.runtime.inviteLinkFor(CHAT, SIYA)).searchParams.get("t") as `0x${string}`;
+    const second = new URL(t.runtime.inviteLinkFor(CHAT, SIYA)).searchParams.get("t") as `0x${string}`;
+    expect(second).not.toBe(first);
+    expect(second).toBe(inviteTicket(invites.secret, CHAT, SIYA, 1));
+
+    const join = (ticket: `0x${string}`, account: `0x${string}`) =>
+      t.runtime.handleJoin({ group: groupIdForChat(CHAT), account, ticket, limit: { amount: usdc(30), period: "weekly" }, blockNumber: 1n, txHash: "0x01" });
+    const a = "0x00000000000000000000000000000000000000a1" as const;
+    const b = "0x00000000000000000000000000000000000000b2" as const;
+    expect(await join(first, a)).toEqual({ chatId: CHAT, handle: SIYA });
+    const posts = t.posted.length;
+    expect(await join(first, a)).toEqual({ chatId: CHAT, handle: SIYA }); // replay: no second announcement
+    expect(t.posted.length).toBe(posts);
+    expect(await join(second, b)).toEqual({ chatId: CHAT, handle: SIYA }); // new phone, new account
+    expect(t.store.get(CHAT)!.group.members.find((m) => m.id === SIYA)!.wallet?.address).toBe(b);
+  });
+
+  it("matches a CLI invite for someone who hasn't spoken in a chat the bot hasn't seen yet", async () => {
+    const invites = { baseUrl: "https://kittyagent.vercel.app", secret: "s3cret" };
+    const t = setup(200, { invites, chats: ["fresh-chat"] });
+    const ticket = inviteTicket(invites.secret, "fresh-chat", TRISTAN); // what the CLI mints (nonce 0)
+    const joined = await t.runtime.handleJoin({
+      group: groupIdForChat("fresh-chat"),
+      account: "0x00000000000000000000000000000000000000c3",
+      ticket,
+      limit: { amount: usdc(10), period: "weekly" },
+      blockNumber: 1n,
+      txHash: "0x01",
+    });
+    expect(joined).toEqual({ chatId: "fresh-chat", handle: TRISTAN });
+    expect(t.store.get("fresh-chat")!.group.members.find((m) => m.id === TRISTAN)?.displayName).toBe("Tristan");
+  });
+
+  it("passes errors back from run() so the join watcher retries instead of skipping", async () => {
+    const t = setup();
+    await expect(t.runtime.run(async () => { throw new Error("rpc down"); })).rejects.toThrow("rpc down");
+    expect(await t.runtime.run(async () => 42)).toBe(42); // the queue keeps going afterwards
   });
 });
