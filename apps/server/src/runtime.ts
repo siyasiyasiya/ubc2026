@@ -37,6 +37,7 @@ import {
 import type { runTurn as RunTurn, runDmTurn as RunDmTurn, TreasuryActions, DmActions } from "@gta/agent";
 import { groupIdForChat, inviteLink, inviteTicket, type DebtPaidEvent, type JoinEvent, type LimitSetEvent } from "@gta/wallet";
 import type { GroupRecord, RequestRecord, Store } from "./store.js";
+import type { RestaurantCaller } from "./restaurant-call.js";
 
 export interface RuntimeDeps {
   chat: ChatPort;
@@ -45,6 +46,10 @@ export interface RuntimeDeps {
   receipts: ReceiptReader;
   /** Kitty buys things for the group (pay before). Crossmint for real orders, or a labelled simulation. */
   purchase?: PurchaseAdapter;
+  /** Kitty phones restaurants (ElevenLabs voice agent). Off when unset. */
+  calls?: RestaurantCaller;
+  /** How often to check on a call in progress. Default 5s. */
+  callPollMs?: number;
   runTurn: typeof RunTurn;
   /** The private-DM brain: answers a member's account questions one-on-one. */
   runDmTurn: typeof RunDmTurn;
@@ -91,6 +96,16 @@ export function nameFromReply(text: string): string | undefined {
   if (!cleaned || cleaned.length > 30 || /[@/:]|\d/.test(cleaned) || cleaned.split(/\s+/).length > 3) return undefined;
   if (NOT_NAMES.has(cleaned.split(/\s+/)[0]!.toLowerCase())) return undefined;
   return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+}
+
+/** "+1 (512) 555-0100", "512-555-0100" → "+15125550100"; US numbers without a country code get +1. */
+export function toE164(raw: string): string | undefined {
+  const digits = raw.replace(/[^\d+]/g, "");
+  if (/^\+\d{8,15}$/.test(digits)) return digits;
+  const bare = digits.replace(/\D/g, "");
+  if (bare.length === 10) return `+1${bare}`;
+  if (bare.length === 11 && bare.startsWith("1")) return `+${bare}`;
+  return undefined;
 }
 
 /** Contract reasons in words members understand. */
@@ -720,6 +735,13 @@ export class GroupRuntime {
         return `${record.group.name}'s plan is now ${formatUsdc(record.plan.amount)} each ${perPeriod(period)}.`;
       },
       settleUp: async () => this.settleUp(record),
+      callRestaurant: async (input) => {
+        try {
+          return await this.callRestaurant(record, sender, input);
+        } catch (err) {
+          return `Could not place the call: ${(err as Error).message}`;
+        }
+      },
       buyForGroup: async (input) => {
         try {
           return await this.startPurchase(record, sender, input);
@@ -787,6 +809,63 @@ export class GroupRuntime {
     // The payer is owed the money, so posting the receipt counts as their approval.
     await this.apply(record, request, { type: "reaction", memberId: split.payeeMemberId, emoji: APPROVAL_EMOJI, added: true, at: this.now() });
     return request;
+  }
+
+  // --- Kitty calls a restaurant (ElevenLabs) -----------------------------------
+
+  private async callRestaurant(
+    record: GroupRecord,
+    sender: Member,
+    input: Parameters<TreasuryActions["callRestaurant"]>[0],
+  ): Promise<string> {
+    const calls = this.deps.calls;
+    if (!calls) return "Phone calls aren't set up on this bot (needs ElevenLabs keys).";
+    const phone = toE164(input.phone);
+    if (!phone) return `"${input.phone}" doesn't look like a phone number. Ask for the restaurant's number.`;
+    const request = {
+      restaurant: input.restaurant,
+      phone,
+      partySize: input.partySize,
+      when: input.when,
+      reservationName: input.reservationName ?? sender.displayName,
+      ...(input.notes ? { notes: input.notes } : {}),
+      group: record.group.name,
+    };
+    const { callId } = await calls.start(request);
+    this.log(`calling ${input.restaurant} (${phone}) for ${record.group.chatId}: ${callId}`);
+    this.inBackground(() => this.followCall(record, request, callId));
+    return `Calling ${input.restaurant} now for ${input.partySize} ${input.when}. The result will be posted when the call ends.`;
+  }
+
+  /** Waits for the call to finish (up to 15 minutes), then tells the group how it went. */
+  private async followCall(record: GroupRecord, request: { restaurant: string; partySize: number; when: string; reservationName: string }, callId: string): Promise<void> {
+    const calls = this.deps.calls!;
+    const every = this.deps.callPollMs ?? 5_000;
+    const deadline = this.now() + 15 * 60_000;
+    let result = await calls.result(callId);
+    while (result.status === "in_progress" && this.now() < deadline) {
+      await new Promise((r) => setTimeout(r, every));
+      try {
+        result = await calls.result(callId);
+      } catch (err) {
+        this.log(`call ${callId}: ${(err as Error).message}`);
+      }
+    }
+    const who = `${request.restaurant}`;
+    let text: string;
+    if (result.status === "in_progress") text = `📞 still no word back from the ${who} call, I'll stop waiting. might be worth calling them yourselves`;
+    else if (result.pickedUp && result.pickedUp !== "answered") {
+      const why = result.pickedUp === "voicemail" ? "it went to voicemail" : result.pickedUp === "busy" ? "the line was busy" : "nobody picked up";
+      text = `📞 called ${who} but ${why}. want me to try again later?`;
+    } else if (result.status === "failed") text = `📞 the call to ${who} didn't go through (${result.error ?? "unknown error"})`;
+    else if (result.booked) {
+      text = `📞 booked ${who} for ${request.partySize}, ${result.confirmedTime ?? request.when}, under ${request.reservationName} ✅`;
+    } else if (result.alternative) {
+      text = `📞 ${who} can't do ${request.when}. they offered ${result.alternative}. want it? I can call back`;
+    } else {
+      text = `📞 called ${who}, no booking. ${result.summary ?? ""}`.trim();
+    }
+    await this.run(() => this.say(record.group.chatId, text).then(() => undefined));
   }
 
   // --- Kitty buys it (pay before) ---------------------------------------------

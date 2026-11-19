@@ -69,7 +69,7 @@ flowchart LR
 
 ## Tech stack
 
-The pieces the system needs. Only the iMessage layer and checkout have been chosen so far.
+The pieces the system needs, and what each one is built on.
 
 | Component | What it does | Choice |
 | --- | --- | --- |
@@ -81,6 +81,17 @@ The pieces the system needs. Only the iMessage layer and checkout have been chos
 | Group contract | Records approvals and pulls each member's share to whoever paid | [`GroupTreasury`](contracts/README.md), driven by `ArcWalletAdapter` in `packages/wallet` |
 | Chain | Where the contract runs and USDC moves | Arc (USDC is gas) |
 | Checkout wallet | Issues one-time cards so the agent can pay real merchants | [Link agent wallet](https://docs.stripe.com/agentic-commerce/agents/link-agent-wallet) |
+| Phone calls | Kitty phones restaurants to book a table and reports back in the chat | [ElevenLabs](https://elevenlabs.io) voice agent, outbound through a Twilio number |
+
+## How ElevenLabs is used
+
+Some plans need a phone call, not a checkout. In the chat: "kitty, book Uchi for 4 tomorrow at 7:30, their number is (512) 555-0100".
+
+1. The agent's `call_restaurant` tool starts an **ElevenLabs voice agent** call (`POST /v1/convai/twilio/outbound-call`) from a Twilio number connected to ElevenLabs. The restaurant, party size, time and reservation name go in as dynamic variables, so one agent handles every booking.
+2. The voice agent says it's an AI assistant calling for the group, asks for the table, and asks for the closest time if that one's taken. It never accepts a different time on its own.
+3. When the call ends, the server reads ElevenLabs' call analysis (`GET /v1/convai/conversations/{id}`): the data collection fields `reservation_confirmed`, `confirmed_time` and `alternative_offered`, the summary, and whether anyone picked up. It posts one line in the chat: "📞 booked Uchi for 4, 7:45pm, under Neena ✅", or the time they offered instead, or that it went to voicemail.
+
+Code: `apps/server/src/restaurant-call.ts`. Agent setup (prompt, data collection fields, phone number): [`docs/elevenlabs-agent.md`](docs/elevenlabs-agent.md). Calling is off until `ELEVENLABS_API_KEY`, `ELEVENLABS_AGENT_ID` and `ELEVENLABS_PHONE_NUMBER_ID` are set.
 
 ## How Arc and Circle are used
 

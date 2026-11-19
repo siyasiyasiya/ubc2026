@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { GroupRuntime } from "./runtime.js";
 import { Store } from "./store.js";
 import { SimulatedPurchaseAdapter } from "./simulated-purchase.js";
+import type { RestaurantCallRequest, RestaurantCaller, RestaurantCallResult } from "./restaurant-call.js";
 
 const NEENA = "+1001";
 const SIYA = "+1002";
@@ -13,7 +14,7 @@ const OUTSIDER = "+1999";
 const CHAT = "group";
 
 /** A runtime whose "agent" proposes a $90 dinner paid by Neena, split three ways. */
-function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapter; wallets?: Record<string, string>; invites?: { baseUrl: string; secret: string }; chats?: string[]; participants?: string[]; chatName?: string; purchase?: PurchaseAdapter } = {}) {
+function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapter; wallets?: Record<string, string>; invites?: { baseUrl: string; secret: string }; chats?: string[]; participants?: string[]; chatName?: string; purchase?: PurchaseAdapter; calls?: RestaurantCaller } = {}) {
   const posted: { id: string; text: string }[] = [];
   const failing = { posts: 0, dms: 0 };
   const dms: { handle: string; text: string }[] = [];
@@ -47,6 +48,9 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
   };
   const fakeTurn: typeof RunTurn = async ({ actions, event }) => {
     if (event.includes("join me")) return actions.sendJoinLink({});
+    if (event.includes("book uchi")) {
+      return actions.callRestaurant({ restaurant: "Uchi", phone: event.includes("no number") ? "ask them" : "(512) 555-0100", partySize: 4, when: "tomorrow 7:30pm" });
+    }
     if (event.includes("buy towels")) {
       return actions.buyForGroup({
         title: "Paper towels",
@@ -88,6 +92,7 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
     ...(opts.invites ? { invites: opts.invites } : {}),
     ...(opts.chats ? { chats: opts.chats } : {}),
     ...(opts.purchase ? { purchase: opts.purchase } : {}),
+    ...(opts.calls ? { calls: opts.calls, callPollMs: 1 } : {}),
     receipts: { read: async (): Promise<Receipt> => ({ source: "photo", total: usdc(90), at: 0 }) },
     runTurn: fakeTurn,
     runDmTurn: fakeDmTurn,
@@ -571,6 +576,27 @@ describe("GroupRuntime", () => {
     await t.say(NEENA, "trip plan please");
     await t.say(SIYA, "join me");
     expect(t.dms.at(-1)?.text).toContain("kittyagent.vercel.app");
+  });
+
+  it("phones a restaurant and posts the booking when the call ends", async () => {
+    const started: RestaurantCallRequest[] = [];
+    const results: RestaurantCallResult[] = [{ status: "in_progress" }, { status: "done", pickedUp: "answered", booked: true, confirmedTime: "7:45pm" }];
+    const calls: RestaurantCaller = {
+      start: async (r) => (started.push(r), { callId: "conv_1" }),
+      result: async () => results.shift() ?? { status: "done", booked: true },
+    };
+    const t = setup(200, { calls });
+    await t.say(NEENA, "book uchi for us");
+    expect(started[0]).toMatchObject({ restaurant: "Uchi", phone: "+15125550100", partySize: 4, reservationName: "Neena" });
+    await t.runtime.idle();
+    expect(t.posted.at(-1)?.text).toBe("📞 booked Uchi for 4, 7:45pm, under Neena ✅");
+  });
+
+  it("won't call without a real phone number", async () => {
+    const calls: RestaurantCaller = { start: async () => ({ callId: "x" }), result: async () => ({ status: "done" }) };
+    const t = setup(200, { calls });
+    await t.say(NEENA, "book uchi, no number");
+    expect(t.posted.at(-1)?.text).toContain("doesn't look like a phone number");
   });
 
   it("passes errors back from run() so the join watcher retries instead of skipping", async () => {

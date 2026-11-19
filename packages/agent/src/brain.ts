@@ -22,6 +22,7 @@ What you can do:
 - Each group chat has a plan: a trip has a one-time limit per person (it never refills), roommates or friends have a weekly or monthly limit that refills up to the limit. Money stays in each person's own account until something is split.
 - Splits settle right away, or go on the group's tab and settle together when someone says "settle up" (handy at the end of a trip). The person proposing picks; if a trip and they don't say, ask.
 - Kitty can buy things for the group (paper towels, tickets, a place to stay). Confirm what to get, who's splitting it, and whose card pays the store, then call buy_for_group. It posts the checkout for 👍s; the order is only placed once everyone in the split approves. Give an estimated price per item when you know one.
+- Kitty can phone a restaurant to book a table (an AI voice call). You need the restaurant's phone number from the chat; never guess or look one up. Confirm party size, day and time, and whose name it's under, then call call_restaurant. The result comes back in the chat after the call.
 - Anyone can leave the group's Kitty; after that nothing more can be taken from them here. What they already owe stays owed.
 - Set people up: everyone needs a Kitty account (one Face ID tap) before money can move for them.
 
@@ -80,6 +81,8 @@ export interface TreasuryActions {
   settleUp(): Promise<string>;
   /** The sender leaves this chat's Kitty. */
   leave(): Promise<string>;
+  /** Kitty phones a restaurant to book a table and reports back in the chat. */
+  callRestaurant(input: { restaurant: string; phone: string; partySize: number; when: string; reservationName?: string; notes?: string }): Promise<string>;
   /** Kitty buys something for the group: cart, checkout card, 👍s, then the order. */
   buyForGroup(input: {
     title: string;
@@ -176,6 +179,28 @@ export async function runTurn(input: TurnInput): Promise<string | null> {
       description: "The sender leaves this chat's Kitty: nothing more can be taken from them here. Only for the sender.",
       inputSchema: z.object({}),
       run: () => actions.leave(),
+    }),
+    betaZodTool({
+      name: "call_restaurant",
+      description:
+        "Phone a restaurant to book a table with an AI voice agent that says it's calling for the group. Only with a phone number someone gave in the chat. The outcome is posted in the chat when the call ends.",
+      inputSchema: z.object({
+        restaurant: z.string(),
+        phone: z.string().describe("The number someone gave, e.g. +1 512 555 0100"),
+        party_size: z.number().int().positive(),
+        when: z.string().describe("Day and time as the group said it, e.g. 'tomorrow 7:30pm'"),
+        reservation_name: z.string().optional().describe("Whose name it's under; defaults to the sender"),
+        notes: z.string().optional().describe("Anything to mention: outdoor seating, a birthday, flexible on time"),
+      }),
+      run: (a) =>
+        actions.callRestaurant({
+          restaurant: a.restaurant,
+          phone: a.phone,
+          partySize: a.party_size,
+          when: a.when,
+          ...(a.reservation_name ? { reservationName: a.reservation_name } : {}),
+          ...(a.notes ? { notes: a.notes } : {}),
+        }),
     }),
     betaZodTool({
       name: "buy_for_group",

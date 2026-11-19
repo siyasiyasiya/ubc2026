@@ -18,6 +18,7 @@ import { ClaudeReceiptReader, runTurn, runDmTurn } from "@gta/agent";
 import { PhotonChatPort } from "@gta/imessage";
 import { createCrossmintPurchaseAdapterFromEnv } from "@gta/purchase";
 import { SimulatedPurchaseAdapter } from "./simulated-purchase.js";
+import { elevenLabsFromEnv } from "./restaurant-call.js";
 import { usdc } from "@gta/core";
 import { arcClients, arcWalletAdapters, InMemoryWalletAdapter, JoinWatcher, sendWelcomeBalance } from "@gta/wallet";
 import { config, warnIfNoClaudeAuth } from "./config.js";
@@ -49,6 +50,7 @@ const runtime = new GroupRuntime({
   wallet,
   receipts: new ClaudeReceiptReader(),
   purchase: purchaseAdapter(),
+  ...restaurantCalls(),
   runTurn,
   runDmTurn,
   store,
@@ -160,4 +162,11 @@ function purchaseAdapter() {
   }
   console.log("purchase: simulated store (set CROSSMINT_API_KEY for real orders)");
   return new SimulatedPurchaseAdapter();
+}
+
+/** ElevenLabs voice calls to restaurants, when ELEVENLABS_API_KEY, _AGENT_ID and _PHONE_NUMBER_ID are set. */
+function restaurantCalls() {
+  const calls = elevenLabsFromEnv();
+  console.log(calls ? "calls: ElevenLabs voice agent" : "calls: off (set ELEVENLABS_API_KEY, ELEVENLABS_AGENT_ID, ELEVENLABS_PHONE_NUMBER_ID)");
+  return calls ? { calls } : {};
 }
