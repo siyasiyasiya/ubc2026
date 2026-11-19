@@ -48,12 +48,13 @@ Owns: `packages/imessage`, `packages/agent`, `packages/purchase`.
 
 | Task | Status | Notes |
 | --- | --- | --- |
-| `PhotonChatPort` — post, image, 👍 reactions, DM | ✅ done | real `@photon-ai/imessage-kit` v3; 19 tests. Needs a Mac + Full Disk Access to run live. |
-| `agent` — parse requests → intents | ✅ done | Claude + Vercel AI SDK (`generateObject`); swappable/injectable model. |
-| `agent` — read receipts → `Receipt` (pay-after) | ✅ done | `ClaudeReceiptReader` (Claude vision via AI SDK). |
-| `agent` — drive the state machine via ports | ⬜ todo | server wiring (shared, do last): perform effects post_preview, place_order, pull_shares. |
+| `PhotonChatPort` — post, image, 👍 reactions, DM | ✅ done | **spectrum-ts**; attributed 👍 via `message.sender`; 15 tests. ⚠️ Local group-reaction delivery still to verify on a Mac — if it doesn't, port PR #4's `chat.db` sender-resolver (imessage-kit) as fallback. |
+| `agent` — parse requests → intents + `runTurn` | ✅ done | **Claude via Anthropic SDK** tool-runner (`runTurn`); model `claude-sonnet-5`. |
+| `agent` — read receipts → `Receipt` (pay-after) | ✅ done | `ClaudeReceiptReader` (Claude vision). |
+| `agent` — drive the state machine via ports | ✅ done | `apps/server` runtime + sim orchestration (pay-after flow); 5 runtime tests. |
 | `PurchaseAdapter` — **real** store checkout (Crossmint) | ✅ done | Crossmint Agent Checkouts REST; real (not mocked); 14 tests; `blocked` handled. Needs CROSSMINT creds to run live. |
-| ✅ **Decided:** LLM + framework | ✅ done | **Claude + Vercel AI SDK**, default model **Sonnet 5** (swappable). Needs Anthropic API key (not the Claude subscription). |
+| ✅ **Decided:** LLM + framework | ✅ done | **Claude + raw Anthropic SDK** (no web UI → dropped Vercel AI SDK), model **Sonnet 5**. Needs Anthropic API key (not the Claude subscription). |
+| ✅ **Decided:** iMessage SDK | ✅ done | **spectrum-ts** (Photon's current SDK). imessage-kit + PR #4 kept as a proven fallback for group-reaction attribution. |
 | ✅ **Decided:** store + access method | ✅ done | **Crossmint** Agent Checkouts (universal catalog, buyer's own account via Browser Profiles). agent-browser kept as a swappable fallback behind `PurchaseAdapter`. |
 
 ## Shared — coordinate before touching
@@ -61,7 +62,7 @@ Owns: `packages/imessage`, `packages/agent`, `packages/purchase`.
 | Task | Status | Notes |
 | --- | --- | --- |
 | `packages/core` — interfaces | ✅ done | frozen contract between tracks; change together only |
-| `apps/server` — wire real adapters | ⬜ todo | do **together, last**, once both sides are real |
+| `apps/server` — wire real adapters | 🟡 pay-after done | runtime wires chat+agent+wallet+receipts for the pay-after flow; pay-before (purchase) not wired yet. |
 | **Decide:** project name | 🔲 decision | currently `@gta/*` placeholder scope |
 
 **Legend:** ✅ done · 🟡 in progress · ⬜ todo · 🔲 decision needed
