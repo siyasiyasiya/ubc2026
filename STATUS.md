@@ -35,14 +35,14 @@ The pieces work on their own; the demo needs them joined up. In order:
 | --- | --- | --- | --- | --- |
 | 1 | Merge Track A: contract, Face ID page, Arc Onramp, `ArcWalletAdapter` | Neena | ✅ merged (#7, included #3) | — |
 | 2 | DMs in `PhotonChatPort` | Siya | ✅ done (97109f4, imessage-kit `send({ to: handle })`) | 3 |
-| 3 | "in" → invite ticket → DM the Face ID link | Neena | 🟡 in progress (invite CLI works today) | demo |
+| 3 | "in" → invite ticket → DM the Face ID link | Neena | 🟡 built (5fdb335, `send_join_link` tool, DM with group fallback); live test pending | demo |
 | 4 | Watch `Joined` events → link wallet to handle (`Member.wallet`) → fund new account (testnet) | Neena | ✅ done, live: Siya, Tristan, Joey joined Nov 18 | — |
 | 5 | Runtime picks the wallet adapter per chat | shared | ✅ done (#9) | — |
 | 6 | Pay-after flow live on Arc | shared | ✅ ran live Nov 18: card → 👍 → settle onchain. Joey's $10 share failed (only $5 in his account) and became an onchain debt, so we need step 9 | — |
 | 7 | README for judges: architecture, Arc + Circle usage, contract address, how to run | both | 🟡 "How Arc and Circle are used" section done | submission |
 | 8 | Demo script + dry run on real phones | both | ⬜ todo | submission |
-| 9 | Short balance: DM a top-up + "pay it back" link, Face ID `payDebt`, "✅ paid back" in chat | Neena | 🟡 in progress | demo |
-| 10 | Limit changes from chat: lower → operator `lowerLimit` now; raise → DM Face ID link | Neena | 🟡 in progress | demo |
+| 9 | Short balance: DM a top-up + "pay it back" link, Face ID `payDebt`, "✅ paid back" in chat | Neena | 🟡 built (5fdb335 server, 7652da2 page `?r=`); page not deployed yet, live test pending | demo |
+| 10 | Limit changes from chat: lower → operator `lowerLimit` now; raise → DM Face ID link | Neena | 🟡 built (5fdb335; page prefills `?l=&p=`); live test pending | demo |
 | 11 | 👍 tapbacks on the card (local mode) | Siya | ✅ done (97109f4, reads `chat.db`); live test pending | demo |
 | 12 | Neena's own messages: bot runs on her Apple ID, so it ignores her | Neena | 🔲 decide: `SELF_HANDLE` (built, off) or a separate Apple ID for the bot | demo |
 
@@ -59,10 +59,10 @@ Owns: `contracts/`, `packages/wallet`, `packages/funding`, `apps/onboard`.
 | `WalletAdapter` — in-memory dev impl | ✅ done (on main) | `InMemoryWalletAdapter`, weekly/monthly limits, idempotent pulls. Non-production. |
 | `WalletAdapter` — real impl (Arc) | ✅ done | `ArcWalletAdapter`: each pull = one-person split (`propose` → `approveFor` → `settle`), idempotent across restarts, over-limit → onchain debt. Anvil tests + live read on Arc. Full live pull waits on a member joining via the page. |
 | Funding — add money (Arc Onramp) | 🟡 built, untested on phone | `/api/onramp-session` on Vercel mints an Arc Onramp **sandbox** session delivering USDC straight to the member's account (Kitty never holds funds). Page shows balance + "Add money with Apple Pay"; `?a=<account>` top-up link for "you're short" DMs. **To do:** test on a phone and confirm sandbox USDC lands on Arc testnet. Production needs Circle KYB with our domain. |
-| Invite tickets + DM link | 🟡 in progress | Tickets, links and `pnpm --filter @gta/server invite <chatId> <phone> <name>` done (fresh ticket per invite). To do: agent tool so "in" DMs the link. |
+| Invite tickets + DM link | 🟡 built | Tickets, links, invite CLI, and the `send_join_link` agent tool (DMs the link; group post if the DM fails). The member list tells the agent who isn't set up. |
 | `Joined` watcher → handle ↔ wallet | ✅ done, live | `JoinWatcher` polls in ≤2,000-block windows, matches ticket → handle, posts "✅ X is in", sends a testnet welcome balance ($5 from the operator; Circle faucet API is 403 for our key). |
-| Limit changes from chat | 🟡 in progress | "Lower my limit" → operator `lowerLimit`. "Raise my limit" → DM a Face ID link (`?g=&c=`, no ticket) → member's `setLimit`. |
-| Short balance → top-up + pay back | 🟡 in progress | Found live: a share bigger than the member's balance becomes an onchain debt with no way to repay. Adding: DM a link to add money and pay back with Face ID (`payDebt`), and "✅ X paid Y back" in chat. |
+| Limit changes from chat | 🟡 built | Lower → operator `lowerLimit` right away. Raise or switch period → DM a Face ID link (`?g=&c=&l=&p=`, prefilled) → member's `setLimit` → watcher posts "✅ X updated their limit" (no amount). |
+| Short balance → top-up + pay back | 🟡 built | A failed share reads "not enough in their Kitty account" / "over their limit" and DMs a pay-back link (`?r=<payee>&o=<name>`): add money, then Face ID `payDebt`. Watcher posts "✅ X paid Y back $N". Page change needs a Vercel deploy. |
 | ✅ **Decided:** chain | ✅ | **Arc testnet** — USDC is gas, ~1s finality, Circle passkey wallets + paymaster. |
 | ✅ **Decided:** wallets + limit enforcement | ✅ | **Circle passkey (modular) wallets**, one per person; **limits enforced by `GroupTreasury`**, one per chat, signed by the member with Face ID. 👍 relayed by the agent, capped by that limit. |
 | ✅ **Decided:** funding | ✅ | **Arc Onramp** (Apple Pay / debit → USDC on Arc, delivered to the member). Fallbacks: Coinbase Onramp or Crossmint → Base, then CCTP to Arc. |
