@@ -12,6 +12,8 @@
  *   purchase not wired yet (pay-before flow)
  */
 
+import fs from "node:fs";
+import path from "node:path";
 import { ClaudeReceiptReader, runTurn } from "@gta/agent";
 import { PhotonChatPort } from "@gta/imessage";
 import { usdc } from "@gta/core";
@@ -20,6 +22,7 @@ import { config, warnIfNoClaudeAuth } from "./config.js";
 import { GroupRuntime } from "./runtime.js";
 import { Store } from "./store.js";
 
+claimSingleInstance(`${config.stateFile}.pid`);
 warnIfNoClaudeAuth();
 
 if (config.allowedChatIds.length === 0) {
@@ -111,4 +114,32 @@ function startJoinWatcher(): void {
   };
 
   void start();
+}
+
+/**
+ * Refuses to start while another bot is running on the same state file. Two bots on one Messages
+ * account reply twice, race on the state file and double the RPC load (five once piled up on Nov 18).
+ */
+function claimSingleInstance(lockFile: string): void {
+  try {
+    const pid = Number(fs.readFileSync(lockFile, "utf8"));
+    if (pid && pid !== process.pid) {
+      process.kill(pid, 0); // throws if that process is gone, i.e. a stale lock
+      console.error(`Another bot is already running (pid ${pid}). Stop it first: kill ${pid}`);
+      process.exit(1);
+    }
+  } catch {
+    // No lock, or a stale one: take it.
+  }
+  fs.mkdirSync(path.dirname(lockFile), { recursive: true });
+  fs.writeFileSync(lockFile, String(process.pid));
+  const release = () => {
+    try {
+      if (fs.readFileSync(lockFile, "utf8") === String(process.pid)) fs.unlinkSync(lockFile);
+    } catch {
+      // Already gone.
+    }
+  };
+  process.on("exit", release);
+  for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => process.exit(0));
 }
