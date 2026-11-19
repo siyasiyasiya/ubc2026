@@ -606,6 +606,14 @@ export class PhotonChatPort implements ChatPort {
         }
         return;
       }
+      // Log every attachment row's state so a "can't read images" report can be diagnosed from the
+      // terminal: did the file arrive, what type is it, is it still transferring, is it on disk?
+      if (message.hasAttachments || message.attachments.length > 0) {
+        const states = message.attachments
+          .map((a) => `${a.mimeType || "?"} ${a.transferStatus}${a.localPath ? " on-disk" : " no-file"}`)
+          .join(", ");
+        this.log(`attachment row ${message.id}: hasAttachments=${message.hasAttachments}, ${message.attachments.length} att [${states || "none yet"}]`);
+      }
       // An attachment (receipt photo/PDF) often isn't on disk the instant its row appears: the file
       // is still downloading, or the message_attachment_join hasn't flushed yet (a WAL race). Emitting
       // now would hand the agent a text-less row and it'd say "can't see images", so wait for the file.
@@ -636,7 +644,10 @@ export class PhotonChatPort implements ChatPort {
 
   /** The row claims an attachment, but none is ready yet and the transfer hasn't permanently failed. */
   private attachmentsPending(message: Message): boolean {
-    if (!message.hasAttachments || PhotonChatPort.attachmentReady(message)) return false;
+    // `hasAttachments` covers the WAL race (row visible before its join flushes, so attachments is
+    // still empty); a non-empty attachments list covers a file that's present but still downloading.
+    const claimsAttachment = message.hasAttachments || message.attachments.length > 0;
+    if (!claimsAttachment || PhotonChatPort.attachmentReady(message)) return false;
     // A failed transfer never completes, so don't wait on it; let the row through (text only).
     const allFailed = message.attachments.length > 0 && message.attachments.every((a) => a.transferStatus === "failed");
     return !allFailed;
