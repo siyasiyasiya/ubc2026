@@ -117,10 +117,8 @@ function setup(): void {
   // One tap: the amount was decided in the chat and came in the link, so there's nothing to type.
   oneTap = Boolean(prefill && /^\d+(\.\d{1,2})?$/.test(prefill));
   $("lede").textContent = joining
-    ? `${name ? `Hi ${name}! ` : ""}${oneTap ? "This is" : "Set"} the most ${chatName} can spend from you. It resets on its own, and only you can raise it.`
-    : oneTap
-      ? `Your new limit for ${chatName}. Only you can raise it.`
-      : `Change the most ${chatName} can spend from you.`;
+    ? `${name ? `Hi ${name}! ` : ""}Kitty only uses your money when the group 👍s something, and never more than this. Only you can raise it.`
+    : `The most Kitty can ever take from you for ${chatName}. Only you can raise it.`;
   if (oneTap) {
     $("summary").hidden = false;
     $("fields").hidden = true;
@@ -148,16 +146,15 @@ function setup(): void {
 
 let oneTap = false;
 
-/** "a week", "a month", or "in total" (one-time, e.g. a trip). */
+/** "each week", "each month", or "for the whole trip" (one-time). */
 function perWords(period: string): string {
-  return period === "monthly" ? "a month" : period === "once" ? "in total" : "a week";
+  return period === "monthly" ? "each month" : period === "once" ? "for the whole trip" : "each week";
 }
 
-/** "$80 a week" from the form, or "" while the amount isn't valid. */
+/** "$80 max" from the form, or "" while the amount isn't valid. The period is right above the button. */
 function amountText(): string {
   const usd = $<HTMLInputElement>("amount").value.trim();
-  const per = perWords(form.querySelector<HTMLSelectElement>("select")!.value);
-  return /^\d+(\.\d{1,2})?$/.test(usd) ? `$${Number(usd).toLocaleString("en-US")} ${per}` : "";
+  return /^\d+(\.\d{1,2})?$/.test(usd) ? `$${Number(usd).toLocaleString("en-US")} max` : "";
 }
 
 /** The button names the exact amount (unless it's shown big above), so a typo is visible before Face ID. */
@@ -290,7 +287,7 @@ async function submit(event: Event, returning = false): Promise<void> {
     console.info("account", account.address, "tx", receipt.transactionHash);
     const per = perWords(periodName);
     show(
-      `${joining && !alreadyIn ? `You're in ${chatName}! ` : "Saved. "}Up to $${usd} ${per}.\nYou can head back to Messages.`,
+      `${joining && !alreadyIn ? `You're in ${chatName}! 🎉` : "Saved."}\nYou'll never pay more than $${Number(usd).toLocaleString("en-US")} ${per}.`,
       "done",
     );
     form.hidden = true;

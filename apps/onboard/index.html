@@ -243,12 +243,12 @@
       <p id="lede"></p>
       <form id="form">
         <div id="summary" hidden>
-          <small>Your limit</small>
+          <small>Most you'll pay</small>
           <p id="big"></p>
           <a id="change" href="#">Change amount</a>
         </div>
         <div id="fields">
-          <label for="amount">Your limit</label>
+          <label for="amount">Most you'll pay</label>
           <div class="amount">
             <span>$</span>
             <input id="amount" name="amount" inputmode="decimal" placeholder="0" autocomplete="off" required />
@@ -273,7 +273,7 @@
         <ol id="how" hidden>
           <li><i>💬</i><span><b>Someone asks in the chat.</b> Kitty posts what it costs and each person's share.</span></li>
           <li><i>👍</i><span><b>Everyone taps 👍.</b> Nothing is paid until the group agrees.</span></li>
-          <li><i>✨</i><span><b>Kitty pays.</b> Your share comes from your Kitty, never above your limit.</span></li>
+          <li><i>✨</i><span><b>Kitty pays.</b> Your share comes from your Kitty, never more than the amount above.</span></li>
         </ol>
         <button id="go" type="submit">Continue with Face ID</button>
         <a id="returning" href="#">Used Kitty before on another phone?</a>
@@ -295,7 +295,7 @@
         <a id="add" class="button" href="#" target="_blank" rel="noopener" aria-disabled="true">Add money with Apple Pay</a>
         <p class="hint">Apple Pay or debit card. The money goes straight to your Kitty balance.</p>
       </div>
-      <footer>Your money stays yours until something is actually bought. You only pay for things you 👍, and never more than your limit.</footer>
+      <footer>Your money stays yours until something is actually bought. You only pay for things you 👍, and never more than the amount you set.</footer>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>
