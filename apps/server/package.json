@@ -19,7 +19,8 @@
     "@gta/funding": "workspace:*",
     "@gta/imessage": "workspace:*",
     "@gta/purchase": "workspace:*",
-    "@gta/wallet": "workspace:*"
+    "@gta/wallet": "workspace:*",
+    "@resvg/resvg-js": "2.6.2"
   },
   "devDependencies": {
     "tsx": "^4.23.15"

@@ -38,6 +38,7 @@ import type { runTurn as RunTurn, runDmTurn as RunDmTurn, TreasuryActions, DmAct
 import { groupIdForChat, inviteLink, inviteTicket, type DebtPaidEvent, type JoinEvent, type LimitSetEvent } from "@gta/wallet";
 import type { GroupRecord, RequestRecord, Store } from "./store.js";
 import type { RestaurantCaller } from "./restaurant-call.js";
+import { asPng } from "./svg-to-png.js";
 
 export interface RuntimeDeps {
   chat: ChatPort;
@@ -981,7 +982,7 @@ export class GroupRuntime {
         // A store checkout image goes first; the 👍 goes on the text card after it.
         if (request.flow === "pay_before" && effect.screenshot.image.uri) {
           try {
-            await this.deps.chat.postImage(chatId, effect.screenshot.image);
+            await this.deps.chat.postImage(chatId, await asPng(effect.screenshot.image));
           } catch (err) {
             this.log(`#${request.number}: checkout image not posted (${(err as Error).message})`);
           }
