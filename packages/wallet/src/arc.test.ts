@@ -134,7 +134,7 @@ describe.skipIf(!hasFoundry)("ArcWalletAdapter on anvil", () => {
 
   it("never pulls twice for the same idempotency key, even after a restart", async () => {
     const first = await makeAdapter().pull({ from: member("alice", alice!.address), to: to(), amount: usdc(30), idempotencyKey: "r1:alice" });
-    expect(first.status).toBe("pulled");
+    expect(first, JSON.stringify(first)).toMatchObject({ status: "pulled" });
     expect(await balance(bob!.address)).toBe(usdc(30));
   });
 
