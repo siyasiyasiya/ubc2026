@@ -341,7 +341,7 @@ export function transition(state: RequestState, event: RequestEvent): Transition
             [
               {
                 type: "notify",
-                text: `Total came in ${formatUsdc(over)} over the estimate — 👍 to confirm your share.`,
+                text: `Total came in ${formatUsdc(over)} over the estimate. 👍 to confirm your share.`,
               },
               { type: "post_preview", screenshot: event.screenshot, split: event.split },
             ],
@@ -391,7 +391,7 @@ function settlementSummary(split: Split, pulls: PullResult[], debts: Debt[]): st
   const pulled = pulls.filter((p) => p.status === "pulled").length;
   const total = Object.keys(split.shares).length;
   if (debts.length === 0) {
-    return `Settled — pulled ${pulled}/${total} shares to the payer.`;
+    return `Settled. Pulled ${pulled}/${total} shares to the payer.`;
   }
   const owed = debts
     .map((d) => `${d.memberId} owes ${formatUsdc(d.amount)} (${d.reason})`)

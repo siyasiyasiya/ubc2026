@@ -198,7 +198,7 @@ export class CrossmintPurchaseAdapter implements PurchaseAdapter {
 
     const image = await this.cfg.screenshotRenderer.render({ cart: priced, embedUrl });
     return {
-      screenshot: { image, caption: `${priced.store} — ${formatUsdc(priced.total)}. React 👍 to approve.` },
+      screenshot: { image, caption: `${priced.store}, ${formatUsdc(priced.total)}. React 👍 to approve.` },
       total: priced.total,
       cart: priced,
     };

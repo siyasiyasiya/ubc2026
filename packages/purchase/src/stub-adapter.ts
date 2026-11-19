@@ -13,7 +13,7 @@ import type {
   Receipt,
 } from "@gta/core";
 
-const NOT_IMPLEMENTED = "not implemented: StubPurchaseAdapter — use CrossmintPurchaseAdapter for a real checkout";
+const NOT_IMPLEMENTED = "not implemented: StubPurchaseAdapter, use CrossmintPurchaseAdapter for a real checkout";
 
 /** STUB PurchaseAdapter. Not for demo checkout. */
 export class StubPurchaseAdapter implements PurchaseAdapter {
