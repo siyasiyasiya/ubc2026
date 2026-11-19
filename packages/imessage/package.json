@@ -1,7 +1,7 @@
 {
   "name": "@gta/imessage",
   "version": "0.0.0",
-  "description": "Photon imessage-kit adapter implementing the core ChatPort (post, image, reactions, DMs).",
+  "description": "Photon spectrum-ts adapter implementing the core ChatPort (post, image, 👍 reactions).",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -18,7 +18,7 @@
   },
   "dependencies": {
     "@gta/core": "workspace:*",
-    "@photon-ai/imessage-kit": "^3.0.0",
-    "better-sqlite3": "^13.2.0"
+    "@spectrum-ts/imessage-local": "12.16.0",
+    "spectrum-ts": "12.16.0"
   }
 }
