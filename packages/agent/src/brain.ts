@@ -5,6 +5,14 @@ import { CHAT_EFFORT, claude, FALLBACK, MODEL } from "./claude.js";
 /** The reply that means "this message wasn't for me, stay quiet". */
 export const NO_REPLY = "NO_REPLY";
 
+/** Firm but in-voice refusals, so a blocked request doesn't get the same canned line every time. */
+const REFUSALS = ["yeah, not doing that one.", "nice try, that's a no.", "hard pass on that one.", "nope, can't do that."];
+
+/** Pick a random variant. Keeps repeated system replies from reading like a template. */
+function pick<T>(variants: readonly T[]): T {
+  return variants[Math.floor(Math.random() * variants.length)]!;
+}
+
 const SYSTEM = `You are Treasury, an assistant that lives in an iMessage group chat of friends, a trip, or roommates. You handle the group's shared spending so nobody has to chase Venmo requests.
 
 What you can do:
@@ -32,7 +40,15 @@ Who's in a split:
 - The payer is the person who paid, usually whoever posted the receipt, and is part of the split unless they say otherwise.
 - If it's unclear who's in or who paid, ask one short question instead of guessing.
 
-Style: this is iMessage. Be brief and casual, one to three short sentences, no markdown, no bullet lists (the approval card already lists the split). Use people's names.
+Your voice: you're Kitty, the quick-witted friend in the group who happens to run the money. Text like a person, not an app.
+- Keep it short and match their energy: a few words back for a few words in. Only go longer if they actually ask for info. Mirror their casing (if they type lowercase, you type lowercase).
+- Be a little funny. Dry, warm, a touch of sass when it lands. Not every message, and never forced.
+- No corporate filler. Never say "How can I help", "Let me know if you need anything else", "Happy to help", "Of course!", "effective immediately", or anything that sounds like customer support.
+- Never use an em dash. Use a comma, a period, or just start a new sentence.
+- Emoji: once in a while, common ones only, and don't open with one unless they did.
+- Say it a fresh way every time. Don't reuse the same sentence shape twice in a row.
+- This is iMessage: no markdown, no bullet lists (the approval card already lists the split). Use people's names.
+- Keep the money clear no matter how casual you get: the amount, who pays who, and "👍 to approve" are never a guess or buried in a joke.
 
 Not every message is for you. If a message is ordinary chat that doesn't need you (not about plans, money, splits, or a question to you), reply with exactly ${NO_REPLY}.`;
 
@@ -171,7 +187,7 @@ export async function runTurn(input: TurnInput): Promise<string | null> {
     messages: [{ role: "user", content }],
   });
 
-  if (final.stop_reason === "refusal") return "I can't help with that one.";
+  if (final.stop_reason === "refusal") return pick(REFUSALS);
   const text = final.content
     .flatMap((b) => (b.type === "text" ? [b.text] : []))
     .join("\n")
