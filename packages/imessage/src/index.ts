@@ -543,16 +543,33 @@ export class PhotonChatPort implements ChatPort {
     return message.text !== null && this.recentSendTexts.includes(message.text);
   }
 
+  /** Log an attachment-bearing watcher row at the very entry, before any filtering, to debug drops. */
+  private traceWatcher(source: "incoming" | "from-me", message: Message): void {
+    if (!(message.hasAttachments || message.attachments.length > 0)) return;
+    this.log(
+      `watcher ${source} row ${message.id}: chat …${(message.chatId ?? "null").slice(-8)}, ` +
+        `isFromMe=${message.isFromMe}, kind=${message.chatKind}, reaction=${!!message.reaction}, ` +
+        `textLen=${message.text?.length ?? 0}, hasAtt=${message.hasAttachments}, att=${message.attachments.length}`,
+    );
+  }
+
   /** Start the single shared watcher on first use (idempotent; the SDK allows only one). */
   private ensureWatching(): Promise<void> {
     if (!this.watchStarting) this.watchStartedAt = Date.now() - REPLAY_SLACK_MS;
     this.watchStarting ??= this.sdk
       .startWatching({
-        onIncomingMessage: (message) => void this.dispatch(message),
+        onIncomingMessage: (message) => {
+          this.traceWatcher("incoming", message);
+          void this.dispatch(message);
+        },
         onFromMeMessage: (message) => {
+          this.traceWatcher("from-me", message);
           if (this.isHistory(message)) return;
           if (this.isOurSend(message)) return;
           if (this.selfHandle) void this.dispatch(message);
+          else if (message.hasAttachments || message.attachments.length > 0) {
+            this.log(`from-me attachment row ${message.id} skipped: SELF_HANDLE is empty, so your own sends aren't served. Send the receipt from a member's device, or set SELF_HANDLE.`);
+          }
         },
         onError: (error) => this.onError(error),
       })
