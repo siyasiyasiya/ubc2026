@@ -75,11 +75,11 @@ The pieces the system needs. Only the iMessage layer and checkout have been chos
 | --- | --- | --- |
 | Chat interface | Where members send requests, approve spends and get texted one-on-one | iMessage via [Photon](https://photon.codes) |
 | Agent | An LLM with tools that turns requests into proposals, reads receipts and tracks splits | Not chosen |
-| Member wallets | Hold each member's USDC and enforce their recurring spending limit | Not chosen |
-| Funding | Converts a card payment to USDC, or connects an existing wallet | Not chosen |
+| Member wallets | Hold each member's USDC and enforce their recurring spending limit | Circle passkey (Face ID) smart wallets; limits enforced by the group contract |
+| Funding | Converts a card payment to USDC, or connects an existing wallet | Apple Pay through Arc Onramp |
 | Store access | Lets the agent build carts and place orders on members' existing accounts across stores | Not chosen |
-| Group contract | Records approvals and pulls each member's share to whoever paid | Not chosen |
-| Chain | Where the contract runs and USDC moves | Not chosen |
+| Group contract | Records approvals and pulls each member's share to whoever paid | [`GroupTreasury`](contracts/README.md), driven by `ArcWalletAdapter` in `packages/wallet` |
+| Chain | Where the contract runs and USDC moves | Arc (USDC is gas) |
 | Checkout wallet | Issues one-time cards so the agent can pay real merchants | [Link agent wallet](https://docs.stripe.com/agentic-commerce/agents/link-agent-wallet) |
 
 ## Open question: individual wallets vs a shared multisig

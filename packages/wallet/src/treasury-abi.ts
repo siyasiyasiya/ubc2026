@@ -1,0 +1,118 @@
+/** The parts of `contracts/src/GroupTreasury.sol` the Arc wallet adapter uses. */
+export const groupTreasuryAbi = [
+  {
+    type: "function",
+    name: "members",
+    stateMutability: "view",
+    inputs: [
+      { name: "group", type: "bytes32" },
+      { name: "member", type: "address" },
+    ],
+    outputs: [
+      { name: "active", type: "bool" },
+      { name: "period", type: "uint8" },
+      { name: "limit", type: "uint128" },
+      { name: "windowIndex", type: "uint64" },
+      { name: "spent", type: "uint128" },
+    ],
+  },
+  {
+    type: "function",
+    name: "remaining",
+    stateMutability: "view",
+    inputs: [
+      { name: "group", type: "bytes32" },
+      { name: "member", type: "address" },
+    ],
+    outputs: [{ type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "resetsAt",
+    stateMutability: "view",
+    inputs: [
+      { name: "group", type: "bytes32" },
+      { name: "member", type: "address" },
+    ],
+    outputs: [{ type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "approved",
+    stateMutability: "view",
+    inputs: [
+      { name: "id", type: "bytes32" },
+      { name: "member", type: "address" },
+    ],
+    outputs: [{ type: "bool" }],
+  },
+  {
+    type: "function",
+    name: "getSpend",
+    stateMutability: "view",
+    inputs: [{ name: "id", type: "bytes32" }],
+    outputs: [
+      { name: "status", type: "uint8" },
+      { name: "group", type: "bytes32" },
+      { name: "payee", type: "address" },
+      { name: "total", type: "uint256" },
+      { name: "deadline", type: "uint64" },
+      { name: "approvals", type: "uint32" },
+      { name: "approvalsNeeded", type: "uint32" },
+      { name: "participants", type: "address[]" },
+      { name: "shares", type: "uint256[]" },
+    ],
+  },
+  {
+    type: "function",
+    name: "propose",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "id", type: "bytes32" },
+      { name: "group", type: "bytes32" },
+      { name: "payee", type: "address" },
+      { name: "participants", type: "address[]" },
+      { name: "shares", type: "uint256[]" },
+      { name: "deadline", type: "uint64" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "approveFor",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "id", type: "bytes32" },
+      { name: "member", type: "address" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "settle",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "id", type: "bytes32" }],
+    outputs: [],
+  },
+  {
+    type: "event",
+    name: "SharePulled",
+    inputs: [
+      { name: "id", type: "bytes32", indexed: true },
+      { name: "from", type: "address", indexed: true },
+      { name: "to", type: "address", indexed: true },
+      { name: "amount", type: "uint256", indexed: false },
+    ],
+  },
+  {
+    type: "event",
+    name: "PullFailed",
+    inputs: [
+      { name: "id", type: "bytes32", indexed: true },
+      { name: "from", type: "address", indexed: true },
+      { name: "to", type: "address", indexed: true },
+      { name: "amount", type: "uint256", indexed: false },
+      { name: "reason", type: "string", indexed: false },
+    ],
+  },
+] as const;
