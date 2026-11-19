@@ -5,6 +5,7 @@ import type {
   ChatQuery,
   DispatchEvents,
   Message,
+  MessageQuery,
   Reaction,
   ReactionKind,
   SendRequest,
@@ -31,9 +32,16 @@ class FakeSdk implements PhotonSdk {
   closed = false;
   chats: Chat[] = [];
   listChatsCalls = 0;
+  /** Rows `getMessages` returns, newest state last; the adapter polls this while waiting on a file. */
+  messages: Message[] = [];
+  getMessagesCalls = 0;
 
   async send(request: SendRequest): Promise<void> {
     this.sends.push(request);
+  }
+  async getMessages(query?: MessageQuery): Promise<readonly Message[]> {
+    this.getMessagesCalls += 1;
+    return query?.chatId ? this.messages.filter((m) => m.chatId === query.chatId) : this.messages;
   }
   async startWatching(events?: DispatchEvents): Promise<void> {
     this.startWatchingCalls += 1;
@@ -348,6 +356,64 @@ describe("PhotonChatPort watcher", () => {
 
     expect(received).toHaveLength(1);
     expect(received[0]?.text).toBe("buy milk");
+  });
+
+  it("delivers a ready attachment right away (no waiting)", () => {
+    const sdk = new FakeSdk();
+    const port = new PhotonChatPort({ sdk, allowedChatIds: ALLOWED });
+    const received: IncomingMessage[] = [];
+    port.onMessage((m) => received.push(m));
+
+    sdk.emit(makeMessage({ text: "", hasAttachments: true, attachments: [makeAttachment()] }));
+
+    expect(received).toHaveLength(1);
+    expect(received[0]?.attachments).toHaveLength(1);
+    expect(sdk.getMessagesCalls).toBe(0); // the file was already on disk, no re-query
+  });
+
+  it("waits for a still-downloading attachment, then delivers it once the file lands", async () => {
+    const sdk = new FakeSdk();
+    const port = new PhotonChatPort({ sdk, allowedChatIds: ALLOWED, attachmentWaitMs: 500, attachmentPollMs: 5 });
+    const received: IncomingMessage[] = [];
+    port.onMessage((m) => received.push(m));
+
+    // The row appears before its attachment's file is on disk (WAL race: join not flushed yet).
+    sdk.emit(makeMessage({ id: "receipt-1", text: "", hasAttachments: true, attachments: [] }));
+    expect(received).toHaveLength(0); // nothing delivered yet, we're waiting on the file
+
+    // The download finishes; a re-query now returns the complete row.
+    sdk.messages = [
+      makeMessage({ id: "receipt-1", text: "", hasAttachments: true, attachments: [makeAttachment()] }),
+    ];
+    await new Promise((r) => setTimeout(r, 40));
+
+    expect(received).toHaveLength(1);
+    expect(received[0]?.attachments).toEqual([
+      { uri: "/Users/me/Downloads/receipt.jpg", mimeType: "image/jpeg" },
+    ]);
+    expect(sdk.getMessagesCalls).toBeGreaterThan(0);
+  });
+
+  it("gives up after the timeout and delivers any text if the attachment never lands", async () => {
+    const sdk = new FakeSdk();
+    const port = new PhotonChatPort({
+      sdk,
+      allowedChatIds: ALLOWED,
+      attachmentWaitMs: 20,
+      attachmentPollMs: 5,
+      log: () => undefined,
+    });
+    const received: IncomingMessage[] = [];
+    port.onMessage((m) => received.push(m));
+
+    const stuck = makeMessage({ id: "stuck-1", text: "here's the receipt", hasAttachments: true, attachments: [] });
+    sdk.emit(stuck);
+    sdk.messages = [stuck]; // re-queries keep seeing no file
+    await new Promise((r) => setTimeout(r, 60));
+
+    expect(received).toHaveLength(1);
+    expect(received[0]?.text).toBe("here's the receipt");
+    expect(received[0]?.attachments).toEqual([]);
   });
 
   it("routes a 👍 reaction to onReaction and NOT to onMessage", () => {

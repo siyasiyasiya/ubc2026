@@ -38,6 +38,7 @@ import {
   type DispatchEvents,
   type IMessageConfig,
   type Message,
+  type MessageQuery,
   type Reaction,
   type SendRequest,
 } from "@photon-ai/imessage-kit";
@@ -65,6 +66,8 @@ export interface PhotonSdk {
   close(): Promise<void>;
   /** Lists chats the bot is in, so it can auto-serve every group it's been added to. */
   listChats(query?: ChatQuery): Promise<readonly Chat[]>;
+  /** Re-reads rows from chat.db, used to wait for an attachment's file to finish downloading. */
+  getMessages(query?: MessageQuery): Promise<readonly Message[]>;
 }
 
 /** Returns the sender's handle for a message id, or null if unknown. */
@@ -124,6 +127,10 @@ export interface PhotonChatPortConfig {
   sentIdLookup?: SentIdLookup | null;
   /** How often postMessage polls `sentIdLookup` while waiting. */
   sentIdPollMs?: number;
+  /** How long to wait for an incoming attachment's file to finish downloading before giving up. */
+  attachmentWaitMs?: number;
+  /** How often to re-check chat.db while an attachment is still transferring. */
+  attachmentPollMs?: number;
   log?: (line: string) => void;
   /** Surfaces watcher/dispatch errors (ChatPort has no error channel). */
   onError?: (error: Error) => void;
@@ -303,6 +310,8 @@ export class PhotonChatPort implements ChatPort {
   private readonly selfHandle: string | undefined;
   private readonly sentIdTimeoutMs: number;
   private readonly sentIdPollMs: number;
+  private readonly attachmentWaitMs: number;
+  private readonly attachmentPollMs: number;
   private readonly sentIdLookup: SentIdLookup | undefined;
   private readonly log: (line: string) => void;
   private readonly onError: (error: Error) => void;
@@ -345,6 +354,8 @@ export class PhotonChatPort implements ChatPort {
     this.selfHandle = config.selfHandle;
     this.sentIdTimeoutMs = config.sentIdTimeoutMs ?? 10_000;
     this.sentIdPollMs = config.sentIdPollMs ?? 250;
+    this.attachmentWaitMs = config.attachmentWaitMs ?? 20_000;
+    this.attachmentPollMs = config.attachmentPollMs ?? 750;
     this.sentIdLookup =
       config.sentIdLookup === null
         ? undefined
@@ -595,13 +606,71 @@ export class PhotonChatPort implements ChatPort {
         }
         return;
       }
-      const msg = mapMessageRow(message, this.resolveSender, this.selfHandle);
-      // Text-less, photo-less rows (e.g. a from-me echo whose text lives in attributedBody) aren't input.
-      if (!msg || (!msg.text && msg.attachments.length === 0)) return;
-      for (const handler of this.messageHandlers) handler(msg);
+      // An attachment (receipt photo/PDF) often isn't on disk the instant its row appears: the file
+      // is still downloading, or the message_attachment_join hasn't flushed yet (a WAL race). Emitting
+      // now would hand the agent a text-less row and it'd say "can't see images", so wait for the file.
+      if (this.attachmentsPending(message)) {
+        void this.deliverWhenReady(message);
+        return;
+      }
+      this.emitMessage(message);
     } catch (err) {
       this.onError(err instanceof Error ? err : new Error(String(err)));
     }
+  }
+
+  /** Fire the message handlers for a row, skipping rows with neither text nor a usable attachment. */
+  private emitMessage(message: Message): void {
+    const msg = mapMessageRow(message, this.resolveSender, this.selfHandle);
+    // Text-less, photo-less rows (e.g. a from-me echo whose text lives in attributedBody) aren't input.
+    if (!msg || (!msg.text && msg.attachments.length === 0)) return;
+    for (const handler of this.messageHandlers) handler(msg);
+  }
+
+  /** A usable attachment: its file is on disk (localPath set) and the transfer isn't still in flight. */
+  private static attachmentReady(message: Message): boolean {
+    return message.attachments.some(
+      (a) => a.localPath !== null && a.transferStatus !== "pending" && a.transferStatus !== "transferring",
+    );
+  }
+
+  /** The row claims an attachment, but none is ready yet and the transfer hasn't permanently failed. */
+  private attachmentsPending(message: Message): boolean {
+    if (!message.hasAttachments || PhotonChatPort.attachmentReady(message)) return false;
+    // A failed transfer never completes, so don't wait on it; let the row through (text only).
+    const allFailed = message.attachments.length > 0 && message.attachments.every((a) => a.transferStatus === "failed");
+    return !allFailed;
+  }
+
+  /** Re-read the row from chat.db until its attachment's file lands, then emit; give up after a timeout. */
+  private async deliverWhenReady(provisional: Message): Promise<void> {
+    const chatId = provisional.chatId;
+    if (!chatId) {
+      this.emitMessage(provisional);
+      return;
+    }
+    this.log(`waiting for attachment to download (${provisional.id})`);
+    const deadline = Date.now() + this.attachmentWaitMs;
+    // A hair before the row's own timestamp, so the query can't miss it on a rounding boundary.
+    const since = new Date(provisional.createdAt.getTime() - 1000);
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, this.attachmentPollMs));
+      let rows: readonly Message[];
+      try {
+        rows = await this.sdk.getMessages({ chatId, since, excludeReactions: true });
+      } catch (err) {
+        this.onError(err instanceof Error ? err : new Error(String(err)));
+        continue;
+      }
+      const fresh = rows.find((m) => m.id === provisional.id);
+      if (fresh && !this.attachmentsPending(fresh)) {
+        this.emitMessage(fresh);
+        return;
+      }
+    }
+    // Timed out: emit what we last had so any text still reaches the agent.
+    this.log(`attachment never finished downloading (${provisional.id}), delivering without it`);
+    this.emitMessage(provisional);
   }
 
   /** Route a private 1-on-1 message to the DM handlers (account questions). Reactions on DMs are ignored. */
