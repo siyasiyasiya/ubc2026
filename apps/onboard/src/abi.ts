@@ -6,6 +6,8 @@ export const treasuryAbi = parseAbi([
   "function setLimit(bytes32 group, uint128 limit, uint8 period)",
   "function members(bytes32 group, address member) view returns (bool active, uint8 period, uint128 limit, uint64 windowIndex, uint128 spent)",
   "function ticketUsed(bytes32 ticket) view returns (bool)",
+  "function remaining(bytes32 group, address member) view returns (uint256)",
+  "function resetsAt(bytes32 group, address member) view returns (uint256)",
   "function debts(address debtor, address creditor) view returns (uint256)",
   "function payDebt(address creditor, uint256 amount)",
 ]);

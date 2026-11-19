@@ -106,6 +106,16 @@
       #summary { margin-bottom: 22px; text-align: center; }
       #big, #owed { font-size: 34px; font-weight: 700; letter-spacing: -0.02em; }
       #owed { margin-bottom: 18px; text-align: center; }
+      #kitties { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 18px; }
+      #kitties h2 { font-size: 17px; margin: 0 0 10px; }
+      #kitty-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
+      #kitty-list li { display: grid; gap: 4px; }
+      #kitty-list span { font-size: 14px; color: var(--muted); }
+      #kitty-list .bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+      #kitty-list .bar i { display: block; height: 100%; background: var(--accent); }
+      #kitty-note { margin-top: 12px; font-size: 14px; color: var(--bad); }
+      #kitty-note:empty { display: none; }
+      #see { margin-top: 4px; }
       #change { display: inline-block; margin-top: 6px; font-size: 14px; color: var(--accent); text-decoration: none; }
     </style>
   </head>
@@ -139,7 +149,13 @@
         <p id="owed"></p>
         <button id="pay" type="button">Continue with Face ID</button>
       </div>
+      <button id="see" type="button" hidden>See my kitties with Face ID</button>
       <p id="status" role="status"></p>
+      <div id="kitties" hidden>
+        <h2>Your kitties</h2>
+        <ul id="kitty-list"></ul>
+        <p id="kitty-note"></p>
+      </div>
       <div id="fund" hidden>
         <p id="balance" role="status">Balance: …</p>
         <a id="add" class="button" href="#" target="_blank" rel="noopener" aria-disabled="true">Add money with Apple Pay</a>

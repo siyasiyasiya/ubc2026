@@ -23,6 +23,7 @@ import { createPublicClient, encodeFunctionData, formatUnits, http, isAddress, i
 import { createBundlerClient, toWebAuthnAccount } from "viem/account-abstraction";
 import { arcTestnet } from "viem/chains";
 import { erc20Abi, treasuryAbi } from "./abi";
+import { chatsFromLink, showSnapshot } from "./snapshot";
 
 const clientKey = import.meta.env.VITE_CLIENT_KEY as string;
 const clientUrl = (import.meta.env.VITE_CLIENT_URL as string) || "https://modular-sdk.circle.com/v1/rpc/w3s/buidl";
@@ -54,6 +55,7 @@ function show(text: string, kind: "info" | "error" | "done" = "info"): void {
 
 function setup(): void {
   if (creditor) return setupPayBack();
+  if (params.get("v") === "1") return setupStatus();
   const amount = $<HTMLInputElement>("amount");
   const prefill = params.get("l");
   if (prefill && /^\d+(\.\d{1,2})?$/.test(prefill)) amount.value = prefill;
@@ -265,6 +267,36 @@ async function submit(event: Event, returning = false): Promise<void> {
   }
 }
 
+/**
+ * "Your kitties" link (?v=1&k=<group>:<name>…): every chat at a glance. A phone that used Kitty
+ * before remembers the passkey, so it opens with no prompt; otherwise one Face ID tap to sign in.
+ */
+function setupStatus(): void {
+  $("title").textContent = "Your kitties";
+  $("lede").textContent = "Every group chat you're in, at a glance.";
+  form.hidden = true;
+  const see = $<HTMLButtonElement>("see");
+  const open = async () => {
+    see.disabled = true;
+    try {
+      show(readCredential() ? "Loading…" : "Waiting for Face ID…");
+      const { account } = await connect(true);
+      see.hidden = true;
+      show("");
+      await showFunding(account.address);
+    } catch (err) {
+      console.error(err);
+      show("Couldn't sign in. Tap to try again.", "error");
+      see.hidden = false;
+    } finally {
+      see.disabled = false;
+    }
+  };
+  see.addEventListener("click", () => void open());
+  if (readCredential()) void open();
+  else see.hidden = false;
+}
+
 /** Unlocks the member's Kitty account: their passkey, smart account, and a gasless bundler. */
 async function connect(returning: boolean) {
   const credential = await passkey(returning);
@@ -370,6 +402,9 @@ async function showFunding(address: Hex): Promise<void> {
   } catch (err) {
     console.error(err);
   }
+  // Every chat the link lists, signed-in or not ("?a=" top-up links know the account too).
+  // `arc` is typed for the Arc chain; the snapshot only needs readContract, so the generic chain type is dropped.
+  showSnapshot(arc as unknown as Parameters<typeof showSnapshot>[0], treasury, address, chatsFromLink(params), start / 10n ** 12n).catch((err) => console.error("snapshot", err));
 
   try {
     const res = await fetch("/api/onramp-session", {

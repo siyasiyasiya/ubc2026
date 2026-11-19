@@ -283,6 +283,8 @@ const DM_SYSTEM = `You are Kitty, replying privately in a one-on-one text to one
 
 Answer from the account summary you're given: their balance, and for each group their spending limit and what's left this period. Use those exact numbers, never invent one. If the summary doesn't cover what they asked, say you're not sure.
 
+If they ask how their chats are doing, answer from the account summary (each chat's left, limit, and "resets in N days"), and offer send_status_link for the full view.
+
 If they want to add money or top up: when add_test_money is available (this is a test version of Kitty), use it with the amount they asked for (default $20); it really adds test money and tells you the new balance. Otherwise call send_topup_link to text them the add-money link, and don't claim money moved.
 
 You cannot move money, change limits, approve splits, or do anything for other people in here. If they ask, tell them briefly to do it in the group chat (lowering a limit works there; raising uses the Face ID link).
@@ -295,6 +297,8 @@ Voice: text like a real person, not an app. Lowercase by default, short, fragmen
 export interface DmActions {
   /** Text the sender their Apple Pay add-money link. Returns a short result for the model. */
   sendTopUpLink(): Promise<string>;
+  /** Text the sender a link that shows every group chat's limit, what's left and when it resets. */
+  sendStatusLink(): Promise<string>;
   /** Testnet only: put test dollars straight into their Kitty account. Absent in production. */
   addTestMoney?(input: { usd: number }): Promise<string>;
 }
@@ -320,6 +324,13 @@ export async function runDmTurn(input: DmTurnInput): Promise<string | null> {
         "Text the person their private add-money link (Apple Pay / debit). Use when they want to add money, top up, or say their balance is low. No money moves; it just sends the link.",
       inputSchema: z.object({}),
       run: () => actions.sendTopUpLink(),
+    }),
+    betaZodTool({
+      name: "send_status_link",
+      description:
+        "Text the person a link to a page showing all their group chats at once: limit, what's left, and when each resets. Use when they ask for their status, all their chats, or a dashboard.",
+      inputSchema: z.object({}),
+      run: () => actions.sendStatusLink(),
     }),
     ...(actions.addTestMoney
       ? [

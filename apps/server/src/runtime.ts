@@ -111,6 +111,20 @@ export function toE164(raw: string): string | undefined {
   return undefined;
 }
 
+/** "resets in 3 days" / "resets in 5 hours" / "never refills" (one-time), for the DM summary. */
+export function resetsIn(limit: SpendingLimit, resetsAt: number | undefined, now: number): string {
+  if (limit.period === "once") return "never refills";
+  if (!resetsAt) return "";
+  const ms = resetsAt - now;
+  if (ms <= 0) return "resets now";
+  if (ms >= 86_400_000) {
+    const days = Math.ceil(ms / 86_400_000);
+    return `resets in ${days} day${days === 1 ? "" : "s"}`;
+  }
+  const hours = Math.max(1, Math.ceil(ms / 3_600_000));
+  return `resets in ${hours} hour${hours === 1 ? "" : "s"}`;
+}
+
 /** Contract reasons in words members understand. */
 function plainReason(reason: string | undefined): string {
   if (reason === "transfer failed") return "not enough in their Kitty account";
@@ -275,7 +289,7 @@ export class GroupRuntime {
       );
       return "Texted them privately asking for their name; their Face ID link goes out as soon as they answer. Don't ask for it in the group.";
     }
-    const link = this.inviteLinkFor(record.group.chatId, member.id);
+    const link = this.withChats(new URL(this.inviteLinkFor(record.group.chatId, member.id)), member.id);
     const where = await this.dm(record, member, `you're invited to ${record.group.name}'s kitty 🎉 one Face ID tap and you're set up: ${link}`);
     return where === "dm"
       ? `Texted ${member.displayName} a private Face ID link.`
@@ -329,6 +343,16 @@ export class GroupRuntime {
     url.searchParams.set("c", record.group.name);
     url.searchParams.set("n", member.displayName);
     for (const [k, v] of Object.entries(extra)) url.searchParams.set(k, v);
+    return this.withChats(url, member.id);
+  }
+
+  /** Adds `k=<group id>:<chat name>` for every chat this person has joined, for the page's snapshot. */
+  private withChats(url: URL, handle: string): string {
+    const current = url.searchParams.get("g")?.toLowerCase();
+    for (const { record, member } of this.membershipsOf(handle)) {
+      const group = groupIdForChat(record.group.chatId);
+      if (member.wallet && group.toLowerCase() !== current) url.searchParams.append("k", `${group}:${record.group.name}`);
+    }
     return url.toString();
   }
 
@@ -569,7 +593,8 @@ export class GroupRuntime {
         const status = await this.walletFor(record).getLimitStatus(member);
         const limit = status.limit.amount > 0n ? status.limit : member.limit;
         const per = limit.period === "once" ? "in total (one time)" : `per ${limit.period === "weekly" ? "week" : "month"}`;
-        return `- ${record.group.name}: ${formatUsdc(status.remaining)} left of a ${formatUsdc(limit.amount)} limit ${per}`;
+        const resets = resetsIn(limit, status.resetsAt ?? status.limit.resetsAt, this.now());
+        return `- ${record.group.name}: ${formatUsdc(status.remaining)} left of a ${formatUsdc(limit.amount)} limit ${per}${resets ? `, ${resets}` : ""}`;
       }),
     );
     return `Person: ${name}\n${balanceLine}\n\nTheir groups:\n${groups.join("\n") || "- (none yet)"}`;
@@ -660,6 +685,15 @@ export class GroupRuntime {
     const testMoney = this.deps.testMoney;
     return {
       ...(testMoney ? { addTestMoney: ({ usd }: { usd: number }) => this.addTestMoney(memberships, usd) } : {}),
+      sendStatusLink: async () => {
+        const base = this.deps.invites?.baseUrl;
+        if (!base) return "The Kitty page isn't configured, so no link to send.";
+        if (!memberships.some((m) => m.member.wallet)) return "They haven't joined any Kitty yet, so there's nothing to show.";
+        const url = new URL(base);
+        url.searchParams.set("v", "1");
+        await this.sendDm(handle, dmKey, name, `all your kitties in one place: ${this.withChats(url, handle)}`);
+        return "Sent them the link to see all their group chats.";
+      },
       sendTopUpLink: async () => {
         const linked = memberships.find((m) => m.member.wallet);
         if (!linked) return "They don't have a Kitty account yet, so there's nothing to add money to. Tell them to join in their group first.";
@@ -667,7 +701,7 @@ export class GroupRuntime {
         if (!base) return "The add-money page isn't configured, so no link to send.";
         const url = new URL(base);
         url.searchParams.set("a", linked.member.wallet!.address);
-        await this.sendDm(handle, dmKey, name, `add money to your Kitty account here (Apple Pay or debit): ${url.toString()}`);
+        await this.sendDm(handle, dmKey, name, `add money to your Kitty account here (Apple Pay or debit): ${this.withChats(url, handle)}`);
         return "Sent them the add-money link.";
       },
     };

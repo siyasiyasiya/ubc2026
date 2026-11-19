@@ -2,7 +2,7 @@ import { usdc, type PurchaseAdapter, type ChatPort, type IncomingMessage, type I
 import type { runTurn as RunTurn, runDmTurn as RunDmTurn } from "@gta/agent";
 import { groupIdForChat, InMemoryWalletAdapter, inviteTicket } from "@gta/wallet";
 import { describe, expect, it } from "vitest";
-import { GroupRuntime } from "./runtime.js";
+import { GroupRuntime, resetsIn } from "./runtime.js";
 import { Store } from "./store.js";
 import { SimulatedPurchaseAdapter } from "./simulated-purchase.js";
 import type { RestaurantCallRequest, RestaurantCaller, RestaurantCallResult } from "./restaurant-call.js";
@@ -88,6 +88,7 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
     const test = /test money \$?(\d+)/i.exec(event);
     if (test && actions.addTestMoney) return actions.addTestMoney({ usd: Number(test[1]) });
     if (event.toLowerCase().includes("add money")) return actions.sendTopUpLink();
+    if (event.toLowerCase().includes("all my kitties")) return actions.sendStatusLink();
     return `summary: ${accountSummary}`;
   };
   const store = new Store();
@@ -626,6 +627,25 @@ describe("GroupRuntime", () => {
     await t.dm(SIYA, "test money $5");
     expect(sent).toHaveLength(2);
     expect(t.dms.at(-1)?.text).toContain("already got $30 of test money today");
+  });
+
+  it("texts a 'my kitties' link listing every chat the person has joined", async () => {
+    const invites = { baseUrl: "https://kittyagent.vercel.app", secret: "s3cret" };
+    const t = setup(200, { invites, wallets: { [SIYA]: "0x00000000000000000000000000000000000000bb" } });
+    await t.say(SIYA, "hi");
+    await t.dm(SIYA, "show me all my kitties");
+    const link = new URL(t.dms.find((d) => d.text.startsWith("all your kitties"))!.text.split(" ").at(-1)!);
+    expect(link.searchParams.get("v")).toBe("1");
+    expect(link.searchParams.getAll("k")).toEqual([`${groupIdForChat(CHAT)}:${t.store.get(CHAT)!.group.name}`]);
+  });
+
+  it("says when a limit resets in days or hours, and that one-time limits never refill", () => {
+    const now = Date.UTC(2026, 10, 19);
+    const weekly = { amount: usdc(20), period: "weekly" as const };
+    expect(resetsIn(weekly, now + 3.2 * 86_400_000, now)).toBe("resets in 4 days");
+    expect(resetsIn(weekly, now + 1 * 86_400_000, now)).toBe("resets in 1 day");
+    expect(resetsIn(weekly, now + 5 * 3_600_000, now)).toBe("resets in 5 hours");
+    expect(resetsIn({ amount: usdc(200), period: "once" }, undefined, now)).toBe("never refills");
   });
 
   it("passes errors back from run() so the join watcher retries instead of skipping", async () => {
