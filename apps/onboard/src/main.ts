@@ -54,9 +54,14 @@ function show(text: string, kind: "info" | "error" | "done" = "info"): void {
 
 function setup(): void {
   if (creditor) return setupPayBack();
+  const amount = $<HTMLInputElement>("amount");
   const prefill = params.get("l");
-  if (prefill && /^\d+(\.\d{1,2})?$/.test(prefill)) $<HTMLInputElement>("amount").value = prefill;
+  if (prefill && /^\d+(\.\d{1,2})?$/.test(prefill)) amount.value = prefill;
   if (params.get("p") === "monthly") form.querySelector<HTMLSelectElement>("select")!.value = "monthly";
+  // Typing replaces the amount rather than adding digits to it ("100" + "50" became $10,050).
+  amount.addEventListener("focus", () => amount.select());
+  amount.addEventListener("input", () => labelButton());
+  form.querySelector("select")!.addEventListener("change", () => labelButton());
   if (topUpAccount && !group) {
     $("title").textContent = "Add money";
     $("lede").textContent = "Top up your Kitty balance with Apple Pay or a debit card.";
@@ -69,7 +74,7 @@ function setup(): void {
   $("lede").textContent = joining
     ? `${name ? `Hi ${name}! ` : ""}Set the most ${chatName} can spend from you. It resets on its own, and only you can raise it.`
     : `Change the most ${chatName} can spend from you.`;
-  button.textContent = joining ? "Join with Face ID" : "Save with Face ID";
+  labelButton();
   if (!isHex(group) || group.length !== 66 || (joining && (!isHex(ticket) || ticket.length !== 66))) {
     show("This link is incomplete. Ask Kitty in your chat for a new one.", "error");
     button.disabled = true;
@@ -78,6 +83,22 @@ function setup(): void {
     show("Something's not set up on our end. Try again in a bit.", "error");
     button.disabled = true;
   }
+}
+
+/** The button names the exact amount, so a typo like $10,050 is visible before Face ID. */
+function labelButton(): void {
+  const usd = $<HTMLInputElement>("amount").value.trim();
+  const per = form.querySelector<HTMLSelectElement>("select")!.value === "monthly" ? "month" : "week";
+  const shown = /^\d+(\.\d{1,2})?$/.test(usd) ? `$${Number(usd).toLocaleString("en-US")} a ${per}` : "";
+  button.textContent = `${joining ? "Join" : "Save"}${shown ? ` · ${shown}` : ""} with Face ID`;
+}
+
+/** An amount far above what the chat asked for (or over $1,000) needs a second tap. */
+let confirmedUsd = "";
+function looksOff(usd: string): boolean {
+  const asked = Number(params.get("l") ?? "0");
+  const value = Number(usd);
+  return usd !== confirmedUsd && (value > 1000 || (asked > 0 && value > asked * 5));
 }
 
 /** Circle usernames: 5-50 chars of [A-Za-z0-9_@.:+-]. iOS shows it when saving the passkey. */
@@ -143,6 +164,10 @@ async function submit(event: Event, returning = false): Promise<void> {
   const period = data.get("period") === "monthly" ? 1 : 0;
   if (!/^\d+(\.\d{1,2})?$/.test(usd)) return show("Enter an amount like 50 or 50.00.", "error");
   const limit = parseUnits(usd, 6); // USDC has 6 decimals; never a float
+  if (looksOff(usd)) {
+    confirmedUsd = usd;
+    return show(`That's $${Number(usd).toLocaleString("en-US")} a ${period === 1 ? "month" : "week"}. Tap again if that's right.`, "error");
+  }
 
   button.disabled = true;
   try {

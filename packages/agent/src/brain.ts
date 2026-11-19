@@ -93,7 +93,13 @@ export async function runTurn(input: TurnInput): Promise<string | null> {
       name: "set_my_limit",
       description:
         "Set the spending limit of the person who sent the latest message. Lowering applies right away; raising (or changing weekly/monthly) texts them a Face ID link to confirm. Nobody can set someone else's limit.",
-      inputSchema: z.object({ usd: z.number().nonnegative(), period: z.enum(["weekly", "monthly"]) }),
+      inputSchema: z.object({
+        usd: z
+          .number()
+          .nonnegative()
+          .describe("The new total limit. For 'raise/lower it by X', add or subtract X from their current limit in the member list."),
+        period: z.enum(["weekly", "monthly"]),
+      }),
       run: (a) => actions.setMyLimit(a),
     }),
     betaZodTool({
