@@ -259,6 +259,17 @@ export class CrossmintPurchaseAdapter implements PurchaseAdapter {
     if (!id) {
       throw new CrossmintCheckoutError("order intent response had no id", { runId: cart.id });
     }
+    // A card rail can come back pending_verification (Visa passkey / Mastercard page) until the
+    // card's owner approves it; answering the checkout with it would only fail later, less clearly.
+    const statuses = (intent.rails ?? [])
+      .map((r) => (r && typeof r === "object" && "status" in r ? String(r.status) : undefined))
+      .filter((st): st is string => st !== undefined);
+    if (statuses.length > 0 && !statuses.includes("active")) {
+      throw new CrossmintCheckoutError(
+        `the card needs a one-time verification before Kitty can charge it (${statuses.join(", ")})`,
+        { runId: cart.id },
+      );
+    }
     return id;
   }
 

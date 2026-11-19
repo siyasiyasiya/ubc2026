@@ -259,6 +259,15 @@ describe("placeOrder", () => {
     });
   });
 
+  it("stops with a clear error when the card still needs verification", async () => {
+    const { fetch, rec } = makeFetch({
+      getRunQueue: [paymentRun(), succeeded],
+      orderIntent: { orderIntentId: "oi_pending", rails: [{ type: "visa", status: "pending_verification" }] },
+    });
+    await expect(adapter(fetch).placeOrder({ cart })).rejects.toThrow(/one-time verification/);
+    expect(rec.calls.find((c) => c.path.endsWith("/messages"))).toBeUndefined();
+  });
+
   it("uses a pre-approved order intent from checkoutAuth and skips authorization", async () => {
     const { fetch, rec } = makeFetch({ getRunQueue: [paymentRun(), succeeded] });
     await adapter(fetch).placeOrder({ cart, checkoutAuth: "oi_preapproved" });
