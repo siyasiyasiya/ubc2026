@@ -37,7 +37,7 @@ Owns: `contracts/`, `packages/wallet`, `packages/funding`.
 | `WalletAdapter` — in-memory dev impl | ⬜ todo | lets the server/state machine run with no chain. Label non-production. |
 | `WalletAdapter` — real impl | ⬜ todo | pull share within recurring limit. Blocked on decisions below. |
 | `funding` — card→USDC / connect wallet | ⬜ todo | blocked on funding provider decision. |
-| **Decide:** chain (Arc / Base / other) | 🔲 decision | ask Siya before choosing |
+| ✅ **Decided:** chain | ✅ done | **Arc** (Siya approved). Contract + Face ID passkey onboarding — PR #3. |
 | **Decide:** wallet provider + limit enforcement | 🔲 decision | onchain spend permissions vs provider policy vs permits |
 | **Decide:** funding provider | 🔲 decision | |
 | **Decide:** optional onchain components | 🔲 decision | mandates, cart/receipt fingerprints, ledger/netting, track record, escrow |
