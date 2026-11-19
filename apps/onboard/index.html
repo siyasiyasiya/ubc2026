@@ -131,7 +131,10 @@
       }
       .chips button[aria-pressed="true"] { background: var(--accent); color: #fff; }
       .chips button:active, .seg button:active { transform: scale(0.96); }
-      .seg { display: flex; gap: 2px; padding: 3px; background: var(--field); border-radius: 13px; margin-bottom: 22px; }
+      .seg { display: flex; gap: 2px; padding: 3px; background: var(--field); border-radius: 13px; margin-bottom: 8px; }
+      .cycle { font-size: 14px; color: var(--muted); }
+      #cycle { margin-bottom: 6px; }
+      #cycle-typed { margin-bottom: 22px; padding-left: 4px; }
       .seg button { background: transparent; color: var(--muted); font-size: 14px; padding: 8px 0; border-radius: 10px; }
       .seg button[aria-pressed="true"] { background: var(--card); color: var(--text); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
       /* Kept for the form's data; the segmented control drives it. */
@@ -243,12 +246,13 @@
       <p id="lede"></p>
       <form id="form">
         <div id="summary" hidden>
-          <small>Most you'll pay</small>
+          <small>Spending cap</small>
           <p id="big"></p>
+          <p id="cycle" class="cycle"></p>
           <a id="change" href="#">Change amount</a>
         </div>
         <div id="fields">
-          <label for="amount">Most you'll pay</label>
+          <label for="amount">Spending cap</label>
           <div class="amount">
             <span>$</span>
             <input id="amount" name="amount" inputmode="decimal" placeholder="0" autocomplete="off" required />
@@ -264,6 +268,7 @@
             <button type="button" data-period="monthly">Monthly</button>
             <button type="button" data-period="once">One time</button>
           </div>
+          <p id="cycle-typed" class="cycle"></p>
           <select name="period" aria-hidden="true" tabindex="-1">
             <option value="weekly">per week</option>
             <option value="monthly">per month</option>
@@ -273,7 +278,7 @@
         <ol id="how" hidden>
           <li><i>💬</i><span><b>Someone asks in the chat.</b> Kitty posts what it costs and each person's share.</span></li>
           <li><i>👍</i><span><b>Everyone taps 👍.</b> Nothing is paid until the group agrees.</span></li>
-          <li><i>✨</i><span><b>Kitty pays.</b> Your share comes from your Kitty, never more than the amount above.</span></li>
+          <li><i>✨</i><span><b>Kitty pays.</b> Your share comes from your Kitty, never past your cap.</span></li>
         </ol>
         <button id="go" type="submit">Continue with Face ID</button>
         <a id="returning" href="#">Used Kitty before on another phone?</a>
@@ -295,7 +300,7 @@
         <a id="add" class="button" href="#" target="_blank" rel="noopener" aria-disabled="true">Add money with Apple Pay</a>
         <p class="hint">Apple Pay or debit card. The money goes straight to your Kitty balance.</p>
       </div>
-      <footer>Your money stays yours until something is actually bought. You only pay for things you 👍, and never more than the amount you set.</footer>
+      <footer>Your money stays yours until something is actually bought. You only pay for things you 👍, and never past your spending cap.</footer>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>

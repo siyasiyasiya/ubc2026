@@ -66,6 +66,7 @@ function wireAmountPickers(): void {
   const sync = () => {
     for (const chip of chips) chip.setAttribute("aria-pressed", String(chip.dataset.usd === amount.value.trim()));
     for (const p of periods) p.setAttribute("aria-pressed", String(p.dataset.period === select.value));
+    showCycle();
     labelButton();
   };
   for (const chip of chips) {
@@ -84,7 +85,7 @@ function wireAmountPickers(): void {
   sync();
 }
 
-/** "$80" big, "a week" smaller beside it. */
+/** "$80" big, "per week" smaller beside it. */
 function showBigAmount(): void {
   const usd = $<HTMLInputElement>("amount").value.trim();
   const per = document.createElement("span");
@@ -146,15 +147,30 @@ function setup(): void {
 
 let oneTap = false;
 
-/** "each week", "each month", or "for the whole trip" (one-time). */
+/** The cap's cycle: "per week", "per month", or "one time" (a trip or a single purchase). */
 function perWords(period: string): string {
-  return period === "monthly" ? "each month" : period === "once" ? "for the whole trip" : "each week";
+  return period === "monthly" ? "per month" : period === "once" ? "one time" : "per week";
 }
 
-/** "$80 max" from the form, or "" while the amount isn't valid. The period is right above the button. */
+/** Says whether the cap comes back, so a weekly cap isn't read as a one-off charge (or the reverse). */
+function cycleNote(period: string): string {
+  return period === "monthly"
+    ? "Resets every month."
+    : period === "once"
+      ? "Doesn't reset. For one trip or purchase."
+      : "Resets every week.";
+}
+
+function showCycle(): void {
+  const note = cycleNote(form.querySelector<HTMLSelectElement>("select")!.value);
+  $("cycle").textContent = note;
+  $("cycle-typed").textContent = note;
+}
+
+/** "$80 cap" from the form, or "" while the amount isn't valid. The cycle is right above the button. */
 function amountText(): string {
   const usd = $<HTMLInputElement>("amount").value.trim();
-  return /^\d+(\.\d{1,2})?$/.test(usd) ? `$${Number(usd).toLocaleString("en-US")} max` : "";
+  return /^\d+(\.\d{1,2})?$/.test(usd) ? `$${Number(usd).toLocaleString("en-US")} cap` : "";
 }
 
 /** The button names the exact amount (unless it's shown big above), so a typo is visible before Face ID. */
@@ -287,7 +303,7 @@ async function submit(event: Event, returning = false): Promise<void> {
     console.info("account", account.address, "tx", receipt.transactionHash);
     const per = perWords(periodName);
     show(
-      `${joining && !alreadyIn ? `You're in ${chatName}! 🎉` : "Saved."}\nYou'll never pay more than $${Number(usd).toLocaleString("en-US")} ${per}.`,
+      `${joining && !alreadyIn ? `You're in ${chatName}! 🎉` : "Saved."}\nSpending cap: $${Number(usd).toLocaleString("en-US")} ${per}.\n${cycleNote(periodName)}`,
       "done",
     );
     form.hidden = true;
