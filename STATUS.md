@@ -50,7 +50,7 @@ The pieces work on their own; the demo needs them joined up. In order:
 | 16 | Leave a chat's Kitty (`leave_kitty` → operator `removeMember`) | Neena | 🟡 built; live test pending | demo |
 | 17 | Agent answers "how much money do I have" with the real balance, not the limit (74f353a) | Neena | ✅ built, balances checked live (Siya $10, Joey $0); chat retest pending | demo |
 | 18 | Only one bot per Messages account (pid lock, 9f8fa33). Five ran at once on Nov 18 and doubled replies / hit the RPC rate limit | Neena | ✅ | — |
-| 12 | Neena's own messages: bot runs on her Apple ID, so it ignores her | Neena | 🔲 decide: `SELF_HANDLE` (built, off) or a separate Apple ID for the bot | demo |
+| 12 | Neena's own messages: bot runs on her Apple ID, so it ignores her | Neena | ✅ decided Nov 19: the bot gets its own Apple ID (`ubc2026.agent@gmail.com`) on Siya's Mac. New group chat with the bot in it; everyone rejoins once. `SELF_HANDLE` stays empty | demo |
 
 ---
 
