@@ -40,11 +40,7 @@ console.log(
     : "wallet: in-memory (set TREASURY_ADDRESS and OPERATOR_PRIVATE_KEY to use Arc)",
 );
 
-const chat = new PhotonChatPort({
-  mode: config.imessageMode,
-  allowedChatIds: config.allowedChatIds,
-  ...(config.selfHandle ? { selfHandle: config.selfHandle } : {}),
-});
+const chat = startChat();
 const store = new Store(config.stateFile);
 const runtime = new GroupRuntime({
   chat,
@@ -65,6 +61,34 @@ const runtime = new GroupRuntime({
 runtime.attach();
 startJoinWatcher();
 await chat.start();
+
+/** Build the iMessage chat port, turning a raw chat.db access failure into a clear, actionable fix. */
+function startChat(): PhotonChatPort {
+  try {
+    return new PhotonChatPort({
+      mode: config.imessageMode,
+      allowedChatIds: config.allowedChatIds,
+      ...(config.selfHandle ? { selfHandle: config.selfHandle } : {}),
+    });
+  } catch (err) {
+    if (!isChatDbAccessError(err)) throw err;
+    console.error(
+      "\n❌ Can't read Messages (chat.db). This process doesn't have Full Disk Access.\n" +
+        "   Grant it to the app running this (VS Code, Terminal, or the `claude` CLI), then restart that app:\n" +
+        "   System Settings, Privacy & Security, Full Disk Access.\n" +
+        "   Easiest: run this from a VS Code integrated terminal, which usually already has it.\n" +
+        "   The demo simulator needs no access: pnpm --filter @gta/server sim\n",
+    );
+    process.exit(1);
+  }
+}
+
+/** The imessage-kit / better-sqlite3 failure to open chat.db (missing Full Disk Access on this process). */
+function isChatDbAccessError(err: unknown): boolean {
+  const e = err as { code?: string; message?: string; cause?: { code?: string } };
+  const text = `${e?.code ?? ""} ${e?.message ?? ""} ${e?.cause?.code ?? ""}`;
+  return /DATABASE|SQLITE_CANTOPEN|unable to open database/i.test(text);
+}
 
 /**
  * Watches GroupTreasury for Face ID joins (links each member's Kitty account to their handle and,

@@ -86,7 +86,7 @@ amount in text (as above).
 The chat layer runs on **imessage-kit** (it reads the Mac's Messages database), so native **👍 tapbacks** and **DMs** both work for real.
 
 **Prereqs**
-- A **Mac** signed into iMessage **on the bot's own Apple ID**, with **Full Disk Access** granted to your terminal (System Settings → Privacy & Security → Full Disk Access).
+- A **Mac** signed into iMessage **on the bot's own Apple ID**, with **Full Disk Access** granted to **the app that launches the bot** (System Settings → Privacy & Security → Full Disk Access). macOS grants Full Disk Access per app/binary, so FDA must be on whatever process actually spawns `pnpm dev`: your VS Code / Terminal / iTerm, **or** the `claude` CLI if you run it from there (`/opt/homebrew/bin/claude`). Running from a VS Code integrated terminal usually inherits VS Code's access. If the bot prints `Can't read Messages (chat.db)`, that process is missing Full Disk Access (see issue #12). The simulator (`pnpm sim`) never needs it.
 - `apps/server/.env` with `ANTHROPIC_API_KEY`. Leave `ALLOWED_CHAT_IDS` and `SELF_HANDLE` **empty**: the bot auto-serves every group chat its Apple ID is in and auto-discovers each chat's members, so there's nothing to configure per chat.
   - `MEMBER_NAMES` is optional now (names come from the roster); set it only to prettify a handle the roster shows raw.
   - Wallet: leave `TREASURY_ADDRESS` / `OPERATOR_PRIVATE_KEY` empty for the **in-memory** wallet, or set them to settle on **Arc**.
