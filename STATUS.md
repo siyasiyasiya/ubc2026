@@ -39,8 +39,8 @@ The pieces work on their own; the demo needs them joined up. In order:
 | 4 | Watch `Joined` events → link wallet to handle (`Member.wallet`) → fund new account (testnet) | Neena | ✅ done, live: Siya, Tristan, Joey joined Nov 18 | — |
 | 5 | Runtime picks the wallet adapter per chat | shared | ✅ done (#9) | — |
 | 6 | Pay-after flow live on Arc | shared | ✅ live Nov 18-19 on the new contract: #1 $4 and #2 $1 settled by 👍 tapback | — |
-| 7 | README for judges: architecture, Arc + Circle usage, contract address, how to run | both | 🟡 "How Arc and Circle are used" section done | submission |
-| 8 | Demo script + dry run on real phones | both | ⬜ todo | submission |
+| 7 | README for judges: architecture, Arc + Circle usage, contract address, how to run | both | ✅ updated Nov 19 (de73739): "What works today" table, real pay-before/pay-after flows, ElevenLabs section, run steps | submission |
+| 8 | Demo script + dry run on real phones | both | 🟡 draft in docs/demo-script.md (with pre-flight checklist); dry run todo | submission |
 | 9 | Short balance: DM a top-up + "pay it back" link, Face ID `payDebt`, "✅ paid back" in chat | Neena | 🟡 live up to the pay-back: #3 Joey's $3 failed (no balance), became a debt, pay-back DM sent. Joey funded $5 (0x4024…2482); Face ID pay-back not tapped yet | demo |
 | 10 | Limit changes from chat: lower → operator `lowerLimit` now; raise → DM Face ID link | Neena | ✅ lowering live (Joey $200 → $50, block 72968628); raising: built, one-tap page live | demo |
 | 11 | 👍 tapbacks on the card (local mode) | Siya | ✅ live Nov 18: Joey's tapback approved #1 and his $4 settled on Arc (0x3416…24b2). Card ids sometimes fall back to `local:…`; the runtime matches those (e9fd2f9) and Siya is fixing the guid capture | demo |
@@ -52,7 +52,7 @@ The pieces work on their own; the demo needs them joined up. In order:
 | 18 | Only one bot per Messages account (pid lock, 9f8fa33). Five ran at once on Nov 18 and doubled replies / hit the RPC rate limit | Neena | ✅ | — |
 | 19 | Kitty buys it (pay before): `buy_for_group` → checkout card → everyone 👍 → order → shares pulled to the card's owner | Neena | 🟡 built (7b10415), tested end to end in unit tests; runs on a **simulated** store until Crossmint production keys are set (CROSSMINT_API_KEY, CROSSMINT_USER_ID, CROSSMINT_PAYMENT_METHOD_ID). Airbnb is a stretch: merchants that block agents end cleanly as "nothing was charged" | demo |
 | 20 | New members' names: asked privately in the invite text before the Face ID link (never in the group); MEMBER_NAMES optional (#11) | Neena | ✅ built (26a176c), tested; needs a pull + restart of the bot on Siya's Mac | demo |
-| 21 | ElevenLabs: Kitty phones a restaurant to book (voice agent), posts the result in the chat | Neena | 🟡 in progress; needs ELEVENLABS_API_KEY, an agent, and a Twilio number connected to ElevenLabs | demo |
+| 21 | ElevenLabs: Kitty phones a restaurant to book (voice agent), posts the result in the chat | Neena | 🟡 built (aa6bfa8), tested against the documented API; needs ELEVENLABS_API_KEY, an agent (docs/elevenlabs-agent.md) and a Twilio number | demo |
 | 12 | Neena's own messages: bot runs on her Apple ID, so it ignores her | Neena | ✅ the bot runs on its own Apple ID (`ubc2026.agent@gmail.com`) on Siya's Mac since Nov 19; members rejoining the new group. The bot on Neena's Mac is off | demo |
 
 ---
