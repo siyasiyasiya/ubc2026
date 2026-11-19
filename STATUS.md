@@ -53,6 +53,8 @@ The pieces work on their own; the demo needs them joined up. In order:
 | 19 | Kitty buys it (pay before): `buy_for_group` → checkout card → everyone 👍 → order → shares pulled to the card's owner | Neena | 🟡 built (7b10415), tested end to end in unit tests; runs on a **simulated** store until Crossmint production keys are set (CROSSMINT_API_KEY, CROSSMINT_USER_ID, CROSSMINT_PAYMENT_METHOD_ID). Airbnb is a stretch: merchants that block agents end cleanly as "nothing was charged" | demo |
 | 20 | New members' names: asked privately in the invite text before the Face ID link (never in the group); MEMBER_NAMES optional (#11) | Neena | ✅ built (26a176c), tested; needs a pull + restart of the bot on Siya's Mac | demo |
 | 21 | ElevenLabs: Kitty phones a restaurant to book (voice agent), posts the result in the chat | Neena | 🟡 built (aa6bfa8), tested against the documented API; needs ELEVENLABS_API_KEY, an agent (docs/elevenlabs-agent.md) and a Twilio number | demo |
+| 22 | Test money: text Kitty privately "add $20" ($20/request, $50/day from the bot's wallet); `pnpm --filter @gta/server fund <phone|address> <usd>` | Neena | ✅ built (eb507b5); fund CLI run live (Joey +$1) | demo |
+| 23 | "Your kitties": every chat's limit, what's left, "resets in N days" on the Face ID page after sign-in (and a ?v=1 link), and in private texts | Neena | ✅ built (069e809), page checked with Joey's real data; needs the Vercel deploy + Siya's bot restart | demo |
 | 12 | Neena's own messages: bot runs on her Apple ID, so it ignores her | Neena | ✅ the bot runs on its own Apple ID (`ubc2026.agent@gmail.com`) on Siya's Mac since Nov 19; members rejoining the new group. The bot on Neena's Mac is off | demo |
 
 ---
