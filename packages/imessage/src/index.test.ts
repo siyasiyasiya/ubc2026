@@ -1,3 +1,4 @@
+import os from "node:os";
 import { describe, expect, it } from "vitest";
 import type {
   Attachment,
@@ -207,6 +208,16 @@ describe("mapMessageRow", () => {
     const mapped = mapMessageRow(row);
     expect(mapped?.text).toBe("");
     expect(mapped?.attachments).toEqual([]);
+  });
+
+  it("expands a ~ in the attachment path so the file can actually be opened", () => {
+    const row = makeMessage({
+      text: null,
+      attachments: [makeAttachment({ localPath: "~/Library/Messages/Attachments/e1/01/x/IMG_0957.heic", mimeType: "image/heic" })],
+    });
+    const uri = mapMessageRow(row)?.attachments[0]?.uri;
+    expect(uri?.startsWith("~")).toBe(false);
+    expect(uri).toBe(`${os.homedir()}/Library/Messages/Attachments/e1/01/x/IMG_0957.heic`);
   });
 
   it("looks up a missing sender, and drops the message if nobody can be credited", () => {

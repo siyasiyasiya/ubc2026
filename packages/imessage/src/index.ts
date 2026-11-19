@@ -141,6 +141,12 @@ export function normalizeMessageId(id: string): string {
   return id.replace(/^p:\d+\//, "");
 }
 
+/** Expand a leading `~` (chat.db stores attachment paths that way) to an absolute home path. */
+export function expandHome(p: string): string {
+  if (p === "~") return os.homedir();
+  return p.startsWith("~/") ? path.join(os.homedir(), p.slice(2)) : p;
+}
+
 /** Read-only chat.db lookup of a message's sender handle (needs Full Disk Access). */
 export function chatDbSenderResolver(databasePath?: string): SenderResolver {
   let db: Database.Database | undefined;
@@ -281,7 +287,9 @@ export function mapMessageRow(
   for (const att of message.attachments) {
     // Consumers need a concrete local file; skip ones still transferring.
     if (att.localPath === null) continue;
-    attachments.push({ uri: att.localPath, mimeType: att.mimeType });
+    // chat.db stores paths like `~/Library/Messages/Attachments/…`; Node's fs and `sips` don't
+    // expand `~`, so a receipt would fail to open with "no such file". Make it absolute here.
+    attachments.push({ uri: expandHome(att.localPath), mimeType: att.mimeType });
   }
   return {
     chatId: message.chatId,
