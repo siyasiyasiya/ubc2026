@@ -555,7 +555,7 @@ export class GroupRuntime {
           `tip ${formatUsdc(receipt.tip ?? usdc(0))}, total ${formatUsdc(receipt.total)}. Items: ${items || "not listed"}]`;
       } catch (err) {
         this.log(`receipt not read: ${(err as Error).message}`);
-        event = `[${member.displayName} posted a photo that isn't a receipt]`;
+        event = `[${member.displayName} posted a file that isn't a receipt]`;
       }
     }
     if (!event) return;

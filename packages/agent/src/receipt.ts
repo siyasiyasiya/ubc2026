@@ -37,10 +37,27 @@ async function toJpeg(file: string): Promise<Buffer> {
   }
 }
 
-/** Reads a receipt photo with Claude vision and structured output. */
+/** True when the attachment is a PDF, so it's sent as a document rather than rasterized to an image. */
+export function isPdf(file: ImageRef): boolean {
+  return file.mimeType === "application/pdf" || file.uri.toLowerCase().endsWith(".pdf");
+}
+
+/**
+ * The receipt attachment as a Claude content block: a PDF goes as a native document (crisp text,
+ * multi-page), any image is converted to a sized JPEG first.
+ */
+async function receiptBlock(file: ImageRef) {
+  if (isPdf(file)) {
+    const data = (await fs.readFile(file.uri)).toString("base64");
+    return { type: "document" as const, source: { type: "base64" as const, media_type: "application/pdf" as const, data } };
+  }
+  const jpeg = await toJpeg(file.uri);
+  return { type: "image" as const, source: { type: "base64" as const, media_type: "image/jpeg" as const, data: jpeg.toString("base64") } };
+}
+
+/** Reads a receipt from a photo or a PDF with Claude and structured output. */
 export class ClaudeReceiptReader implements ReceiptReader {
   async read(image: ImageRef): Promise<Receipt> {
-    const jpeg = await toJpeg(image.uri);
     const response = await claude().messages.parse({
       model: MODEL,
       max_tokens: 4000,
@@ -49,10 +66,7 @@ export class ClaudeReceiptReader implements ReceiptReader {
         {
           role: "user",
           content: [
-            {
-              type: "image",
-              source: { type: "base64", media_type: "image/jpeg", data: jpeg.toString("base64") },
-            },
+            await receiptBlock(image),
             {
               type: "text",
               text: "Read this receipt. Use the amounts printed on it. If a tip is handwritten, use the handwritten tip and total.",
