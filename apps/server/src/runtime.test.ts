@@ -12,7 +12,7 @@ const OUTSIDER = "+1999";
 const CHAT = "group";
 
 /** A runtime whose "agent" proposes a $90 dinner paid by Neena, split three ways. */
-function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapter; wallets?: Record<string, string>; invites?: { baseUrl: string; secret: string }; chats?: string[] } = {}) {
+function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapter; wallets?: Record<string, string>; invites?: { baseUrl: string; secret: string }; chats?: string[]; participants?: string[] } = {}) {
   const posted: { id: string; text: string }[] = [];
   const failing = { posts: 0, dms: 0 };
   const dms: { handle: string; text: string }[] = [];
@@ -39,7 +39,7 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
     },
     onMessage: (h) => (onMessage.push(h), () => undefined),
     onReaction: (h) => (onReaction.push(h), () => undefined),
-    getParticipants: async () => [],
+    getParticipants: async () => opts.participants ?? [],
   };
   const fakeTurn: typeof RunTurn = async ({ actions, event }) => {
     if (event.includes("join me")) return actions.sendJoinLink({});
@@ -157,6 +157,14 @@ describe("GroupRuntime", () => {
     const t = setup();
     await t.say(SIYA, "lol");
     expect(t.posted).toEqual([]);
+  });
+
+  it("seeds every chat participant as a member on first contact, without them speaking", async () => {
+    const t = setup(200, { participants: [NEENA, SIYA, TRISTAN] });
+    await t.say(NEENA, "hey"); // only Neena speaks
+    const members = t.store.get(CHAT)!.group.members.map((m) => m.id);
+    expect(members).toContain(SIYA);
+    expect(members).toContain(TRISTAN);
   });
 
   it("pulls through the chat's own wallet adapter, between members' Kitty accounts", async () => {

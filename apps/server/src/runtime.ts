@@ -82,6 +82,8 @@ export class GroupRuntime {
   private readonly history = new Map<string, string[]>();
   /** The last receipt each group posted, attached to the next proposal that matches its total. */
   private readonly lastReceipt = new Map<string, Receipt>();
+  /** Chats whose roster we've already pulled from the chat port, so we seed members once per chat. */
+  private readonly seededRosters = new Set<string>();
   private queue: Promise<void> = Promise.resolve();
   private readonly now: () => number;
   private readonly log: (line: string) => void;
@@ -385,8 +387,31 @@ export class GroupRuntime {
     return ref.id;
   }
 
+  /**
+   * Seed every participant of a chat as a member the first time we act in it, so the agent
+   * considers the whole group without waiting for each person to speak. Members start unlinked
+   * (no wallet); the Face ID join still gates whether money can move for them.
+   */
+  private async ensureRoster(record: GroupRecord): Promise<void> {
+    const chatId = record.group.chatId;
+    if (this.seededRosters.has(chatId)) return;
+    this.seededRosters.add(chatId);
+    try {
+      const handles = await this.deps.chat.getParticipants(chatId);
+      for (const handle of handles) this.memberFor(record, handle);
+      if (handles.length) {
+        this.deps.store.save();
+        this.log(`seeded ${handles.length} member(s) from the roster of ${chatId}`);
+      }
+    } catch (err) {
+      this.seededRosters.delete(chatId); // a later event retries
+      this.log(`couldn't read the roster for ${chatId}: ${(err as Error).message}`);
+    }
+  }
+
   private async handleMessage(msg: IncomingMessage): Promise<void> {
     const record = this.groupFor(msg.chatId);
+    await this.ensureRoster(record);
     const member = this.memberFor(record, msg.senderHandle);
 
     // A bare 👍 text approves the sender's most recent card (fallback if tapbacks don't come through).
