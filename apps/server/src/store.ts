@@ -25,6 +25,8 @@ export interface GroupRecord {
 
 interface StoreFile {
   groups: Record<string, GroupRecord>;
+  /** Next Arc block the Face ID join watcher should scan. */
+  joinCursor?: bigint;
 }
 
 // USDC amounts are bigints; JSON can't hold them natively.
@@ -48,6 +50,18 @@ export class Store {
 
   get(chatId: string): GroupRecord | undefined {
     return this.data.groups[chatId];
+  }
+
+  all(): GroupRecord[] {
+    return Object.values(this.data.groups);
+  }
+
+  get joinCursor(): bigint | undefined {
+    return this.data.joinCursor;
+  }
+
+  set joinCursor(block: bigint | undefined) {
+    this.data.joinCursor = block;
   }
 
   put(record: GroupRecord): void {

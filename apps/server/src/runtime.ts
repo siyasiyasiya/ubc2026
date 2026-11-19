@@ -31,6 +31,7 @@ import {
   type WalletAdapter,
 } from "@gta/core";
 import type { runTurn as RunTurn, TreasuryActions } from "@gta/agent";
+import { groupIdForChat, inviteLink, inviteTicket, type JoinEvent } from "@gta/wallet";
 import type { GroupRecord, RequestRecord, Store } from "./store.js";
 
 export interface RuntimeDeps {
@@ -43,8 +44,10 @@ export interface RuntimeDeps {
   defaultLimit: SpendingLimit;
   /** Display names by handle, e.g. { "+18475551234": "Tristan" }. */
   names: Record<string, string>;
-  /** Kitty account (wallet) address by handle. Filled by the Face ID join watcher; config for now. */
+  /** Kitty account (wallet) address by handle from config. The Face ID join watcher fills in the rest. */
   wallets?: Record<string, string>;
+  /** Face ID invite links: the page's URL and the secret tickets are derived from. */
+  invites?: { baseUrl: string; secret: string };
   now?: () => number;
   log?: (line: string) => void;
 }
@@ -108,8 +111,9 @@ export class GroupRuntime {
       };
       record.group.members.push(member);
     }
+    // Config only fills a gap; an account linked through a Face ID join wins.
     const address = this.deps.wallets?.[handle];
-    if (address && member.wallet?.address !== address) member.wallet = { address };
+    if (address && !member.wallet) member.wallet = { address };
     return member;
   }
 
@@ -132,6 +136,49 @@ export class GroupRuntime {
       throw new Error(`No member called "${nameOrHandle}". Members: ${names}`);
     }
     return member;
+  }
+
+  // --- Face ID onboarding ----------------------------------------------------
+
+  /** The Face ID link that lets `handle` join this chat's kitty. */
+  inviteLinkFor(chatId: string, handle: string): string {
+    const invites = this.deps.invites;
+    if (!invites) throw new Error("Invites aren't configured (set INVITE_SECRET).");
+    const record = this.groupFor(chatId);
+    const member = this.memberFor(record, handle);
+    return inviteLink({
+      baseUrl: invites.baseUrl,
+      secret: invites.secret,
+      chatId,
+      chatName: record.group.name,
+      handle,
+      displayName: member.displayName,
+    });
+  }
+
+  /**
+   * A `Joined` event from the contract: find whose ticket it is, link their Kitty account and the
+   * limit they signed, and say so in the chat. Returns who joined, or undefined for a ticket we
+   * didn't issue (someone joining with no invite gets no link to a chat member).
+   */
+  async handleJoin(event: JoinEvent): Promise<{ chatId: string; handle: string } | undefined> {
+    const secret = this.deps.invites?.secret;
+    if (!secret) return undefined;
+    for (const record of this.deps.store.all()) {
+      const chatId = record.group.chatId;
+      if (groupIdForChat(chatId) !== event.group) continue;
+      const member = record.group.members.find((m) => inviteTicket(secret, chatId, m.id) === event.ticket);
+      if (!member) continue;
+      member.wallet = { address: event.account };
+      member.limit = { ...event.limit };
+      this.deps.store.save();
+      this.log(`${member.displayName} joined ${chatId} with ${event.account}`);
+      // Limits stay private (they're set in the member's own Face ID page), so don't post the amount.
+      await this.say(chatId, `✅ ${member.displayName} is in.`);
+      return { chatId, handle: member.id };
+    }
+    this.log(`join with unknown ticket ${event.ticket.slice(0, 10)}… from ${event.account}`);
+    return undefined;
   }
 
   // --- chat -----------------------------------------------------------------
