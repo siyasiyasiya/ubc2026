@@ -52,6 +52,11 @@ export function pullSpendId(chatId: string, idempotencyKey: string): Hex {
   return keccak256(toBytes(`pull:${chatId}:${idempotencyKey}`));
 }
 
+/** The public Arc RPC rejects `eth_getLogs` ranges much larger than this. */
+export const LOG_WINDOW_BLOCKS = 2_000n;
+/** How far back a restart-recovery lookup goes (about 1M blocks). */
+const LOG_WINDOWS = 500;
+
 const enum SpendStatus {
   None = 0,
   Proposed = 1,
@@ -77,6 +82,8 @@ export class ArcWalletAdapter implements WalletAdapter {
   readonly id = "arc";
   private readonly group: Hex;
   private readonly inFlight = new Map<Hex, Promise<PullOutcome>>();
+  /** Outcomes already settled onchain, so a retry in the same process answers without the RPC. */
+  private readonly settled = new Map<Hex, PullOutcome>();
 
   constructor(private readonly opts: ArcWalletAdapterOptions) {
     this.group = groupIdForChat(opts.chatId);
@@ -108,6 +115,8 @@ export class ArcWalletAdapter implements WalletAdapter {
 
   async pull(params: PullParams): Promise<PullOutcome> {
     const id = pullSpendId(this.opts.chatId, params.idempotencyKey);
+    const done = this.settled.get(id);
+    if (done) return done;
     const running = this.inFlight.get(id);
     if (running) return running;
 
@@ -116,7 +125,10 @@ export class ArcWalletAdapter implements WalletAdapter {
     );
     this.inFlight.set(id, attempt);
     try {
-      return await attempt;
+      const outcome = await attempt;
+      // Only onchain results are final; "no wallet yet" and RPC errors can change on a retry.
+      if (outcome.txRef) this.settled.set(id, outcome);
+      return outcome;
     } finally {
       this.inFlight.delete(id);
     }
@@ -152,14 +164,27 @@ export class ArcWalletAdapter implements WalletAdapter {
     return outcomeFromLogs(id, receipt.logs) ?? { status: "failed", reason: "settled without a pull event" };
   }
 
-  /** Recovers the outcome of a pull that settled on an earlier attempt (e.g. before a restart). */
+  /**
+   * Recovers the outcome of a pull that settled on an earlier attempt (e.g. before a restart).
+   * Scans backwards from the newest block in small windows: the public Arc RPC rejects large
+   * `eth_getLogs` ranges, and a retried pull almost always settled recently.
+   */
   private async settledOutcome(id: Hex): Promise<PullOutcome> {
-    const query = { address: this.opts.treasury, abi: groupTreasuryAbi, args: { id }, fromBlock: this.opts.deployBlock ?? 0n };
-    const [pulled, failed] = await Promise.all([
-      this.opts.publicClient.getContractEvents({ ...query, eventName: "SharePulled" }),
-      this.opts.publicClient.getContractEvents({ ...query, eventName: "PullFailed" }),
-    ]);
-    return outcomeFromLogs(id, [...pulled, ...failed]) ??{ status: "failed", reason: "settled, but its pull event wasn't found" };
+    const client = this.opts.publicClient;
+    const floor = this.opts.deployBlock ?? 0n;
+    let to = await client.getBlockNumber({ cacheTime: 0 });
+    for (let window = 0; window < LOG_WINDOWS && to >= floor; window++) {
+      const from = to - LOG_WINDOW_BLOCKS + 1n > floor ? to - LOG_WINDOW_BLOCKS + 1n : floor;
+      const query = { address: this.opts.treasury, abi: groupTreasuryAbi, args: { id }, fromBlock: from, toBlock: to };
+      const [pulled, failed] = await Promise.all([
+        client.getContractEvents({ ...query, eventName: "SharePulled" }),
+        client.getContractEvents({ ...query, eventName: "PullFailed" }),
+      ]);
+      const outcome = outcomeFromLogs(id, [...pulled, ...failed]);
+      if (outcome) return outcome;
+      to = from - 1n;
+    }
+    return { status: "failed", reason: "settled, but its pull event wasn't found" };
   }
 
   private read<F extends ReadFn>(functionName: F, args: ReadArgs<F>) {
@@ -224,14 +249,29 @@ export interface ArcEnv {
 }
 
 /**
+ * The Arc RPC client and the operator's signer. Every caller shares viem's global nonce manager
+ * for the operator, so adapters, the join watcher and welcome transfers don't collide on nonces.
+ */
+export interface ArcClients {
+  publicClient: PublicClient;
+  walletClient: WalletClient<Transport, Chain, Account>;
+}
+
+export function arcClients(env: ArcEnv, chain: Chain = arcTestnet): ArcClients {
+  const transport = http(env.rpcUrl);
+  const account = privateKeyToAccount(env.operatorPrivateKey, { nonceManager });
+  return {
+    publicClient: createPublicClient({ chain, transport }) as PublicClient,
+    walletClient: createWalletClient({ chain, transport, account }) as WalletClient<Transport, Chain, Account>,
+  };
+}
+
+/**
  * Builds one adapter per chat that share an RPC connection and the operator's nonce manager, so
  * pulls in different chats don't collide on nonces.
  */
 export function arcWalletAdapters(env: ArcEnv, chain: Chain = arcTestnet): (chatId: string) => ArcWalletAdapter {
-  const transport = http(env.rpcUrl);
-  const account = privateKeyToAccount(env.operatorPrivateKey, { nonceManager });
-  const publicClient = createPublicClient({ chain, transport });
-  const walletClient = createWalletClient({ chain, transport, account });
+  const { publicClient, walletClient } = arcClients(env, chain);
   const byChat = new Map<string, ArcWalletAdapter>();
   return (chatId) => {
     let adapter = byChat.get(chatId);
@@ -239,7 +279,7 @@ export function arcWalletAdapters(env: ArcEnv, chain: Chain = arcTestnet): (chat
       adapter = new ArcWalletAdapter({
         treasury: getAddress(env.treasury),
         chatId,
-        publicClient: publicClient as PublicClient,
+        publicClient,
         walletClient,
         ...(env.deployBlock !== undefined ? { deployBlock: env.deployBlock } : {}),
       });

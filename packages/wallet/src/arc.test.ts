@@ -21,6 +21,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { foundry } from "viem/chains";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ArcWalletAdapter, groupIdForChat } from "./arc.js";
+import { inviteLink, inviteTicket, JoinWatcher, type JoinEvent } from "./join.js";
 
 const contractsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../contracts");
 const hasFoundry = (() => {
@@ -134,7 +135,7 @@ describe.skipIf(!hasFoundry)("ArcWalletAdapter on anvil", () => {
 
   it("never pulls twice for the same idempotency key, even after a restart", async () => {
     const first = await makeAdapter().pull({ from: member("alice", alice!.address), to: to(), amount: usdc(30), idempotencyKey: "r1:alice" });
-    expect(first.status).toBe("pulled");
+    expect(first, JSON.stringify(first)).toMatchObject({ status: "pulled" });
     expect(await balance(bob!.address)).toBe(usdc(30));
   });
 
@@ -165,5 +166,31 @@ describe.skipIf(!hasFoundry)("ArcWalletAdapter on anvil", () => {
       await adapter.pull({ from: member("alice", alice!.address), to: { kind: "card", reference: "bob" }, amount: usdc(5), idempotencyKey: "r3:alice" }),
     ).toMatchObject({ status: "failed", reason: "payer hasn't linked a wallet yet" });
     expect((await adapter.getLimitStatus(member("carol", carol!.address))).remaining).toBe(usdc(0));
+  });
+
+  it("matches a Face ID join to the invited handle through its ticket", async () => {
+    const secret = "test-secret";
+    const link = new URL(inviteLink({ baseUrl: "https://kittyagent.vercel.app", secret, chatId: CHAT, chatName: "Roommates", handle: "+1carol", displayName: "Carol" }));
+    expect(link.searchParams.get("g")).toBe(groupIdForChat(CHAT));
+    const ticket = link.searchParams.get("t") as Hex;
+    expect(ticket).toBe(inviteTicket(secret, CHAT, "+1carol"));
+    expect(ticket).not.toBe(inviteTicket(secret, CHAT, "+1dave"));
+    expect(ticket).not.toBe(inviteTicket("other-secret", CHAT, "+1carol"));
+
+    const gt = artifact("GroupTreasury.sol", "GroupTreasury");
+    await send(KEYS[3], treasury, gt.abi, "join", [groupIdForChat(CHAT), usdc(25), 1, ticket]);
+
+    const joins: JoinEvent[] = [];
+    let cursor = 0n;
+    const watcher = new JoinWatcher({ publicClient, treasury, fromBlock: 0n, onJoin: async (e) => void joins.push(e), onCursor: (b) => (cursor = b) });
+    await watcher.poll();
+    const carolJoin = joins.find((j) => j.ticket === ticket);
+    expect(carolJoin).toMatchObject({ group: groupIdForChat(CHAT), account: carol!.address, limit: { amount: usdc(25), period: "monthly" } });
+    expect(joins.find((j) => j.account === alice!.address)).toBeDefined();
+
+    // Resuming from the saved cursor doesn't replay old joins.
+    const again: JoinEvent[] = [];
+    await new JoinWatcher({ publicClient, treasury, fromBlock: cursor, onJoin: async (e) => void again.push(e) }).poll();
+    expect(again).toHaveLength(0);
   });
 });
