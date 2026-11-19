@@ -427,6 +427,41 @@ describe("PhotonChatPort watcher", () => {
     expect(received[0]?.attachments).toEqual([]);
   });
 
+  it("delivers an incoming attachment the live watcher missed, via the chat.db poller", async () => {
+    const sdk = new FakeSdk();
+    // The watcher never emits this row; only getMessages returns it (the real Photon behaviour).
+    sdk.messages = [makeMessage({ id: "poll-1", text: "￼", hasAttachments: true, attachments: [makeAttachment()] })];
+    const port = new PhotonChatPort({ sdk, allowedChatIds: ALLOWED, attachmentPollEveryMs: 10_000 });
+    const received: IncomingMessage[] = [];
+    port.onMessage((m) => received.push(m));
+
+    await port.start(); // starts the poller, which runs one scan immediately
+    await tick();
+    await tick();
+
+    expect(received).toHaveLength(1);
+    expect(received[0]?.attachments).toHaveLength(1);
+    expect(received[0]?.text).toBe(""); // the U+FFFC placeholder is stripped
+    await port.close();
+  });
+
+  it("the poller skips our own sends and never double-delivers", async () => {
+    const sdk = new FakeSdk();
+    sdk.messages = [
+      makeMessage({ id: "mine", isFromMe: true, text: "", hasAttachments: true, attachments: [makeAttachment()] }),
+      makeMessage({ id: "theirs", text: "", hasAttachments: true, attachments: [makeAttachment()] }),
+    ];
+    const port = new PhotonChatPort({ sdk, allowedChatIds: ALLOWED, attachmentPollEveryMs: 5 });
+    const received: IncomingMessage[] = [];
+    port.onMessage((m) => received.push(m));
+
+    await port.start();
+    await new Promise((r) => setTimeout(r, 40)); // let several poll ticks run
+
+    expect(received.map((m) => m.senderHandle)).toHaveLength(1); // only "theirs", once (not from-me, not repeated)
+    await port.close();
+  });
+
   it("routes a 👍 reaction to onReaction and NOT to onMessage", () => {
     const sdk = new FakeSdk();
     const port = new PhotonChatPort({ sdk, allowedChatIds: ALLOWED });

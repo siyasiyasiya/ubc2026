@@ -131,6 +131,16 @@ export interface PhotonChatPortConfig {
   attachmentWaitMs?: number;
   /** How often to re-check chat.db while an attachment is still transferring. */
   attachmentPollMs?: number;
+  /**
+   * Photon's live watcher doesn't emit incoming attachment messages (confirmed: `getMessages`
+   * returns them but `onIncomingMessage` never fires). So a poller reads recent attachments from
+   * chat.db and delivers the ones the watcher missed. On by default; off disables it (e.g. tests).
+   */
+  pollAttachments?: boolean;
+  /** How often the attachment poller scans chat.db. */
+  attachmentPollEveryMs?: number;
+  /** How far back each attachment-poller scan looks, so a slow download is still picked up. */
+  attachmentPollWindowMs?: number;
   log?: (line: string) => void;
   /** Surfaces watcher/dispatch errors (ChatPort has no error channel). */
   onError?: (error: Error) => void;
@@ -294,7 +304,9 @@ export function mapMessageRow(
   return {
     chatId: message.chatId,
     senderHandle: sender,
-    text: message.text ?? "",
+    // An attachment row's "text" is often just U+FFFC (the object-replacement placeholder); strip it
+    // so an image doesn't look like a 1-character message.
+    text: (message.text ?? "").replace(/￼/g, "").trim(),
     attachments,
     at: message.createdAt.getTime(),
   };
@@ -320,6 +332,12 @@ export class PhotonChatPort implements ChatPort {
   private readonly sentIdPollMs: number;
   private readonly attachmentWaitMs: number;
   private readonly attachmentPollMs: number;
+  private readonly pollAttachments: boolean;
+  private readonly attachmentPollEveryMs: number;
+  private readonly attachmentPollWindowMs: number;
+  /** Ids of attachment messages already delivered, so the poller and watcher don't double-fire. */
+  private readonly deliveredWithAttachment = new Set<string>();
+  private attachmentPoll: ReturnType<typeof setInterval> | undefined;
   private readonly sentIdLookup: SentIdLookup | undefined;
   private readonly log: (line: string) => void;
   private readonly onError: (error: Error) => void;
@@ -364,6 +382,9 @@ export class PhotonChatPort implements ChatPort {
     this.sentIdPollMs = config.sentIdPollMs ?? 250;
     this.attachmentWaitMs = config.attachmentWaitMs ?? 20_000;
     this.attachmentPollMs = config.attachmentPollMs ?? 750;
+    this.pollAttachments = config.pollAttachments ?? true;
+    this.attachmentPollEveryMs = config.attachmentPollEveryMs ?? 4_000;
+    this.attachmentPollWindowMs = config.attachmentPollWindowMs ?? 300_000;
     this.sentIdLookup =
       config.sentIdLookup === null
         ? undefined
@@ -382,6 +403,37 @@ export class PhotonChatPort implements ChatPort {
         ? `watching (local), auto-serving ${this.allowed.size} group chat(s)`
         : `watching (local), ${this.allowed.size} chat(s) allowlisted`,
     );
+    this.startAttachmentPoller();
+  }
+
+  /**
+   * The live watcher doesn't surface incoming attachment messages, so poll chat.db for recent ones
+   * and deliver any the watcher missed. Deduped by message id; waits for the file to finish
+   * downloading (only delivers a ready attachment) and skips our own sends.
+   */
+  private startAttachmentPoller(): void {
+    if (!this.pollAttachments || this.attachmentPoll) return;
+    const tick = async (): Promise<void> => {
+      try {
+        const since = new Date(Math.max(this.watchStartedAt, Date.now() - this.attachmentPollWindowMs));
+        const rows = await this.sdk.getMessages({ since, excludeReactions: true });
+        for (const m of rows) {
+          if (!(m.hasAttachments || m.attachments.length > 0)) continue;
+          if (m.isFromMe) continue; // our own sends (and screenshots we post) aren't input
+          if (this.deliveredWithAttachment.has(m.id)) continue;
+          if (!PhotonChatPort.attachmentReady(m)) continue; // still downloading; next scan will catch it
+          this.deliveredWithAttachment.add(m.id);
+          this.log(`attachment poller delivering ${m.id} (${m.attachments.length} file[s]) the watcher missed`);
+          this.dispatch(m);
+        }
+        if (this.deliveredWithAttachment.size > 5000) this.deliveredWithAttachment.clear();
+      } catch (err) {
+        this.onError(err instanceof Error ? err : new Error(String(err)));
+      }
+    };
+    this.attachmentPoll = setInterval(() => void tick(), this.attachmentPollEveryMs);
+    this.attachmentPoll.unref?.();
+    void tick();
   }
 
   /** Pull the group chats the bot is in into the served set. Safe to call repeatedly. */
@@ -477,6 +529,8 @@ export class PhotonChatPort implements ChatPort {
     this.messageHandlers.clear();
     this.reactionHandlers.clear();
     this.directHandlers.clear();
+    if (this.attachmentPoll) clearInterval(this.attachmentPoll);
+    this.attachmentPoll = undefined;
     await this.sdk.close();
     this.watchStarting = undefined;
   }
@@ -677,6 +731,8 @@ export class PhotonChatPort implements ChatPort {
     const msg = mapMessageRow(message, this.resolveSender, this.selfHandle);
     // Text-less, photo-less rows (e.g. a from-me echo whose text lives in attributedBody) aren't input.
     if (!msg || (!msg.text && msg.attachments.length === 0)) return;
+    // Remember delivered attachment messages so the poller never re-delivers one the watcher got.
+    if (msg.attachments.length > 0) this.deliveredWithAttachment.add(message.id);
     for (const handler of this.messageHandlers) handler(msg);
   }
 
