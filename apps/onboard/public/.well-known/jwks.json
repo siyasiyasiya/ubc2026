@@ -7,6 +7,14 @@
       "kid": "kitty-1",
       "alg": "RS256",
       "use": "sig"
+    },
+    {
+      "kty": "RSA",
+      "n": "uvw7ioZVjyvJREwHenX71HQlvcFcB7bxHjMdTZU4tMWBGOIw2BuPM7Fp3MtiUYsEhhAU894c98vn835AnD00z27iWyc6YAcT3kCUT9UmyH29qeGyT_bSvx10MOks2A5IM9zOEnxj0VyaLuzSzGlDQeD-xizhP1ZGCee3KTGceZIAYhjw_PEBdznzHd8SeAJw1Kz8JyWt0y51sd6xHYQSOMBBaylFWwwmaWloxbjYFeys-Tk_PJIZuZfidAMVMW82RB-cXgHakgMauesnleh9C4Lvq05YN96nnYkADRxXQbtG6uqFJQ9UHvcfg29c9QnYCikeU0yfq9-qFj1ldRT8Ow",
+      "e": "AQAB",
+      "kid": "kitty-2",
+      "alg": "RS256",
+      "use": "sig"
     }
   ]
 }
