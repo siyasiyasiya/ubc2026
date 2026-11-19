@@ -50,6 +50,7 @@ The pieces work on their own; the demo needs them joined up. In order:
 | 16 | Leave a chat's Kitty (`leave_kitty` → operator `removeMember`) | Neena | 🟡 built; live test pending | demo |
 | 17 | Agent answers "how much money do I have" with the real balance, not the limit (74f353a) | Neena | ✅ built, balances checked live (Siya $10, Joey $0); chat retest pending | demo |
 | 18 | Only one bot per Messages account (pid lock, 9f8fa33). Five ran at once on Nov 18 and doubled replies / hit the RPC rate limit | Neena | ✅ | — |
+| 19 | Kitty buys it (pay before): `buy_for_group` → checkout card → everyone 👍 → order → shares pulled to the card's owner | Neena | 🟡 built (7b10415), tested end to end in unit tests; runs on a **simulated** store until Crossmint production keys are set (CROSSMINT_API_KEY, CROSSMINT_USER_ID, CROSSMINT_PAYMENT_METHOD_ID). Airbnb is a stretch: merchants that block agents end cleanly as "nothing was charged" | demo |
 | 12 | Neena's own messages: bot runs on her Apple ID, so it ignores her | Neena | ✅ decided Nov 19: the bot gets its own Apple ID (`ubc2026.agent@gmail.com`) on Siya's Mac. New group chat with the bot in it; everyone rejoins once. `SELF_HANDLE` stays empty | demo |
 
 ---
