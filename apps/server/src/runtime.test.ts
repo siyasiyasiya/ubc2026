@@ -14,7 +14,8 @@ const CHAT = "group";
 /** A runtime whose "agent" proposes a $90 dinner paid by Neena, split three ways. */
 function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapter; wallets?: Record<string, string>; invites?: { baseUrl: string; secret: string }; chats?: string[] } = {}) {
   const posted: { id: string; text: string }[] = [];
-  const failing = { posts: 0 };
+  const failing = { posts: 0, dms: 0 };
+  const dms: { handle: string; text: string }[] = [];
   const onMessage: ((m: IncomingMessage) => void)[] = [];
   const onReaction: ((r: IncomingReaction) => void)[] = [];
   const chat: ChatPort = {
@@ -28,11 +29,21 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
       return { id, chatId };
     },
     postImage: async (chatId) => ({ id: "img", chatId }),
-    sendDirectMessage: async (handle) => ({ id: "dm", chatId: handle }),
+    sendDirectMessage: async (handle, text) => {
+      if (failing.dms > 0) {
+        failing.dms--;
+        throw new Error("no DMs");
+      }
+      dms.push({ handle, text });
+      return { id: "dm", chatId: handle };
+    },
     onMessage: (h) => (onMessage.push(h), () => undefined),
     onReaction: (h) => (onReaction.push(h), () => undefined),
   };
   const fakeTurn: typeof RunTurn = async ({ actions, event }) => {
+    if (event.includes("join me")) return actions.sendJoinLink({});
+    const limit = /limit (\d+)/.exec(event);
+    if (limit) return actions.setMyLimit({ usd: Number(limit[1]), period: "weekly" });
     if (!event.includes("split dinner")) return null;
     await actions.proposeReimbursement({
       title: "Dinner",
@@ -73,7 +84,7 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
     await say(NEENA, "split dinner with siya and tristan");
     return request();
   };
-  return { posted, failing, say, react, proposeDinner, request, runtime, store };
+  return { posted, dms, failing, say, react, proposeDinner, request, runtime, store };
 }
 
 describe("GroupRuntime", () => {
@@ -223,6 +234,87 @@ describe("GroupRuntime", () => {
     await expect(t.runtime.handleJoin(event)).rejects.toThrow("chat unreachable");
     expect(await t.runtime.handleJoin(event)).toEqual({ chatId: CHAT, handle: SIYA });
     expect(t.posted.at(-1)?.text).toBe("✅ Siya is in.");
+  });
+
+  it("texts a join link to someone who isn't set up, and falls back to the group if DMs fail", async () => {
+    const invites = { baseUrl: "https://kittyagent.vercel.app", secret: "s3cret" };
+    const t = setup(200, { invites });
+    await t.say(SIYA, "join me");
+    expect(t.dms).toHaveLength(1);
+    expect(t.dms[0]!.handle).toBe(SIYA);
+    expect(new URL(t.dms[0]!.text.split(" ").at(-1)!).searchParams.get("t")).toBe(inviteTicket(invites.secret, CHAT, SIYA));
+    expect(t.posted.at(-1)?.text).toBe("Texted Siya a private Face ID link.");
+
+    t.failing.dms = 1;
+    await t.say(TRISTAN, "join me");
+    expect(t.posted.some((p) => p.text.startsWith("Tristan: Set up your Kitty account"))).toBe(true);
+  });
+
+  it("lowers a limit onchain right away but sends a Face ID link to raise it", async () => {
+    const invites = { baseUrl: "https://kittyagent.vercel.app", secret: "s3cret" };
+    const lowered: bigint[] = [];
+    const inner = new InMemoryWalletAdapter();
+    const wallet: WalletAdapter = {
+      id: "arc-like",
+      getLimitStatus: async (m) => ({ limit: { amount: usdc(50), period: "weekly" }, remaining: usdc(50) }),
+      canPull: (m, a) => inner.canPull(m, a),
+      pull: async () => ({ status: "pulled" }),
+      lowerLimit: async (_m, amount) => void lowered.push(amount),
+    };
+    const t = setup(200, { invites, wallet, wallets: { [SIYA]: "0x00000000000000000000000000000000000000bb" } });
+    await t.say(SIYA, "set my limit 20");
+    expect(lowered).toEqual([usdc(20)]);
+    expect(t.dms).toHaveLength(0);
+
+    await t.say(SIYA, "set my limit 80");
+    expect(lowered).toHaveLength(1);
+    const link = new URL(t.dms[0]!.text.split(" ").at(-1)!);
+    expect(link.searchParams.get("t")).toBeNull();
+    expect(link.searchParams.get("l")).toBe("80.00");
+    expect(link.searchParams.get("p")).toBe("weekly");
+  });
+
+  it("texts a pay-back link when a share fails onchain for low balance", async () => {
+    const invites = { baseUrl: "https://kittyagent.vercel.app", secret: "s3cret" };
+    const inner = new InMemoryWalletAdapter();
+    const wallet: WalletAdapter = {
+      id: "arc-like",
+      getLimitStatus: (m) => inner.getLimitStatus(m),
+      canPull: (m, a) => inner.canPull(m, a),
+      pull: async (p) => (p.from.id === SIYA ? { status: "failed", reason: "transfer failed", txRef: "0xtx" } : { status: "pulled", txRef: "0xok" }),
+    };
+    const wallets = {
+      [NEENA]: "0x00000000000000000000000000000000000000aa",
+      [SIYA]: "0x00000000000000000000000000000000000000bb",
+      [TRISTAN]: "0x00000000000000000000000000000000000000cc",
+    };
+    const t = setup(200, { invites, wallet, wallets });
+    const req = await t.proposeDinner();
+    await t.say(SIYA, "👍");
+    await t.say(TRISTAN, "👍");
+    expect(t.posted.some((p) => p.text.includes("Siya → Neena $30.00 ✗ not enough in their Kitty account (still owed)"))).toBe(true);
+    expect(t.dms).toHaveLength(1);
+    expect(t.dms[0]!.handle).toBe(SIYA);
+    const link = new URL(t.dms[0]!.text.split(" ").at(-1)!);
+    expect(link.searchParams.get("r")).toBe(wallets[NEENA]);
+    expect(link.searchParams.get("o")).toBe("Neena");
+    expect(req.number).toBe(1);
+
+    await t.runtime.handleDebtPaid({ debtor: wallets[SIYA] as `0x${string}`, creditor: wallets[NEENA] as `0x${string}`, amount: usdc(30), blockNumber: 1n, txHash: "0x01" });
+    expect(t.posted.at(-1)?.text).toBe("✅ Siya paid Neena back $30.00.");
+  });
+
+  it("confirms a member's own Face ID limit change without the amount", async () => {
+    const account = "0x00000000000000000000000000000000000000bb" as const;
+    const t = setup(200, { wallets: { [SIYA]: account } });
+    await t.say(SIYA, "hi");
+    const base = { group: groupIdForChat(CHAT), account, blockNumber: 1n, txHash: "0x01" as const };
+    await t.runtime.handleLimitSet({ ...base, limit: { amount: usdc(75), period: "weekly" }, by: account });
+    expect(t.posted.at(-1)?.text).toBe("✅ Siya updated their limit.");
+    expect(t.store.get(CHAT)!.group.members.find((m) => m.id === SIYA)!.limit.amount).toBe(usdc(75));
+    const posts = t.posted.length;
+    await t.runtime.handleLimitSet({ ...base, limit: { amount: usdc(10), period: "weekly" }, by: "0x00000000000000000000000000000000000000ee" });
+    expect(t.posted.length).toBe(posts); // operator lowered it; the bot already replied in chat
   });
 
   it("passes errors back from run() so the join watcher retries instead of skipping", async () => {

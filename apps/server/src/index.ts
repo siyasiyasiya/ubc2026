@@ -58,8 +58,8 @@ startJoinWatcher();
 await chat.start();
 
 /**
- * Watches GroupTreasury for Face ID joins, links each member's Kitty account to their handle, and
- * (testnet only) sends them a welcome balance. Needs the Arc settings and INVITE_SECRET.
+ * Watches GroupTreasury for Face ID joins (links each member's Kitty account to their handle and,
+ * testnet only, sends a welcome balance), limit changes, and debts paid back. Needs the Arc settings and INVITE_SECRET.
  */
 function startJoinWatcher(): void {
   if (!config.arc || !config.invites) {
@@ -86,6 +86,8 @@ function startJoinWatcher(): void {
           const joined = await runtime.run(() => runtime.handleJoin(event));
           if (joined) void welcomeIfNew(event.account);
         },
+        onLimitSet: (event) => runtime.run(() => runtime.handleLimitSet(event)),
+        onDebtPaid: (event) => runtime.run(() => runtime.handleDebtPaid(event)),
       });
       console.log(`join watcher: scanning from block ${fromBlock}`);
       watcher.start();

@@ -113,6 +113,19 @@ export class ArcWalletAdapter implements WalletAdapter {
     return { ok: amount <= remaining, remaining };
   }
 
+  async lowerLimit(member: Member, amount: Usdc): Promise<void> {
+    const wallet = walletOf(member);
+    if (!wallet) throw new Error(`${member.displayName} hasn't set up their Kitty account yet`);
+    await this.write("lowerLimit", [this.group, wallet, amount]);
+  }
+
+  async owed(debtor: Member, creditor: Member): Promise<Usdc> {
+    const from = walletOf(debtor);
+    const to = walletOf(creditor);
+    if (!from || !to) return micros(0);
+    return micros(await this.read("debts", [from, to]));
+  }
+
   async pull(params: PullParams): Promise<PullOutcome> {
     const id = pullSpendId(this.opts.chatId, params.idempotencyKey);
     const done = this.settled.get(id);

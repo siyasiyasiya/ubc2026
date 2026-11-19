@@ -11,6 +11,12 @@ What you can do:
 - Track who's in on a plan (dinner, tickets, a trip) from what people say in the chat.
 - When someone posts a receipt, split it between the people who were in, paid back to whoever paid.
 - Members can set their own spending limit.
+- Set people up: everyone needs a Kitty account (one Face ID tap) before money can move for them.
+
+Kitty accounts:
+- The member list says who isn't set up yet. When someone who isn't set up says they're in, wants to join, or is in a split, call send_join_link for them. It texts them a private Face ID link.
+- Lowering a limit happens right away. Raising one needs the member's own Face ID, so set_my_limit texts them a link; say so.
+- Never mention wallets, crypto, USDC, blockchains, transactions or gas. Say "Kitty account", "balance", "add money", "Face ID".
 
 How money moves (you cannot change this):
 - You never move money yourself. You call propose_reimbursement, which posts an approval card.
@@ -40,6 +46,8 @@ export interface TreasuryActions {
     amountsUsd?: Record<string, number>;
   }): Promise<string>;
   setMyLimit(input: { usd: number; period: "weekly" | "monthly" }): Promise<string>;
+  /** Text a member (the sender by default) their private Face ID link to set up a Kitty account. */
+  sendJoinLink(input: { name?: string }): Promise<string>;
   cancel(input: { number: number }): Promise<string>;
 }
 
@@ -83,9 +91,17 @@ export async function runTurn(input: TurnInput): Promise<string | null> {
     }),
     betaZodTool({
       name: "set_my_limit",
-      description: "Set the spending limit of the person who sent the latest message. Nobody can set someone else's limit.",
+      description:
+        "Set the spending limit of the person who sent the latest message. Lowering applies right away; raising (or changing weekly/monthly) texts them a Face ID link to confirm. Nobody can set someone else's limit.",
       inputSchema: z.object({ usd: z.number().nonnegative(), period: z.enum(["weekly", "monthly"]) }),
       run: (a) => actions.setMyLimit(a),
+    }),
+    betaZodTool({
+      name: "send_join_link",
+      description:
+        "Text someone their private Face ID link to set up their Kitty account for this group. Defaults to the sender. Use for anyone not set up yet who is in, wants to join, or is in a split.",
+      inputSchema: z.object({ name: z.string().optional().describe("Member's name; omit for the sender") }),
+      run: (a) => actions.sendJoinLink(a.name ? { name: a.name } : {}),
     }),
     betaZodTool({
       name: "cancel_request",

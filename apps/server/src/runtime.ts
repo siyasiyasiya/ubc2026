@@ -28,10 +28,11 @@ import {
   type RequestEvent,
   type SpendingLimit,
   type Split,
+  type Usdc,
   type WalletAdapter,
 } from "@gta/core";
 import type { runTurn as RunTurn, TreasuryActions } from "@gta/agent";
-import { groupIdForChat, inviteLink, inviteTicket, type JoinEvent } from "@gta/wallet";
+import { groupIdForChat, inviteLink, inviteTicket, type DebtPaidEvent, type JoinEvent, type LimitSetEvent } from "@gta/wallet";
 import type { GroupRecord, RequestRecord, Store } from "./store.js";
 
 export interface RuntimeDeps {
@@ -62,6 +63,13 @@ const APPROVE_WORDS = new Set([APPROVAL_EMOJI, "like", "liked", "thumbsup", "+1"
 function sameMessage(a: string, b: string): boolean {
   const bare = (id: string) => id.replace(/^p:\d+\//, "").split(":")[0] ?? id;
   return bare(a) === bare(b);
+}
+
+/** Contract reasons in words members understand. */
+function plainReason(reason: string | undefined): string {
+  if (reason === "transfer failed") return "not enough in their Kitty account";
+  if (reason === "over limit") return "over their limit";
+  return reason ?? "failed";
 }
 
 export class GroupRuntime {
@@ -171,6 +179,93 @@ export class GroupRuntime {
       displayName: member.displayName,
       nonce,
     });
+  }
+
+  /** Texts `member` their Face ID join link. Already set up: says so instead. */
+  async sendJoinLink(record: GroupRecord, member: Member): Promise<string> {
+    if (member.wallet) return `${member.displayName} already has a Kitty account here.`;
+    const link = this.inviteLinkFor(record.group.chatId, member.id);
+    const where = await this.dm(record, member, `Set up your Kitty account for ${record.group.name} (one Face ID tap): ${link}`);
+    return where === "dm"
+      ? `Texted ${member.displayName} a private Face ID link.`
+      : `Couldn't text ${member.displayName} privately, so the link went in the group.`;
+  }
+
+  /**
+   * Lowering applies onchain right away (the bot may only lower). Raising, or switching between
+   * weekly and monthly, needs the member's own Face ID, so they get a link with the amount filled in.
+   */
+  private async setLimit(record: GroupRecord, member: Member, limit: SpendingLimit): Promise<string> {
+    const wallet = this.walletFor(record);
+    if (!member.wallet || !wallet.lowerLimit) {
+      member.limit = limit;
+      return member.wallet
+        ? `${member.displayName}'s ${limit.period} limit is now ${formatUsdc(limit.amount)}.`
+        : `Saved. ${member.displayName} isn't set up yet, so send_join_link first; they'll confirm the limit with Face ID.`;
+    }
+    const current = (await wallet.getLimitStatus(member)).limit;
+    if (current.period === limit.period && limit.amount <= current.amount) {
+      await wallet.lowerLimit(member, limit.amount);
+      member.limit = { ...limit };
+      return `Lowered ${member.displayName}'s ${limit.period} limit to ${formatUsdc(limit.amount)}. It applies now.`;
+    }
+    const where = await this.dm(
+      record,
+      member,
+      `Confirm your new ${record.group.name} limit (${formatUsdc(limit.amount)} a ${limit.period === "weekly" ? "week" : "month"}) with Face ID: ${this.pageLink(record, member, { l: formatUsdc(limit.amount).replace("$", ""), p: limit.period })}`,
+    );
+    return `Raising needs ${member.displayName}'s Face ID, so I ${where === "dm" ? "texted them" : "posted"} a link to confirm.`;
+  }
+
+  /** Sends `text` to `member` privately, or posts it in the group if a DM fails. */
+  private async dm(record: GroupRecord, member: Member, text: string): Promise<"dm" | "group"> {
+    try {
+      await this.deps.chat.sendDirectMessage(member.id, text);
+      return "dm";
+    } catch (err) {
+      this.log(`DM to ${member.displayName} failed (${(err as Error).message}), posting in the group`);
+      await this.say(record.group.chatId, `${member.displayName}: ${text}`);
+      return "group";
+    }
+  }
+
+  /** A Face ID page link for this chat with extra query params (no ticket: limit or pay-back mode). */
+  private pageLink(record: GroupRecord, member: Member, extra: Record<string, string>): string {
+    const base = this.deps.invites?.baseUrl;
+    if (!base) throw new Error("The Face ID page isn't configured (set ONBOARD_URL).");
+    const url = new URL(base);
+    url.searchParams.set("g", groupIdForChat(record.group.chatId));
+    url.searchParams.set("c", record.group.name);
+    url.searchParams.set("n", member.displayName);
+    for (const [k, v] of Object.entries(extra)) url.searchParams.set(k, v);
+    return url.toString();
+  }
+
+  /** A `LimitSet` event. The member's own Face ID change gets a short confirmation (amounts stay private). */
+  async handleLimitSet(event: LimitSetEvent): Promise<void> {
+    for (const record of this.deps.store.all()) {
+      if (groupIdForChat(record.group.chatId) !== event.group) continue;
+      const member = record.group.members.find((m) => m.wallet?.address.toLowerCase() === event.account.toLowerCase());
+      if (!member) continue;
+      const changed = member.limit.amount !== event.limit.amount || member.limit.period !== event.limit.period;
+      member.limit = { ...event.limit };
+      this.deps.store.save();
+      if (changed && event.by.toLowerCase() === event.account.toLowerCase()) {
+        await this.say(record.group.chatId, `✅ ${member.displayName} updated their limit.`);
+      }
+    }
+  }
+
+  /** A `DebtPaid` event: tell the chat the two people share. */
+  async handleDebtPaid(event: DebtPaidEvent): Promise<void> {
+    const is = (m: Member, a: string) => m.wallet?.address.toLowerCase() === a.toLowerCase();
+    for (const record of this.deps.store.all()) {
+      const debtor = record.group.members.find((m) => is(m, event.debtor));
+      const creditor = record.group.members.find((m) => is(m, event.creditor));
+      if (!debtor || !creditor) continue;
+      await this.say(record.group.chatId, `✅ ${debtor.displayName} paid ${creditor.displayName} back ${formatUsdc(event.amount)}.`);
+      return;
+    }
   }
 
   /**
@@ -294,6 +389,7 @@ export class GroupRuntime {
     const members = await Promise.all(
       record.group.members.map(async (m) => {
         const status = await this.walletFor(record).getLimitStatus(m);
+        if (!m.wallet) return `- ${m.displayName} (${m.id}): Kitty account not set up yet`;
         return `- ${m.displayName} (${m.id}): ${m.limit.period} limit ${formatUsdc(m.limit.amount)}, ${formatUsdc(status.remaining)} left`;
       }),
     );
@@ -335,9 +431,13 @@ export class GroupRuntime {
           return `Could not propose that: ${(err as Error).message}`;
         }
       },
-      setMyLimit: async ({ usd, period }) => {
-        sender.limit = { amount: usdc(usd), period };
-        return `${sender.displayName}'s ${period} limit is now ${formatUsdc(sender.limit.amount)}.`;
+      setMyLimit: async ({ usd, period }) => this.setLimit(record, sender, { amount: usdc(usd), period }),
+      sendJoinLink: async ({ name }) => {
+        try {
+          return await this.sendJoinLink(record, name ? this.resolve(record, name) : sender);
+        } catch (err) {
+          return `Could not send the link: ${(err as Error).message}`;
+        }
       },
       cancel: async ({ number }) => {
         const request = record.requests.find((r) => r.number === number);
@@ -425,6 +525,7 @@ export class GroupRuntime {
       : { kind: "card" as const, reference: split.payeeMemberId };
     const lines: string[] = [];
     let failed = 0;
+    const short: { member: Member; amount: Usdc; reason: string }[] = [];
 
     for (const [memberId, amount] of Object.entries(split.shares)) {
       if (memberId === split.payeeMemberId || amount === 0n) continue;
@@ -440,12 +541,24 @@ export class GroupRuntime {
       if (outcome.status === "pulled") lines.push(`${who} ✓`);
       else {
         failed++;
-        lines.push(`${who} ✗ ${outcome.reason ?? "failed"} (still owed)`);
+        const reason = plainReason(outcome.reason);
+        lines.push(`${who} ✗ ${reason} (still owed)`);
+        // Onchain failures become debts the member can pay back later from the Face ID page.
+        if (from && outcome.txRef && payee?.wallet) short.push({ member: from, amount, reason });
       }
     }
     await this.apply(record, request, { type: "settle_complete", at: this.now() });
     const head = failed === 0 ? `✅ Settled #${request.number} ${request.title}` : `⚠️ Partly settled #${request.number} ${request.title}`;
     await this.say(record.group.chatId, `${head} (${formatUsdc(split.total)})\n${lines.join("\n")}`);
+    for (const { member, amount, reason } of short) {
+      if (!payee?.wallet || !this.deps.invites) continue;
+      const link = this.pageLink(record, member, { r: payee.wallet.address, o: payee.displayName });
+      await this.dm(
+        record,
+        member,
+        `Your ${formatUsdc(amount)} share of ${request.title} didn't go through (${reason}), so it's saved as owed to ${payee.displayName}. Add money and pay it back with Face ID: ${link}`,
+      );
+    }
   }
 
   cardText(record: GroupRecord, request: RequestRecord): string {

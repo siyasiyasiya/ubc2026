@@ -92,4 +92,4 @@ export { ArcWalletAdapter, arcClients, arcWalletAdapters, groupIdForChat, pullSp
 export type { ArcClients, ArcEnv, ArcWalletAdapterOptions } from "./arc.js";
 export { groupTreasuryAbi } from "./treasury-abi.js";
 export { inviteLink, inviteTicket, JoinWatcher, sendWelcomeBalance } from "./join.js";
-export type { InviteLinkInput, JoinEvent, JoinWatcherOptions } from "./join.js";
+export type { DebtPaidEvent, InviteLinkInput, JoinEvent, JoinWatcherOptions, LimitSetEvent } from "./join.js";

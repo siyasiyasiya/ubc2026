@@ -103,6 +103,13 @@ export interface WalletAdapter {
   /** Cheap pre-check used when building the split preview. */
   canPull(member: Member, amount: Usdc): Promise<{ ok: boolean; remaining: Usdc }>;
   pull(params: PullParams): Promise<PullOutcome>;
+  /**
+   * Optional: lower a member's limit right away. The bot may only lower (raising needs the
+   * member's own Face ID), so implementations reject a higher amount.
+   */
+  lowerLimit?(member: Member, amount: Usdc): Promise<void>;
+  /** Optional: what `debtor` still owes `creditor` from shares that couldn't be pulled. */
+  owed?(debtor: Member, creditor: Member): Promise<Usdc>;
 }
 
 // ----------------------------------------------------------------------------

@@ -15,6 +15,7 @@ import {
   type Account,
   type Address,
   type Chain,
+  type GetContractEventsReturnType,
   type Hex,
   type PublicClient,
   type Transport,
@@ -65,6 +66,25 @@ export interface JoinEvent {
   txHash: Hex;
 }
 
+/** A member's limit changed: by their own Face ID (`by` = account) or lowered by the operator. */
+export interface LimitSetEvent {
+  group: Hex;
+  account: Address;
+  limit: SpendingLimit;
+  by: Address;
+  blockNumber: bigint;
+  txHash: Hex;
+}
+
+/** A member paid back a share that couldn't be pulled earlier. */
+export interface DebtPaidEvent {
+  debtor: Address;
+  creditor: Address;
+  amount: Usdc;
+  blockNumber: bigint;
+  txHash: Hex;
+}
+
 export interface JoinWatcherOptions {
   publicClient: PublicClient;
   treasury: Address;
@@ -72,13 +92,20 @@ export interface JoinWatcherOptions {
   fromBlock: bigint;
   /** Called for each join, in order. The cursor only advances once this resolves. */
   onJoin: (event: JoinEvent) => Promise<void>;
+  /** Called for each limit change, in order with the other events. */
+  onLimitSet?: (event: LimitSetEvent) => Promise<void>;
+  /** Called for each debt paid back, in order with the other events. */
+  onDebtPaid?: (event: DebtPaidEvent) => Promise<void>;
   /** Called after each scanned window so the caller can persist where to resume. */
   onCursor?: (nextBlock: bigint) => void;
   pollMs?: number;
   log?: (line: string) => void;
 }
 
-/** Polls the treasury for `Joined` events and hands each one to `onJoin`. */
+/**
+ * Polls the treasury for the events the server acts on (`Joined`, `LimitSet`, `DebtPaid`) and hands
+ * each to its handler in chain order. One `eth_getLogs` per window covers all of them.
+ */
 export class JoinWatcher {
   private next: bigint;
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -108,24 +135,29 @@ export class JoinWatcher {
       const logs = await this.opts.publicClient.getContractEvents({
         address: this.opts.treasury,
         abi: groupTreasuryAbi,
-        eventName: "Joined",
         fromBlock: this.next,
         toBlock: to,
       });
-      for (const log of logs) {
-        const { group, member, limit, period, ticket } = log.args;
-        if (!group || !member || limit === undefined || period === undefined || !ticket) continue;
-        await this.opts.onJoin({
-          group,
-          account: getAddress(member),
-          limit: { amount: micros(limit), period: period === 0 ? "weekly" : "monthly" },
-          ticket,
-          blockNumber: log.blockNumber,
-          txHash: log.transactionHash,
-        });
-      }
+      for (const log of logs) await this.dispatch(log);
       this.next = to + 1n;
       this.opts.onCursor?.(this.next);
+    }
+  }
+
+  private async dispatch(log: TreasuryLog): Promise<void> {
+    const at = { blockNumber: log.blockNumber, txHash: log.transactionHash };
+    if (log.eventName === "Joined") {
+      const { group, member, limit, period, ticket } = log.args;
+      if (!group || !member || limit === undefined || period === undefined || !ticket) return;
+      await this.opts.onJoin({ group, account: getAddress(member), limit: limitOf(limit, period), ticket, ...at });
+    } else if (log.eventName === "LimitSet" && this.opts.onLimitSet) {
+      const { group, member, limit, period, by } = log.args;
+      if (!group || !member || limit === undefined || period === undefined || !by) return;
+      await this.opts.onLimitSet({ group, account: getAddress(member), limit: limitOf(limit, period), by: getAddress(by), ...at });
+    } else if (log.eventName === "DebtPaid" && this.opts.onDebtPaid) {
+      const { debtor, creditor, amount } = log.args;
+      if (!debtor || !creditor || amount === undefined) return;
+      await this.opts.onDebtPaid({ debtor: getAddress(debtor), creditor: getAddress(creditor), amount: micros(amount), ...at });
     }
   }
 
@@ -143,6 +175,12 @@ export class JoinWatcher {
     }
     if (!this.stopped) this.timer = setTimeout(() => void this.loop(), delay);
   }
+}
+
+type TreasuryLog = GetContractEventsReturnType<typeof groupTreasuryAbi>[number];
+
+function limitOf(limit: bigint, period: number): SpendingLimit {
+  return { amount: micros(limit), period: period === 0 ? "weekly" : "monthly" };
 }
 
 /**

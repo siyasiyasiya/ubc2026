@@ -126,4 +126,45 @@ export const groupTreasuryAbi = [
       { name: "ticket", type: "bytes32", indexed: false },
     ],
   },
+  {
+    type: "event",
+    name: "LimitSet",
+    inputs: [
+      { name: "group", type: "bytes32", indexed: true },
+      { name: "member", type: "address", indexed: true },
+      { name: "limit", type: "uint256", indexed: false },
+      { name: "period", type: "uint8", indexed: false },
+      { name: "by", type: "address", indexed: false },
+    ],
+  },
+  {
+    type: "event",
+    name: "DebtPaid",
+    inputs: [
+      { name: "debtor", type: "address", indexed: true },
+      { name: "creditor", type: "address", indexed: true },
+      { name: "amount", type: "uint256", indexed: false },
+    ],
+  },
+  {
+    type: "function",
+    name: "lowerLimit",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "group", type: "bytes32" },
+      { name: "member", type: "address" },
+      { name: "limit", type: "uint128" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "debts",
+    stateMutability: "view",
+    inputs: [
+      { name: "debtor", type: "address" },
+      { name: "creditor", type: "address" },
+    ],
+    outputs: [{ name: "", type: "uint256" }],
+  },
 ] as const;
