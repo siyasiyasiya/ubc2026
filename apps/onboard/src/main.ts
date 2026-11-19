@@ -26,7 +26,7 @@ const clientKey = import.meta.env.VITE_CLIENT_KEY as string;
 const clientUrl = (import.meta.env.VITE_CLIENT_URL as string) || "https://modular-sdk.circle.com/v1/rpc/w3s/buidl";
 const treasury = import.meta.env.VITE_TREASURY_ADDRESS as Hex;
 const usdc = ContractAddress.ArcTestnet_USDC as Hex;
-const CREDENTIAL_KEY = "gta.passkey";
+const CREDENTIAL_KEY = "kitty.passkey.v2";
 
 const params = new URLSearchParams(location.search);
 const group = params.get("g") ?? "";
@@ -79,16 +79,52 @@ function passkeyUsername(): string {
 }
 
 /**
- * Unlocks this browser's saved passkey, or makes a new one. A first-time member registers
- * straight away: trying a login first and falling back would make Safari drop the tap that
- * allows the Face ID prompt. Returning members on a new device use "Used Kitty before?".
+ * Gets this member's passkey. A returning member's credential (its id and public key, neither
+ * secret) is remembered on this device, so the only Face ID is the one that signs the change.
+ * A first-time member registers straight away: trying a login first and falling back would make
+ * Safari drop the tap that allows the prompt. "Used Kitty before?" logs in from a synced passkey.
  */
 async function passkey(returning: boolean): Promise<WebAuthnCredential> {
   const transport = toPasskeyTransport(clientUrl, clientKey);
-  const saved = localStorage.getItem(CREDENTIAL_KEY);
-  if (saved) return toWebAuthnCredential({ transport, mode: WebAuthnMode.Login, credentialId: saved });
-  if (returning) return toWebAuthnCredential({ transport, mode: WebAuthnMode.Login });
-  return toWebAuthnCredential({ transport, mode: WebAuthnMode.Register, username: passkeyUsername() });
+  const remembered = readCredential();
+  if (remembered) return remembered;
+  const legacyId = readLegacyId();
+  const credential = legacyId
+    ? await toWebAuthnCredential({ transport, mode: WebAuthnMode.Login, credentialId: legacyId })
+    : returning
+    ? await toWebAuthnCredential({ transport, mode: WebAuthnMode.Login })
+    : await toWebAuthnCredential({ transport, mode: WebAuthnMode.Register, username: passkeyUsername() });
+  saveCredential(credential);
+  return credential;
+}
+
+function readCredential(): WebAuthnCredential | undefined {
+  try {
+    const saved = JSON.parse(localStorage.getItem(CREDENTIAL_KEY) ?? "null") as { id?: string; publicKey?: string } | null;
+    if (saved?.id && saved.publicKey && isHex(saved.publicKey)) {
+      return { id: saved.id, publicKey: saved.publicKey } as WebAuthnCredential;
+    }
+  } catch {
+    // Older pages stored only the credential id, or storage is blocked: fall through to Face ID.
+  }
+  return undefined;
+}
+
+/** Pages before Nov 18 stored only the credential id; log in with it once rather than make a second account. */
+function readLegacyId(): string | undefined {
+  try {
+    return localStorage.getItem("gta.passkey") ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function saveCredential(credential: WebAuthnCredential): void {
+  try {
+    localStorage.setItem(CREDENTIAL_KEY, JSON.stringify({ id: credential.id, publicKey: credential.publicKey }));
+  } catch {
+    // Private browsing: the member just gets one extra Face ID next time.
+  }
 }
 
 async function submit(event: Event, returning = false): Promise<void> {
@@ -103,7 +139,6 @@ async function submit(event: Event, returning = false): Promise<void> {
   try {
     show("Waiting for Face ID…");
     const credential = await passkey(returning);
-    localStorage.setItem(CREDENTIAL_KEY, credential.id);
 
     const transport = toModularTransport(`${clientUrl}/arcTestnet`, clientKey);
     const client = createPublicClient({ chain: arcTestnet, transport });
