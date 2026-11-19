@@ -14,7 +14,7 @@ const OUTSIDER = "+1999";
 const CHAT = "group";
 
 /** A runtime whose "agent" proposes a $90 dinner paid by Neena, split three ways. */
-function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapter; wallets?: Record<string, string>; invites?: { baseUrl: string; secret: string }; chats?: string[]; participants?: string[]; chatName?: string; purchase?: PurchaseAdapter; calls?: RestaurantCaller; testMoney?: { send: (address: string, amount: bigint) => Promise<string>; maxUsd: number; dailyUsd: number } } = {}) {
+function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapter; wallets?: Record<string, string>; invites?: { baseUrl: string; secret: string }; chats?: string[]; participants?: string[]; chatName?: string; receiptItems?: { name: string; amount: ReturnType<typeof usdc> }[]; purchase?: PurchaseAdapter; calls?: RestaurantCaller; testMoney?: { send: (address: string, amount: bigint) => Promise<string>; maxUsd: number; dailyUsd: number } } = {}) {
   const posted: { id: string; text: string }[] = [];
   const failing = { posts: 0, dms: 0 };
   const dms: { handle: string; text: string }[] = [];
@@ -52,6 +52,7 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
   };
   const fakeTurn: typeof RunTurn = async ({ actions, event }) => {
     if (event.includes("join me")) return actions.sendJoinLink({});
+    if (event.includes("split by item")) return actions.splitByItem({ payer: "Neena", claims: { Siya: [1], Tristan: [2] } });
     if (event.includes("book uchi")) {
       return actions.callRestaurant({ restaurant: "Uchi", phone: event.includes("no number") ? "ask them" : "(512) 555-0100", partySize: 4, when: "tomorrow 7:30pm" });
     }
@@ -101,7 +102,12 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
     ...(opts.purchase ? { purchase: opts.purchase } : {}),
     ...(opts.calls ? { calls: opts.calls, callPollMs: 1 } : {}),
     ...(opts.testMoney ? { testMoney: opts.testMoney as never } : {}),
-    receipts: { read: async (): Promise<Receipt> => ({ source: "photo", total: usdc(90), at: 0 }) },
+    receipts: {
+      read: async (): Promise<Receipt> =>
+        opts.receiptItems
+          ? { source: "photo", total: opts.receiptItems.reduce((a, i) => (a + i.amount) as typeof i.amount, usdc(0)), lineItems: opts.receiptItems, at: 0 }
+          : { source: "photo", total: usdc(90), at: 0 },
+    },
     runTurn: fakeTurn,
     runDmTurn: fakeDmTurn,
     store,
@@ -124,13 +130,17 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
     onDirect.forEach((h) => h({ chatId: `dm:${handle}`, senderHandle: handle, text, attachments: [], at: 0 }));
     await runtime.serial(async () => undefined);
   };
+  const image = async (handle: string) => {
+    onMessage.forEach((h) => h({ chatId: CHAT, senderHandle: handle, text: "", attachments: [{ uri: "/receipt.jpg" }], at: 0 }));
+    await runtime.serial(async () => undefined);
+  };
 
   const proposeDinner = async () => {
     for (const who of [SIYA, TRISTAN, OUTSIDER]) await say(who, "hi");
     await say(NEENA, "split dinner with siya and tristan");
     return request();
   };
-  return { posted, dms, failing, say, react, dm, dmSummaries, proposeDinner, request, runtime, store };
+  return { posted, dms, failing, say, react, dm, image, dmSummaries, proposeDinner, request, runtime, store };
 }
 
 describe("GroupRuntime", () => {
@@ -146,6 +156,19 @@ describe("GroupRuntime", () => {
     await t.react(TRISTAN, `p:0/${req.previewMessageId}`);
     expect(t.request().state.name).toBe("done");
     expect(t.posted.at(-1)!.text).toMatch(/Settled #1 Dinner \(\$90\.00\)\nSiya → Neena \$30\.00 ✓\nTristan → Neena \$30\.00 ✓/);
+  });
+
+  it("splits a receipt by what each person ordered", async () => {
+    const t = setup(200, { receiptItems: [{ name: "pasta", amount: usdc(50) }, { name: "roll", amount: usdc(40) }] });
+    for (const who of [SIYA, TRISTAN]) await t.say(who, "hi"); // become members
+    await t.image(NEENA); // posts the receipt → lastReceipt set with items
+    await t.say(NEENA, "split by item"); // Siya claims item 1 ($50), Tristan item 2 ($40)
+
+    const req = t.request();
+    expect(req.state.name).toBe("awaiting_approval");
+    const card = t.posted.find((p) => p.id === req.previewMessageId)!.text;
+    expect(card).toContain("Siya $50.00");
+    expect(card).toContain("Tristan $40.00");
   });
 
   it("ignores 👍 from outside the split and other emoji", async () => {

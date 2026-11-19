@@ -17,7 +17,7 @@ const SYSTEM = `You are Treasury, an assistant that lives in an iMessage group c
 
 What you can do:
 - Track who's in on a plan (dinner, tickets, a trip) from what people say in the chat.
-- When someone posts a receipt, split it between the people who were in, paid back to whoever paid.
+- When someone posts a receipt, split it between the people who were in, paid back to whoever paid. Even by default. If anyone wants to split by what they each had, list the items numbered with prices (in the order they're on the receipt), ask who had what, take item numbers or item names ("the pasta and a sake"), split a shared or unclaimed item across whoever's in, then call split_by_item. The app adds tax and tip and does the math.
 - Members can set their own spending limit.
 - Each group chat has a plan: a trip has a one-time limit per person (it never refills), roommates or friends have a weekly or monthly limit that refills up to the limit. Money stays in each person's own account until something is split.
 - Splits settle right away, or go on the group's tab and settle together when someone says "settle up" (handy at the end of a trip). The person proposing picks; if a trip and they don't say, ask.
@@ -75,6 +75,8 @@ export interface TreasuryActions {
     /** "tab" holds it until "settle up" (e.g. end of a trip). Default: settle once everyone 👍s. */
     settle?: "now" | "tab";
   }): Promise<string>;
+  /** Split the last posted receipt by what each person ordered (claims are item numbers per person). */
+  splitByItem(input: { payer: string; claims: Record<string, number[]> }): Promise<string>;
   setMyLimit(input: { usd: number; period: "weekly" | "monthly" | "once" }): Promise<string>;
   /** Set the chat's plan: the default limit for everyone here and whether it refills. */
   setGroupPlan(input: { usd: number; period: "weekly" | "monthly" | "once"; name?: string }): Promise<string>;
@@ -139,6 +141,18 @@ export async function runTurn(input: TurnInput): Promise<string | null> {
           ...(a.amounts_usd ? { amountsUsd: a.amounts_usd } : {}),
           ...(a.settle ? { settle: a.settle } : {}),
         }),
+    }),
+    betaZodTool({
+      name: "split_by_item",
+      description:
+        "Split the receipt you just saw by what each person ordered. Give the payer and, per person, the item numbers they claimed (as you listed them to the chat, starting at 1). A shared item can go to several people. The app adds tax and tip proportionally and works out the amounts; you don't do the math.",
+      inputSchema: z.object({
+        payer: z.string().describe("Name of whoever paid and gets paid back"),
+        claims: z
+          .record(z.string(), z.array(z.number().int().positive()))
+          .describe("name -> item numbers that person had, e.g. {\"Siya\": [1, 3], \"Neena\": [2, 4]}"),
+      }),
+      run: (a) => actions.splitByItem({ payer: a.payer, claims: a.claims }),
     }),
     betaZodTool({
       name: "set_my_limit",

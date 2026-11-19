@@ -12,6 +12,7 @@
 import {
   APPROVAL_EMOJI,
   perPeriod,
+  byItemSplit,
   customSplit,
   evenSplit,
   formatUsdc,
@@ -542,7 +543,8 @@ export class GroupRuntime {
       try {
         const receipt = await this.deps.receipts.read(image);
         this.lastReceipt.set(msg.chatId, receipt);
-        const items = (receipt.lineItems ?? []).map((i) => `${i.name} ${formatUsdc(i.amount)}`).join("; ");
+        // Number items (1-based) so "split by item" claims line up with the lineItems order.
+        const items = (receipt.lineItems ?? []).map((i, n) => `${n + 1}. ${i.name} ${formatUsdc(i.amount)}`).join("; ");
         event =
           `[${member.displayName} posted a receipt from ${receipt.merchant ?? "unknown"}: ` +
           `subtotal ${formatUsdc(receipt.subtotal ?? usdc(0))}, tax ${formatUsdc(receipt.tax ?? usdc(0))}, ` +
@@ -811,6 +813,31 @@ export class GroupRuntime {
           return `Posted approval card #${request.number}: ${this.cardText(record, request)}`;
         } catch (err) {
           return `Could not propose that: ${(err as Error).message}`;
+        }
+      },
+      splitByItem: async ({ payer, claims }) => {
+        try {
+          const receipt = this.lastReceipt.get(record.group.chatId);
+          if (!receipt?.lineItems?.length) return "I don't have a receipt with items to split. Post the receipt photo first.";
+          const payee = this.resolve(record, payer);
+          // Claims come as 1-based item numbers per person name; resolve names and shift to 0-based indices.
+          const resolved: Record<string, number[]> = {};
+          for (const [name, numbers] of Object.entries(claims)) {
+            const member = this.resolve(record, name);
+            resolved[member.id] = numbers.map((n) => n - 1).filter((i) => i >= 0 && i < receipt.lineItems!.length);
+          }
+          const split = byItemSplit({
+            lineItems: receipt.lineItems,
+            claims: resolved,
+            ...(receipt.tax ? { tax: receipt.tax } : {}),
+            ...(receipt.tip ? { tip: receipt.tip } : {}),
+            payeeMemberId: payee.id,
+          });
+          const title = receipt.merchant ?? "Dinner";
+          const request = await this.startReimbursement(record, sender, title, split, false);
+          return `Posted approval card #${request.number}: ${this.cardText(record, request)}`;
+        } catch (err) {
+          return `Could not split that by item: ${(err as Error).message}`;
         }
       },
       setMyLimit: async ({ usd, period }) => this.setLimit(record, sender, { amount: usdc(usd), period }),
