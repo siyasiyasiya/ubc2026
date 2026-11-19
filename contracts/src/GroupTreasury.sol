@@ -19,9 +19,12 @@ interface IERC20 {
 /// chat. It can never add a member, raise a limit, or send money anywhere but the payee of a
 /// split, and no pull ever exceeds what is left of the limit the member signed for that group.
 contract GroupTreasury {
+    /// Weekly and Monthly refill each period (unspent money never left the member's account, and
+    /// what can be pulled never goes above the limit). Once is for trips: the limit never refills.
     enum Period {
         Weekly,
-        Monthly
+        Monthly,
+        Once
     }
 
     enum Status {
@@ -168,8 +171,10 @@ contract GroupTreasury {
     }
 
     /// Timestamp the member's current period in `group` ends.
+    /// 0 for a one-time limit, which never resets.
     function resetsAt(bytes32 group, address member) external view returns (uint256) {
         Period period = members[group][member].period;
+        if (period == Period.Once) return 0;
         return ANCHOR + (_window(period) + 1) * _length(period);
     }
 
@@ -347,6 +352,7 @@ contract GroupTreasury {
     }
 
     function _window(Period period) internal view returns (uint64) {
+        if (period == Period.Once) return 0;
         return uint64((block.timestamp - ANCHOR) / _length(period));
     }
 

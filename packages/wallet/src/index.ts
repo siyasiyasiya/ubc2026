@@ -12,21 +12,25 @@ import {
   type LimitStatus,
   type Member,
   type MemberId,
+  type LimitPeriod,
   type PullOutcome,
   type PullParams,
   type Usdc,
   type WalletAdapter,
 } from "@gta/core";
 
-/** Start of the current period (UTC): Monday for weekly limits, the 1st for monthly. */
-export function periodStart(period: "weekly" | "monthly", now: Date = new Date()): Date {
+/** Start of the current period (UTC): Monday for weekly limits, the 1st for monthly, epoch for once. */
+export function periodStart(period: LimitPeriod, now: Date = new Date()): Date {
+  if (period === "once") return new Date(0);
   const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   if (period === "monthly") d.setUTCDate(1);
   else d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
   return d;
 }
 
-export function periodEnd(period: "weekly" | "monthly", now: Date = new Date()): Date {
+/** When the period refills; a one-time limit never does (year 9999). */
+export function periodEnd(period: LimitPeriod, now: Date = new Date()): Date {
+  if (period === "once") return new Date(Date.UTC(9999, 0, 1));
   const start = periodStart(period, now);
   if (period === "monthly") start.setUTCMonth(start.getUTCMonth() + 1);
   else start.setUTCDate(start.getUTCDate() + 7);
@@ -75,7 +79,7 @@ export class InMemoryWalletAdapter implements WalletAdapter {
       ? { status: "pulled", txRef: `mem-${params.idempotencyKey}` }
       : {
           status: "failed",
-          reason: `over limit (${formatUsdc(remaining)} left this ${params.from.limit.period === "weekly" ? "week" : "month"})`,
+          reason: `over limit (${formatUsdc(remaining)} left${params.from.limit.period === "once" ? "" : ` this ${params.from.limit.period === "weekly" ? "week" : "month"}`})`,
         };
     if (ok) {
       this.spending.set(params.from.id, {

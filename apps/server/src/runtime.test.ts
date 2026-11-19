@@ -42,6 +42,12 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
   };
   const fakeTurn: typeof RunTurn = async ({ actions, event }) => {
     if (event.includes("join me")) return actions.sendJoinLink({});
+    if (event.includes("trip plan")) return actions.setGroupPlan({ usd: 200, period: "once" });
+    if (event.includes("settle up")) return actions.settleUp();
+    if (event.includes("leave kitty")) return actions.leave();
+    if (event.includes("tab dinner")) {
+      return actions.proposeReimbursement({ title: "Dinner", totalUsd: 90, payer: "Neena", participants: ["Neena", "Siya", "Tristan"], settle: "tab" });
+    }
     const limit = /limit (\d+)/.exec(event);
     if (limit) return actions.setMyLimit({ usd: Number(limit[1]), period: "weekly" });
     if (!event.includes("split dinner")) return null;
@@ -319,6 +325,52 @@ describe("GroupRuntime", () => {
     const posts = t.posted.length;
     await t.runtime.handleLimitSet({ ...base, limit: { amount: usdc(10), period: "weekly" }, by: "0x00000000000000000000000000000000000000ee" });
     expect(t.posted.length).toBe(posts); // operator lowered it; the bot already replied in chat
+  });
+
+  it("a trip plan makes join links one-time", async () => {
+    const invites = { baseUrl: "https://kittyagent.vercel.app", secret: "s3cret" };
+    const t = setup(200, { invites });
+    await t.say(NEENA, "trip plan please");
+    expect(t.posted.at(-1)?.text).toBe("This chat's plan is now $200.00 each in total.");
+    await t.say(SIYA, "join me");
+    const link = new URL(t.dms.at(-1)!.text.split(" ").at(-1)!);
+    expect(link.searchParams.get("l")).toBe("200.00");
+    expect(link.searchParams.get("p")).toBe("once");
+    expect(t.store.get(CHAT)!.group.kind).toBe("trip");
+  });
+
+  it("holds tab splits until settle up, then settles them together", async () => {
+    const t = setup();
+    for (const who of [SIYA, TRISTAN]) await t.say(who, "hi");
+    await t.say(NEENA, "tab dinner");
+    const req = t.request();
+    expect(req.onTab).toBe(true);
+    await t.say(SIYA, "👍");
+    await t.say(TRISTAN, "👍");
+    expect(t.request().state.name).toBe("settling"); // approved, held on the tab
+    expect(t.posted.at(-1)?.text).toContain("is on the tab");
+
+    await t.say(NEENA, "settle up");
+    expect(t.request().state.name).toBe("done");
+    expect(t.posted.some((p) => p.text.startsWith("✅ Settled #1 Dinner"))).toBe(true);
+    expect(t.posted.at(-1)?.text).toBe("Settled 1 from the tab.");
+  });
+
+  it("leaving stops the contract pulling and keeps the member's history", async () => {
+    const removed: string[] = [];
+    const inner = new InMemoryWalletAdapter();
+    const wallet: WalletAdapter = {
+      id: "arc-like",
+      getLimitStatus: (m) => inner.getLimitStatus(m),
+      canPull: (m, a) => inner.canPull(m, a),
+      pull: async () => ({ status: "pulled" }),
+      removeMember: async (m) => void removed.push(m.id),
+    };
+    const t = setup(200, { wallet, wallets: { [SIYA]: "0x00000000000000000000000000000000000000bb" } });
+    await t.say(SIYA, "leave kitty");
+    expect(removed).toEqual([SIYA]);
+    expect(t.store.get(CHAT)!.group.members.find((m) => m.id === SIYA)!.wallet).toBeUndefined();
+    expect(t.posted.at(-1)?.text).toContain("Siya left.");
   });
 
   it("passes errors back from run() so the join watcher retries instead of skipping", async () => {

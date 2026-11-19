@@ -108,6 +108,8 @@ export interface WalletAdapter {
    * member's own Face ID), so implementations reject a higher amount.
    */
   lowerLimit?(member: Member, amount: Usdc): Promise<void>;
+  /** Optional: stop this group pulling from a member who left (their limit here becomes 0). */
+  removeMember?(member: Member): Promise<void>;
   /** Optional: what `debtor` still owes `creditor` from shares that couldn't be pulled. */
   owed?(debtor: Member, creditor: Member): Promise<Usdc>;
 }

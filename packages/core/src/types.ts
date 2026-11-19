@@ -25,12 +25,31 @@ export interface Handle {
   value: string;
 }
 
-/** A recurring spending limit that resets on a schedule, like a subscription.
+/** How often a limit refills. Weekly/monthly refill up to the limit (unspent money never left the
+ *  member's account, and what can be pulled never goes above the limit). "once" is for trips: the
+ *  limit never refills. */
+export type LimitPeriod = "weekly" | "monthly" | "once";
+
+/** "a week", "a month", or "for the trip", for chat text. */
+export function perPeriod(period: LimitPeriod): string {
+  return period === "weekly" ? "a week" : period === "monthly" ? "a month" : "in total";
+}
+
+/** The contract's `Period` enum value. */
+export function periodIndex(period: LimitPeriod): 0 | 1 | 2 {
+  return period === "weekly" ? 0 : period === "monthly" ? 1 : 2;
+}
+
+export function periodFromIndex(index: number): LimitPeriod {
+  return index === 0 ? "weekly" : index === 1 ? "monthly" : "once";
+}
+
+/** A spending limit per group chat: refills weekly/monthly, or once for a trip.
  *  The member never approves a large total up front; the limit caps what can
- *  be pulled from them within a period. */
+ *  be pulled from them. */
 export interface SpendingLimit {
   amount: Usdc;
-  period: "weekly" | "monthly";
+  period: LimitPeriod;
   /** Timestamp the current period resets. Advisory in core; the WalletAdapter
    *  is the source of truth for what is actually enforceable on-chain/by policy. */
   resetsAt?: Timestamp;

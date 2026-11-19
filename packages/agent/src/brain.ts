@@ -11,6 +11,9 @@ What you can do:
 - Track who's in on a plan (dinner, tickets, a trip) from what people say in the chat.
 - When someone posts a receipt, split it between the people who were in, paid back to whoever paid.
 - Members can set their own spending limit.
+- Each group chat has a plan: a trip has a one-time limit per person (it never refills), roommates or friends have a weekly or monthly limit that refills up to the limit. Money stays in each person's own account until something is split.
+- Splits settle right away, or go on the group's tab and settle together when someone says "settle up" (handy at the end of a trip). The person proposing picks; if a trip and they don't say, ask.
+- Anyone can leave the group's Kitty; after that nothing more can be taken from them here. What they already owe stays owed.
 - Set people up: everyone needs a Kitty account (one Face ID tap) before money can move for them.
 
 Kitty accounts:
@@ -44,8 +47,16 @@ export interface TreasuryActions {
     payer: string;
     participants: string[];
     amountsUsd?: Record<string, number>;
+    /** "tab" holds it until "settle up" (e.g. end of a trip). Default: settle once everyone 👍s. */
+    settle?: "now" | "tab";
   }): Promise<string>;
-  setMyLimit(input: { usd: number; period: "weekly" | "monthly" }): Promise<string>;
+  setMyLimit(input: { usd: number; period: "weekly" | "monthly" | "once" }): Promise<string>;
+  /** Set the chat's plan: the default limit for everyone here and whether it refills. */
+  setGroupPlan(input: { usd: number; period: "weekly" | "monthly" | "once" }): Promise<string>;
+  /** Settle everything on the group's tab now. */
+  settleUp(): Promise<string>;
+  /** The sender leaves this chat's Kitty. */
+  leave(): Promise<string>;
   /** Text a member (the sender by default) their private Face ID link to set up a Kitty account. */
   sendJoinLink(input: { name?: string }): Promise<string>;
   cancel(input: { number: number }): Promise<string>;
@@ -79,6 +90,10 @@ export async function runTurn(input: TurnInput): Promise<string | null> {
           .record(z.string(), z.number().nonnegative())
           .optional()
           .describe("Only for uneven splits: name -> amount. Omit to split evenly."),
+        settle: z
+          .enum(["now", "tab"])
+          .optional()
+          .describe("'tab' puts it on the group's tab to settle together later ('settle up'). Default 'now'."),
       }),
       run: (a) =>
         actions.proposeReimbursement({
@@ -87,6 +102,7 @@ export async function runTurn(input: TurnInput): Promise<string | null> {
           payer: a.payer,
           participants: a.participants,
           ...(a.amounts_usd ? { amountsUsd: a.amounts_usd } : {}),
+          ...(a.settle ? { settle: a.settle } : {}),
         }),
     }),
     betaZodTool({
@@ -98,9 +114,33 @@ export async function runTurn(input: TurnInput): Promise<string | null> {
           .number()
           .nonnegative()
           .describe("The new total limit. For 'raise/lower it by X', add or subtract X from their current limit in the member list."),
-        period: z.enum(["weekly", "monthly"]),
+        period: z
+          .enum(["weekly", "monthly", "once"])
+          .describe("Use the group's plan: 'once' for a trip (never refills), else weekly or monthly."),
       }),
       run: (a) => actions.setMyLimit(a),
+    }),
+    betaZodTool({
+      name: "set_group_plan",
+      description:
+        "Set this chat's plan, e.g. a trip with $200 each one time, or roommates with $10 a week. New members' join links use it; each person still confirms their own amount with Face ID.",
+      inputSchema: z.object({
+        usd: z.number().positive().describe("Each person's limit in this chat"),
+        period: z.enum(["weekly", "monthly", "once"]).describe("'once' for a trip (never refills)"),
+      }),
+      run: (a) => actions.setGroupPlan(a),
+    }),
+    betaZodTool({
+      name: "settle_up",
+      description: "Settle every approved split on the group's tab now (e.g. the trip is over).",
+      inputSchema: z.object({}),
+      run: () => actions.settleUp(),
+    }),
+    betaZodTool({
+      name: "leave_kitty",
+      description: "The sender leaves this chat's Kitty: nothing more can be taken from them here. Only for the sender.",
+      inputSchema: z.object({}),
+      run: () => actions.leave(),
     }),
     betaZodTool({
       name: "send_join_link",

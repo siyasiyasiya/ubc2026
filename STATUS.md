@@ -45,6 +45,9 @@ The pieces work on their own; the demo needs them joined up. In order:
 | 10 | Limit changes from chat: lower → operator `lowerLimit` now; raise → DM Face ID link | Neena | 🟡 built (5fdb335; page prefills `?l=&p=`); live test pending | demo |
 | 11 | 👍 tapbacks on the card (local mode) | Siya | ✅ done (97109f4, reads `chat.db`); live test pending | demo |
 | 13 | One-tap Face ID page: amount decided in chat rides in the link, no form; iMessage link card (og.png) | Neena | 🟡 deployed Nov 18 (70d4f3d); phone test pending | demo |
+| 14 | Limits per chat: recurring (weekly/monthly, refills up to the limit) or one-time (trip); chat picks its plan (`set_group_plan`) | Neena | 🟡 built, contract redeployed; live test pending (everyone rejoins) | demo |
+| 15 | Trip tab: splits settle now or go on the tab until "settle up" (`settle_up`) | Neena | 🟡 built; live test pending | demo |
+| 16 | Leave a chat's Kitty (`leave_kitty` → operator `removeMember`) | Neena | 🟡 built; live test pending | demo |
 | 12 | Neena's own messages: bot runs on her Apple ID, so it ignores her | Neena | 🔲 decide: `SELF_HANDLE` (built, off) or a separate Apple ID for the bot | demo |
 
 ---
@@ -55,7 +58,7 @@ Owns: `contracts/`, `packages/wallet`, `packages/funding`, `apps/onboard`.
 
 | Task | Status | Notes |
 | --- | --- | --- |
-| `GroupTreasury.sol` + Foundry tests | ✅ done | One deployment for every chat; per-chat members + limits; single-use join tickets; operator relays 👍 (`approveFor`) but can only lower limits / remove members; failed pulls become debts. 49 tests incl. fuzz "operator can't take more than the signed limit". **Arc testnet: `0xDC349427bE00454800D17a7FB7f7946CA5884F98`** |
+| `GroupTreasury.sol` + Foundry tests | ✅ done | One deployment for every chat; per-chat members + limits; single-use join tickets; operator relays 👍 (`approveFor`) but can only lower limits / remove members; failed pulls become debts; weekly / monthly / **one-time (trip)** limits. 54 tests incl. fuzz "operator can't take more than the signed limit". **Arc testnet: `0x1E383fe0098f3dE2530b42f1c8172CA2BC547320`** (redeployed Nov 18 for one-time limits, block 72966618; everyone rejoins). |
 | Face ID onboarding page (`apps/onboard`) | ✅ done | **https://kittyagent.vercel.app** — Circle passkey wallet + one gasless batched op (approve USDC + `join`). Tested on a real iPhone. First join = 2 Face ID prompts, later visits = 1. No crypto words shown. |
 | `WalletAdapter` — in-memory dev impl | ✅ done (on main) | `InMemoryWalletAdapter`, weekly/monthly limits, idempotent pulls. Non-production. |
 | `WalletAdapter` — real impl (Arc) | ✅ done | `ArcWalletAdapter`: each pull = one-person split (`propose` → `approveFor` → `settle`), idempotent across restarts, over-limit → onchain debt. Anvil tests + live read on Arc. Full live pull waits on a member joining via the page. |

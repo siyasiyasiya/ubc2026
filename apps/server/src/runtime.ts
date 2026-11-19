@@ -11,6 +11,7 @@
 
 import {
   APPROVAL_EMOJI,
+  perPeriod,
   customSplit,
   evenSplit,
   formatUsdc,
@@ -127,7 +128,7 @@ export class GroupRuntime {
         id: handle,
         displayName: this.deps.names[handle] ?? `…${handle.slice(-4)}`,
         handle: { kind: handle.includes("@") ? "email" : "phone", value: handle },
-        limit: { ...this.deps.defaultLimit },
+        limit: { ...(record.plan ?? this.deps.defaultLimit) },
       };
       record.group.members.push(member);
     }
@@ -240,6 +241,33 @@ export class GroupRuntime {
     url.searchParams.set("n", member.displayName);
     for (const [k, v] of Object.entries(extra)) url.searchParams.set(k, v);
     return url.toString();
+  }
+
+  /** Settles everything approved and waiting on the tab. */
+  private async settleUp(record: GroupRecord): Promise<string> {
+    const waiting = record.requests.filter((r) => r.onTab && r.state.name === "settling");
+    const pending = record.requests.filter((r) => r.onTab && r.state.name === "awaiting_approval").map((r) => `#${r.number}`);
+    if (waiting.length === 0) {
+      return pending.length ? `Nothing approved on the tab yet (${pending.join(", ")} still need 👍s).` : "The tab is empty.";
+    }
+    for (const request of waiting) {
+      if (request.state.name !== "settling") continue;
+      request.onTab = false;
+      await this.pullShares(record, request, request.state.split);
+    }
+    this.deps.store.save();
+    const left = pending.length ? ` Still waiting on 👍s: ${pending.join(", ")}.` : "";
+    return `Settled ${waiting.length} from the tab.${left}`;
+  }
+
+  /** The member leaves this chat's Kitty: the contract stops anything more being pulled here. */
+  private async leave(record: GroupRecord, member: Member): Promise<string> {
+    if (!member.wallet) return `${member.displayName} isn't set up in this chat's Kitty.`;
+    await this.walletFor(record).removeMember?.(member);
+    delete member.wallet;
+    member.limit = { ...(record.plan ?? this.deps.defaultLimit) };
+    this.deps.store.save();
+    return `${member.displayName} left. Nothing more can be taken from them in this chat; anything they already owe stays owed. They can rejoin anytime.`;
   }
 
   /** A `LimitSet` event. The member's own Face ID change gets a short confirmation (amounts stay private). */
@@ -391,7 +419,9 @@ export class GroupRuntime {
       record.group.members.map(async (m) => {
         const status = await this.walletFor(record).getLimitStatus(m);
         if (!m.wallet) return `- ${m.displayName} (${m.id}): Kitty account not set up yet`;
-        return `- ${m.displayName} (${m.id}): ${m.limit.period} limit ${formatUsdc(m.limit.amount)}, ${formatUsdc(status.remaining)} left`;
+        const limit = status.limit.amount > 0n ? status.limit : m.limit;
+        const when = limit.period === "once" ? "in total (one time, never refills)" : `this ${limit.period === "weekly" ? "week" : "month"}`;
+        return `- ${m.displayName} (${m.id}): ${formatUsdc(status.remaining)} of ${formatUsdc(limit.amount)} left ${when}`;
       }),
     );
     const open = record.requests
@@ -402,7 +432,11 @@ export class GroupRuntime {
         const waiting = (s?.requiredApprovers ?? []).filter((m) => !approved.has(m)).map((m) => this.name(record, m));
         return `- #${r.number} ${r.title} ${formatUsdc(r.split?.total ?? usdc(0))}, waiting on ${waiting.join(", ") || "nobody"}`;
       });
-    return `Members:\n${members.join("\n") || "- (none yet)"}\n\nOpen requests:\n${open.join("\n") || "- none"}`;
+    const plan = record.plan ? `${formatUsdc(record.plan.amount)} each ${perPeriod(record.plan.period)}` : "not set (ask: a trip with a one-time limit, or weekly/monthly?)";
+    const tab = record.requests
+      .filter((r) => r.onTab && r.state.name === "settling")
+      .map((r) => `- #${r.number} ${r.title} ${formatUsdc(r.split?.total ?? usdc(0))}`);
+    return `Plan: ${plan}\n\nMembers:\n${members.join("\n") || "- (none yet)"}\n\nOpen requests:\n${open.join("\n") || "- none"}\n\nOn the tab (settles on "settle up"):\n${tab.join("\n") || "- nothing"}`;
   }
 
   // --- what the agent can do --------------------------------------------------
@@ -426,13 +460,22 @@ export class GroupRuntime {
               payeeMemberId: payer.id,
             });
           }
-          const request = await this.startReimbursement(record, sender, input.title, split);
+          const request = await this.startReimbursement(record, sender, input.title, split, input.settle === "tab");
           return `Posted approval card #${request.number}: ${this.cardText(record, request)}`;
         } catch (err) {
           return `Could not propose that: ${(err as Error).message}`;
         }
       },
       setMyLimit: async ({ usd, period }) => this.setLimit(record, sender, { amount: usdc(usd), period }),
+      setGroupPlan: async ({ usd, period }) => {
+        record.plan = { amount: usdc(usd), period };
+        if (period === "once") record.group.kind = "trip";
+        // People who haven't confirmed a limit yet get the plan in their join link.
+        for (const m of record.group.members) if (!m.wallet) m.limit = { ...record.plan };
+        return `This chat's plan is now ${formatUsdc(record.plan.amount)} each ${perPeriod(period)}.`;
+      },
+      settleUp: async () => this.settleUp(record),
+      leave: async () => this.leave(record, sender),
       sendJoinLink: async ({ name }) => {
         try {
           return await this.sendJoinLink(record, name ? this.resolve(record, name) : sender);
@@ -453,7 +496,7 @@ export class GroupRuntime {
   }
 
   /** Pay-after: participants are in, the receipt is read, now everyone 👍s the real split. */
-  private async startReimbursement(record: GroupRecord, sender: Member, title: string, split: Split): Promise<RequestRecord> {
+  private async startReimbursement(record: GroupRecord, sender: Member, title: string, split: Split, onTab = false): Promise<RequestRecord> {
     const number = record.requests.reduce((max, r) => Math.max(max, r.number), 0) + 1;
     const request: RequestRecord = {
       id: `${record.group.id}#${number}`,
@@ -464,6 +507,7 @@ export class GroupRuntime {
       state: initialState("pay_after"),
       split,
       createdAt: this.now(),
+      ...(onTab ? { onTab: true } : {}),
     };
     record.requests.push(request);
 
@@ -508,6 +552,10 @@ export class GroupRuntime {
         request.previewMessageId = await this.say(chatId, this.cardText(record, request));
         return;
       case "pull_shares":
+        if (request.onTab) {
+          await this.say(chatId, `📝 #${request.number} ${request.title} is on the tab. Say "settle up" when you're ready.`);
+          return;
+        }
         await this.pullShares(record, request, effect.split);
         return;
       case "notify":
@@ -575,7 +623,7 @@ export class GroupRuntime {
     return [
       `🧾 #${request.number} ${request.title}: ${formatUsdc(split.total)}`,
       `Pay back ${this.name(record, split.payeeMemberId)}: ${shares.join(", ")}`,
-      `👍 this message to approve your share.`,
+      request.onTab ? `👍 to approve. It goes on the tab and settles on "settle up".` : `👍 this message to approve your share.`,
     ].join("\n");
   }
 }

@@ -86,13 +86,24 @@ The pieces the system needs. Only the iMessage layer and checkout have been chos
 
 Members only see iMessage, one web page and Face ID. Underneath, every rule about money is enforced by a contract on **Arc testnet** that the agent can't change.
 
-**Deployed:** `GroupTreasury` at [`0xDC349427bE00454800D17a7FB7f7946CA5884F98`](https://testnet.arcscan.app/address/0xDC349427bE00454800D17a7FB7f7946CA5884F98) (Arc testnet, chain 5042002). Details in [`contracts/README.md`](contracts/README.md).
+**Deployed:** `GroupTreasury` at [`0x1E383fe0098f3dE2530b42f1c8172CA2BC547320`](https://testnet.arcscan.app/address/0x1E383fe0098f3dE2530b42f1c8172CA2BC547320) (Arc testnet, chain 5042002). Details in [`contracts/README.md`](contracts/README.md).
+
+### Each group chat has its own limit
+
+Money stays in each member's own account. What a group chat can take is capped by a limit the member signs for that chat, and every chat is separate:
+
+| Kind of chat | Limit | Example |
+| --- | --- | --- |
+| Roommates, friends | Refills weekly or monthly, up to the limit. Unspent money was never taken, and what can be pulled never goes above the limit. | $10 a week |
+| Trip | One time: never refills. Splits settle as you go, or go on the tab and settle together on "settle up" at the end. | $200 each |
+
+The chat picks its plan once ("this is a trip, $200 each"), each person confirms their own amount with Face ID, and anyone can leave a chat's Kitty: the contract then stops anything more being pulled there.
 
 ### Joining a group's kitty
 
-1. In the group chat, a member replies "in". The server makes a single-use invite ticket for that person and chat, derived from a server secret (`packages/wallet/src/join.ts`).
-2. The agent DMs them a link to the Face ID page (`apps/onboard`, live at [kittyagent.vercel.app](https://kittyagent.vercel.app)).
-3. Face ID creates a **Circle passkey wallet** (an ERC-4337 smart account; we never hold its key). The member picks their limit for this chat, and one **gasless batched operation** (Circle paymaster) approves USDC for the contract and calls `join(group, limit, period, ticket)`.
+1. In the group chat, a member says they're in. The server makes a single-use invite ticket for that person and chat, derived from a server secret (`packages/wallet/src/join.ts`).
+2. The agent texts them a private link that shows up as a Kitty card in Messages. It opens the one-tap Face ID page (`apps/onboard`, live at [kittyagent.vercel.app](https://kittyagent.vercel.app)) with the chat's plan already filled in.
+3. Face ID creates a **Circle passkey wallet** (an ERC-4337 smart account; we never hold its key), and one **gasless batched operation** (Circle paymaster) approves USDC for the contract and calls `join(group, limit, period, ticket)`.
 4. The server's `JoinWatcher` sees the `Joined` event, matches the ticket to the member's handle, links their account, and posts "✅ Siya is in." (the limit stays private).
 5. Money comes in through **Arc Onramp** (Apple Pay or debit card → USDC delivered straight to the member's account; Kitty never holds funds). On testnet, the operator also sends each new member a small welcome balance.
 
@@ -100,7 +111,8 @@ Members only see iMessage, one web page and Face ID. Underneath, every rule abou
 
 1. The agent proposes a split, and each participant 👍s the approval card in the chat.
 2. `ArcWalletAdapter` (`packages/wallet/src/arc.ts`) turns each share into `propose` → `approveFor` (the relayed 👍) → `settle` on `GroupTreasury`.
-3. `settle` pulls the share straight from the member's account to whoever paid, never more than what's left of the limit the member signed for that chat. A share it can't pull becomes an onchain debt.
+3. `settle` pulls the share straight from the member's account to whoever paid, never more than what's left of the limit the member signed for that chat. A share it can't pull becomes an onchain debt; the member gets a one-tap link to add money and pay it back (`payDebt`), and the chat sees "✅ Joey paid Siya back".
+4. Limits change from the chat: lowering applies right away (operator `lowerLimit`); raising texts the member a one-tap Face ID link (`setLimit`), because only they can raise it.
 
 ### What the contract guarantees
 
@@ -110,6 +122,7 @@ Members only see iMessage, one web page and Face ID. Underneath, every rule abou
 | Only the member can join or raise their limit | `join` / `setLimit` come from their passkey wallet (Face ID) |
 | The agent's key can only reduce exposure | Operator-only `lowerLimit` (can't raise), `removeMember`, `propose`, `approveFor`, `cancel` |
 | No pull beyond the member's signed limit | `settle` checks `remaining(group, member)`; a fuzz test shows the operator alone can't take more |
+| Trip limits never refill | `Period.Once`: the spending window never resets |
 | Invites can't be replayed | Each ticket can be used once |
 
 ### Why Arc

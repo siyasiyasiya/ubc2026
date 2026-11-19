@@ -14,6 +14,7 @@
 
 import {
   micros,
+  periodFromIndex,
   type LimitStatus,
   type Member,
   type PullOutcome,
@@ -98,8 +99,9 @@ export class ArcWalletAdapter implements WalletAdapter {
       this.read("remaining", [this.group, wallet]),
       this.read("resetsAt", [this.group, wallet]),
     ]);
-    const periodName = period === 0 ? "weekly" : "monthly";
+    const periodName = periodFromIndex(period);
     if (!active) return { limit: { amount: micros(0), period: periodName }, remaining: micros(0) };
+    if (resetsAt === 0n) return { limit: { amount: micros(limit), period: periodName }, remaining: micros(remaining) };
     const resetsAtMs = Number(resetsAt) * 1000;
     return {
       limit: { amount: micros(limit), period: periodName, resetsAt: resetsAtMs },
@@ -117,6 +119,13 @@ export class ArcWalletAdapter implements WalletAdapter {
     const wallet = walletOf(member);
     if (!wallet) throw new Error(`${member.displayName} hasn't set up their Kitty account yet`);
     await this.write("lowerLimit", [this.group, wallet, amount]);
+  }
+
+  async removeMember(member: Member): Promise<void> {
+    const wallet = walletOf(member);
+    if (!wallet) return;
+    const [active] = await this.read("members", [this.group, wallet]);
+    if (active) await this.write("removeMember", [this.group, wallet]);
   }
 
   async owed(debtor: Member, creditor: Member): Promise<Usdc> {

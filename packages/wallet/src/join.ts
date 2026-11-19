@@ -7,7 +7,7 @@
  * and the invite CLI can mint links while the bot is running.
  */
 
-import { formatUsdc, micros, type SpendingLimit, type Usdc } from "@gta/core";
+import { formatUsdc, micros, periodFromIndex, type SpendingLimit, type Usdc } from "@gta/core";
 import {
   encodePacked,
   getAddress,
@@ -186,7 +186,7 @@ export class JoinWatcher {
 type TreasuryLog = GetContractEventsReturnType<typeof groupTreasuryAbi>[number];
 
 function limitOf(limit: bigint, period: number): SpendingLimit {
-  return { amount: micros(limit), period: period === 0 ? "weekly" : "monthly" };
+  return { amount: micros(limit), period: periodFromIndex(period) };
 }
 
 /**

@@ -57,7 +57,8 @@ function setup(): void {
   const amount = $<HTMLInputElement>("amount");
   const prefill = params.get("l");
   if (prefill && /^\d+(\.\d{1,2})?$/.test(prefill)) amount.value = prefill;
-  if (params.get("p") === "monthly") form.querySelector<HTMLSelectElement>("select")!.value = "monthly";
+  const asked = params.get("p");
+  if (asked === "monthly" || asked === "once") form.querySelector<HTMLSelectElement>("select")!.value = asked;
   // Typing replaces the amount rather than adding digits to it ("100" + "50" became $10,050).
   amount.addEventListener("focus", () => amount.select());
   amount.addEventListener("input", () => labelButton());
@@ -104,11 +105,16 @@ function setup(): void {
 
 let oneTap = false;
 
+/** "a week", "a month", or "in total" (one-time, e.g. a trip). */
+function perWords(period: string): string {
+  return period === "monthly" ? "a month" : period === "once" ? "in total" : "a week";
+}
+
 /** "$80 a week" from the form, or "" while the amount isn't valid. */
 function amountText(): string {
   const usd = $<HTMLInputElement>("amount").value.trim();
-  const per = form.querySelector<HTMLSelectElement>("select")!.value === "monthly" ? "month" : "week";
-  return /^\d+(\.\d{1,2})?$/.test(usd) ? `$${Number(usd).toLocaleString("en-US")} a ${per}` : "";
+  const per = perWords(form.querySelector<HTMLSelectElement>("select")!.value);
+  return /^\d+(\.\d{1,2})?$/.test(usd) ? `$${Number(usd).toLocaleString("en-US")} ${per}` : "";
 }
 
 /** The button names the exact amount (unless it's shown big above), so a typo is visible before Face ID. */
@@ -185,12 +191,14 @@ async function submit(event: Event, returning = false): Promise<void> {
   event.preventDefault();
   const data = new FormData(form);
   const usd = String(data.get("amount") ?? "").trim();
-  const period = data.get("period") === "monthly" ? 1 : 0;
+  // The contract's Period enum: Weekly, Monthly, Once.
+  const periodName = String(data.get("period") ?? "weekly");
+  const period = periodName === "monthly" ? 1 : periodName === "once" ? 2 : 0;
   if (!/^\d+(\.\d{1,2})?$/.test(usd)) return show("Enter an amount like 50 or 50.00.", "error");
   const limit = parseUnits(usd, 6); // USDC has 6 decimals; never a float
   if (looksOff(usd)) {
     confirmedUsd = usd;
-    return show(`That's $${Number(usd).toLocaleString("en-US")} a ${period === 1 ? "month" : "week"}. Tap again if that's right.`, "error");
+    return show(`That's $${Number(usd).toLocaleString("en-US")} ${perWords(periodName)}. Tap again if that's right.`, "error");
   }
 
   button.disabled = true;
@@ -227,9 +235,9 @@ async function submit(event: Event, returning = false): Promise<void> {
 
     // Chain details are for debugging only; members never see them.
     console.info("account", account.address, "tx", receipt.transactionHash);
-    const per = period === 1 ? "month" : "week";
+    const per = perWords(periodName);
     show(
-      `${joining && !alreadyIn ? `You're in ${chatName}! ` : "Saved. "}Up to $${usd} a ${per}.\nYou can head back to Messages.`,
+      `${joining && !alreadyIn ? `You're in ${chatName}! ` : "Saved. "}Up to $${usd} ${per}.\nYou can head back to Messages.`,
       "done",
     );
     form.hidden = true;

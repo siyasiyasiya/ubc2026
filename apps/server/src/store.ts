@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { Group, MemberId, RequestState, Split, SpendFlow } from "@gta/core";
+import type { Group, MemberId, RequestState, SpendingLimit, Split, SpendFlow } from "@gta/core";
 
 /** A spend request and where it is in the core state machine. */
 export interface RequestRecord {
@@ -15,6 +15,8 @@ export interface RequestRecord {
   split?: Split;
   /** iMessage id of the approval card, so a 👍 on it can be matched. */
   previewMessageId?: string;
+  /** Approved but held on the group's tab until someone says "settle up" (e.g. end of a trip). */
+  onTab?: boolean;
   createdAt: number;
 }
 
@@ -23,6 +25,8 @@ export interface GroupRecord {
   requests: RequestRecord[];
   /** Latest Face ID invite nonce per handle; tickets for nonces 0..n are valid. */
   inviteNonces?: Record<string, number>;
+  /** The chat's plan: each person's limit here, refilling weekly/monthly or once for a trip. */
+  plan?: SpendingLimit;
 }
 
 interface StoreFile {

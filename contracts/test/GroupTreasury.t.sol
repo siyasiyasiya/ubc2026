@@ -164,6 +164,67 @@ contract GroupTreasuryTest is Test {
         assertEq(treasury.resetsAt(G, siya), block.timestamp + 7 days);
     }
 
+    // --- one-time limits (trips) ---
+
+    function _switchToOnce(address who, uint128 limit) internal {
+        vm.prank(who);
+        treasury.setLimit(G, limit, GroupTreasury.Period.Once);
+    }
+
+    function test_once_neverRefills() public {
+        _switchToOnce(siya, 50 * USD);
+        _switchToOnce(tristan, 50 * USD);
+        _proposeDinner();
+        _approveAll();
+        treasury.settle(ID);
+        assertEq(treasury.remaining(G, siya), 20 * USD);
+        vm.warp(block.timestamp + 400 days);
+        assertEq(treasury.remaining(G, siya), 20 * USD);
+        assertEq(treasury.resetsAt(G, siya), 0);
+    }
+
+    function test_once_raiseKeepsWhatWasSpent() public {
+        _switchToOnce(siya, 50 * USD);
+        _switchToOnce(tristan, 50 * USD);
+        _proposeDinner();
+        _approveAll();
+        treasury.settle(ID);
+        _switchToOnce(siya, 80 * USD); // a top-up for the rest of the trip
+        assertEq(treasury.remaining(G, siya), 50 * USD);
+    }
+
+    function test_once_capsPullsAtTheLimit() public {
+        _switchToOnce(siya, 20 * USD); // her 30 share is over the trip limit
+        _proposeDinner();
+        _approveAll();
+        treasury.settle(ID);
+        assertEq(usdc.balanceOf(siya), 1_000 * USD);
+        assertEq(treasury.debts(siya, neena), 30 * USD);
+    }
+
+    function test_once_joinWithOneTimeLimit() public {
+        address dana = makeAddr("dana");
+        usdc.mint(dana, 1_000 * USD);
+        vm.startPrank(dana);
+        usdc.approve(address(treasury), type(uint256).max);
+        treasury.join(TRIP, 200 * USD, GroupTreasury.Period.Once, _t());
+        vm.stopPrank();
+        (bool active, GroupTreasury.Period period, uint128 limit,,) = treasury.members(TRIP, dana);
+        assertTrue(active);
+        assertEq(uint8(period), uint8(GroupTreasury.Period.Once));
+        assertEq(limit, 200 * USD);
+    }
+
+    function test_once_operatorCanOnlyLower() public {
+        _switchToOnce(siya, 50 * USD);
+        vm.startPrank(operator);
+        treasury.lowerLimit(G, siya, 10 * USD);
+        vm.expectRevert(GroupTreasury.OnlyLower.selector);
+        treasury.lowerLimit(G, siya, 60 * USD);
+        vm.stopPrank();
+        assertEq(treasury.remaining(G, siya), 10 * USD);
+    }
+
     // --- propose ---
 
     function test_propose_revertsForNonOperator() public {

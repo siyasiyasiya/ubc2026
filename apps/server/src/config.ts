@@ -35,7 +35,7 @@ function hex(value: string | undefined): `0x${string}` | undefined {
   return value && /^0x[0-9a-fA-F]+$/.test(value) ? (value as `0x${string}`) : undefined;
 }
 
-const period = process.env.DEFAULT_LIMIT_PERIOD === "monthly" ? "monthly" : "weekly";
+const period = (["monthly", "once"] as const).find((p) => p === process.env.DEFAULT_LIMIT_PERIOD) ?? "weekly";
 
 export const config = {
   imessageMode: process.env.IMESSAGE_MODE === "cloud" ? ("cloud" as const) : ("local" as const),
