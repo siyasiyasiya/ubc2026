@@ -100,6 +100,7 @@ describe("GroupRuntime", () => {
     const req = await t.proposeDinner();
     expect(req.state.name).toBe("awaiting_approval");
     expect(t.posted.find((p) => p.id === req.previewMessageId)?.text).toContain("#1 Dinner: $90.00");
+    expect(t.posted.some((p) => p.text.startsWith("Who paid?"))).toBe(false); // payer and amount were already given
 
     await t.react(SIYA, req.previewMessageId!);
     expect(t.request().state.name).toBe("awaiting_approval");

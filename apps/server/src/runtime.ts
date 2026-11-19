@@ -85,6 +85,8 @@ export class GroupRuntime {
   private readonly history = new Map<string, string[]>();
   /** The last receipt each group posted, attached to the next proposal that matches its total. */
   private readonly lastReceipt = new Map<string, Receipt>();
+  /** Requests being set up right now: the payer and amount are known, so skip the state machine's "Who paid?". */
+  private readonly starting = new Set<string>();
   /** Chats whose roster we've already pulled from the chat port, so we seed members once per chat. */
   private readonly seededRosters = new Set<string>();
   private queue: Promise<void> = Promise.resolve();
@@ -489,11 +491,13 @@ export class GroupRuntime {
   private async snapshot(record: GroupRecord): Promise<string> {
     const members = await Promise.all(
       record.group.members.map(async (m) => {
-        const status = await this.walletFor(record).getLimitStatus(m);
         if (!m.wallet) return `- ${m.displayName} (${m.id}): Kitty account not set up yet`;
+        const wallet = this.walletFor(record);
+        const [status, balance] = await Promise.all([wallet.getLimitStatus(m), wallet.balance?.(m)]);
         const limit = status.limit.amount > 0n ? status.limit : m.limit;
         const when = limit.period === "once" ? "in total (one time, never refills)" : `this ${limit.period === "weekly" ? "week" : "month"}`;
-        return `- ${m.displayName} (${m.id}): ${formatUsdc(status.remaining)} of ${formatUsdc(limit.amount)} left ${when}`;
+        const money = balance === undefined ? "" : `balance ${formatUsdc(balance)} (money in their account); `;
+        return `- ${m.displayName} (${m.id}): ${money}this chat can still take ${formatUsdc(status.remaining)} of their ${formatUsdc(limit.amount)} limit ${when}`;
       }),
     );
     const open = record.requests
@@ -588,10 +592,15 @@ export class GroupRuntime {
     const receipt: Receipt =
       posted && posted.total === split.total ? posted : { source: "photo", total: split.total, at: this.now() };
 
-    for (const memberId of Object.keys(split.shares)) {
-      await this.apply(record, request, { type: "participant_in", memberId });
+    this.starting.add(request.id);
+    try {
+      for (const memberId of Object.keys(split.shares)) {
+        await this.apply(record, request, { type: "participant_in", memberId });
+      }
+      await this.apply(record, request, { type: "participants_locked" });
+    } finally {
+      this.starting.delete(request.id);
     }
-    await this.apply(record, request, { type: "participants_locked" });
     await this.apply(record, request, {
       type: "receipt_read",
       receipt,
@@ -633,6 +642,7 @@ export class GroupRuntime {
         return;
       case "notify":
         // The settlement summary is posted by pullShares with names; other notices go as-is.
+        if (this.starting.has(request.id)) return;
         if (request.state.name !== "done") await this.say(chatId, effect.text);
         return;
       default:
@@ -686,7 +696,7 @@ export class GroupRuntime {
       await this.dm(
         record,
         member,
-        `heads up: your ${formatUsdc(amount)} share of ${request.title} didn't go through (${reason}), so it's owed to ${payee.displayName} for now. add money and pay it back with Face ID: ${link}`,
+        `heads up: your ${formatUsdc(amount)} share of ${request.title} didn't go through (${reason.replace("their", "your")}), so it's owed to ${payee.displayName} for now. add money and pay it back with Face ID: ${link}`,
       );
     }
   }

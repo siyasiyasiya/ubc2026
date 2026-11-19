@@ -23,6 +23,7 @@ import {
   type WalletAdapter,
 } from "@gta/core";
 import {
+  erc20Abi,
   createPublicClient,
   createWalletClient,
   getAddress,
@@ -88,6 +89,15 @@ export class ArcWalletAdapter implements WalletAdapter {
 
   constructor(private readonly opts: ArcWalletAdapterOptions) {
     this.group = groupIdForChat(opts.chatId);
+  }
+
+  async balance(member: Member): Promise<Usdc> {
+    const wallet = walletOf(member);
+    if (!wallet) return micros(0);
+    // USDC is Arc's native currency (18 decimals); its ERC-20 view reports the same money in 6.
+    const usdc = await this.read("usdc", []);
+    const raw = await this.opts.publicClient.readContract({ address: usdc, abi: erc20Abi, functionName: "balanceOf", args: [wallet] });
+    return micros(raw);
   }
 
   async getLimitStatus(member: Member): Promise<LimitStatus> {

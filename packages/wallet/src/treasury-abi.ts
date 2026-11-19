@@ -159,6 +159,13 @@ export const groupTreasuryAbi = [
   },
   {
     type: "function",
+    name: "usdc",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+  },
+  {
+    type: "function",
     name: "removeMember",
     stateMutability: "nonpayable",
     inputs: [
