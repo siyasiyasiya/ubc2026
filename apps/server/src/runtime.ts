@@ -35,13 +35,16 @@ import type { GroupRecord, RequestRecord, Store } from "./store.js";
 
 export interface RuntimeDeps {
   chat: ChatPort;
-  wallet: WalletAdapter;
+  /** One adapter for every chat, or one per chat (the Arc adapter: limits are per chat onchain). */
+  wallet: WalletAdapter | ((chatId: string) => WalletAdapter);
   receipts: ReceiptReader;
   runTurn: typeof RunTurn;
   store: Store;
   defaultLimit: SpendingLimit;
   /** Display names by handle, e.g. { "+18475551234": "Tristan" }. */
   names: Record<string, string>;
+  /** Kitty account (wallet) address by handle. Filled by the Face ID join watcher; config for now. */
+  wallets?: Record<string, string>;
   now?: () => number;
   log?: (line: string) => void;
 }
@@ -105,7 +108,14 @@ export class GroupRuntime {
       };
       record.group.members.push(member);
     }
+    const address = this.deps.wallets?.[handle];
+    if (address && member.wallet?.address !== address) member.wallet = { address };
     return member;
+  }
+
+  private walletFor(record: GroupRecord): WalletAdapter {
+    const { wallet } = this.deps;
+    return typeof wallet === "function" ? wallet(record.group.chatId) : wallet;
   }
 
   private name(record: GroupRecord, memberId: string): string {
@@ -204,7 +214,7 @@ export class GroupRuntime {
   private async snapshot(record: GroupRecord): Promise<string> {
     const members = await Promise.all(
       record.group.members.map(async (m) => {
-        const status = await this.deps.wallet.getLimitStatus(m);
+        const status = await this.walletFor(record).getLimitStatus(m);
         return `- ${m.displayName} (${m.id}): ${m.limit.period} limit ${formatUsdc(m.limit.amount)}, ${formatUsdc(status.remaining)} left`;
       }),
     );
@@ -341,7 +351,7 @@ export class GroupRuntime {
       if (memberId === split.payeeMemberId || amount === 0n) continue;
       const from = record.group.members.find((m) => m.id === memberId);
       const outcome = from
-        ? await this.deps.wallet.pull({ from, to, amount, memo: `${request.title}: your share`, idempotencyKey: `${request.id}:${memberId}` })
+        ? await this.walletFor(record).pull({ from, to, amount, memo: `${request.title}: your share`, idempotencyKey: `${request.id}:${memberId}` })
         : { status: "failed" as const, reason: "not a member" };
       await this.apply(record, request, {
         type: "share_pulled",

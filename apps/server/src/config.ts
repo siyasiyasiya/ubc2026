@@ -21,12 +21,35 @@ function names(value: string | undefined): Record<string, string> {
   );
 }
 
+/** MEMBER_WALLETS="+18475551234=0xabc…,+16105551234=0xdef…" until the Face ID join watcher fills this in. */
+function wallets(value: string | undefined): Record<string, string> {
+  return Object.fromEntries(
+    list(value).flatMap((pair) => {
+      const [handle, address] = pair.split("=").map((s) => s.trim());
+      return handle && address && /^0x[0-9a-fA-F]{40}$/.test(address) ? [[handle, address]] : [];
+    }),
+  );
+}
+
+function hex(value: string | undefined): `0x${string}` | undefined {
+  return value && /^0x[0-9a-fA-F]+$/.test(value) ? (value as `0x${string}`) : undefined;
+}
+
 const period = process.env.DEFAULT_LIMIT_PERIOD === "monthly" ? "monthly" : "weekly";
 
 export const config = {
   imessageMode: process.env.IMESSAGE_MODE === "cloud" ? ("cloud" as const) : ("local" as const),
   allowedChatIds: list(process.env.ALLOWED_CHAT_IDS),
   names: names(process.env.MEMBER_NAMES),
+  wallets: wallets(process.env.MEMBER_WALLETS),
+  /** Set both to pull through GroupTreasury on Arc; otherwise the in-memory wallet is used. */
+  arc: (() => {
+    const operatorPrivateKey = hex(process.env.OPERATOR_PRIVATE_KEY);
+    const treasury = hex(process.env.TREASURY_ADDRESS);
+    return operatorPrivateKey && treasury
+      ? { rpcUrl: process.env.ARC_RPC_URL || undefined, operatorPrivateKey, treasury }
+      : undefined;
+  })(),
   defaultLimit: {
     amount: usdc(Number(process.env.DEFAULT_LIMIT_USD ?? 200)),
     period,

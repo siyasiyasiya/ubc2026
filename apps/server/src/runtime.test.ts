@@ -1,4 +1,4 @@
-import { usdc, type ChatPort, type IncomingMessage, type IncomingReaction, type Receipt } from "@gta/core";
+import { usdc, type ChatPort, type IncomingMessage, type IncomingReaction, type PullParams, type Receipt, type WalletAdapter } from "@gta/core";
 import type { runTurn as RunTurn } from "@gta/agent";
 import { InMemoryWalletAdapter } from "@gta/wallet";
 import { describe, expect, it } from "vitest";
@@ -12,7 +12,7 @@ const OUTSIDER = "+1999";
 const CHAT = "group";
 
 /** A runtime whose "agent" proposes a $90 dinner paid by Neena, split three ways. */
-function setup(limitUsd = 200) {
+function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapter; wallets?: Record<string, string> } = {}) {
   const posted: { id: string; text: string }[] = [];
   const onMessage: ((m: IncomingMessage) => void)[] = [];
   const onReaction: ((r: IncomingReaction) => void)[] = [];
@@ -40,7 +40,8 @@ function setup(limitUsd = 200) {
   const store = new Store();
   const runtime = new GroupRuntime({
     chat,
-    wallet: new InMemoryWalletAdapter(),
+    wallet: opts.wallet ?? new InMemoryWalletAdapter(),
+    ...(opts.wallets ? { wallets: opts.wallets } : {}),
     receipts: { read: async (): Promise<Receipt> => ({ source: "photo", total: usdc(90), at: 0 }) },
     runTurn: fakeTurn,
     store,
@@ -115,5 +116,31 @@ describe("GroupRuntime", () => {
     const t = setup();
     await t.say(SIYA, "lol");
     expect(t.posted).toEqual([]);
+  });
+
+  it("pulls through the chat's own wallet adapter, between members' Kitty accounts", async () => {
+    const chats: string[] = [];
+    const pulls: PullParams[] = [];
+    const inner = new InMemoryWalletAdapter();
+    const perChat = (chatId: string): WalletAdapter => {
+      chats.push(chatId);
+      return {
+        id: "per-chat",
+        getLimitStatus: (m) => inner.getLimitStatus(m),
+        canPull: (m, a) => inner.canPull(m, a),
+        pull: async (p) => (pulls.push(p), { status: "pulled", txRef: "0xtx" }),
+      };
+    };
+    const wallets = { [NEENA]: "0x00000000000000000000000000000000000000aa", [SIYA]: "0x00000000000000000000000000000000000000bb" };
+    const t = setup(200, { wallet: perChat, wallets });
+    const req = await t.proposeDinner();
+    await t.react(SIYA, req.previewMessageId!);
+    await t.react(TRISTAN, req.previewMessageId!);
+
+    expect(new Set(chats)).toEqual(new Set([CHAT]));
+    const fromSiya = pulls.find((p) => p.from.id === SIYA)!;
+    expect(fromSiya.from.wallet?.address).toBe(wallets[SIYA]);
+    expect(fromSiya.to).toEqual({ kind: "wallet", address: wallets[NEENA] });
+    expect(pulls.find((p) => p.from.id === TRISTAN)?.from.wallet).toBeUndefined(); // hasn't joined yet
   });
 });
