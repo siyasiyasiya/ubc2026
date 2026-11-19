@@ -115,4 +115,15 @@ export const groupTreasuryAbi = [
       { name: "reason", type: "string", indexed: false },
     ],
   },
+  {
+    type: "event",
+    name: "Joined",
+    inputs: [
+      { name: "group", type: "bytes32", indexed: true },
+      { name: "member", type: "address", indexed: true },
+      { name: "limit", type: "uint256", indexed: false },
+      { name: "period", type: "uint8", indexed: false },
+      { name: "ticket", type: "bytes32", indexed: false },
+    ],
+  },
 ] as const;
