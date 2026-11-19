@@ -16,9 +16,11 @@ import { ClaudeReceiptReader, runTurn } from "@gta/agent";
 import { PhotonChatPort } from "@gta/imessage";
 import { usdc } from "@gta/core";
 import { arcClients, arcWalletAdapters, InMemoryWalletAdapter, JoinWatcher, sendWelcomeBalance } from "@gta/wallet";
-import { config } from "./config.js";
+import { config, warnIfNoClaudeAuth } from "./config.js";
 import { GroupRuntime } from "./runtime.js";
 import { Store } from "./store.js";
+
+warnIfNoClaudeAuth();
 
 if (config.allowedChatIds.length === 0) {
   console.warn(

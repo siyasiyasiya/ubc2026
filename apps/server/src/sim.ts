@@ -14,9 +14,11 @@ import readline from "node:readline/promises";
 import { ClaudeReceiptReader, runTurn } from "@gta/agent";
 import type { ChatPort, IncomingMessage, IncomingReaction } from "@gta/core";
 import { InMemoryWalletAdapter } from "@gta/wallet";
-import { config } from "./config.js";
+import { config, warnIfNoClaudeAuth } from "./config.js";
 import { GroupRuntime } from "./runtime.js";
 import { Store } from "./store.js";
+
+warnIfNoClaudeAuth();
 
 const CHAT = "sim-group";
 const handles: Record<string, string> = { neena: "+15550000001", siya: "+15550000002", tristan: "+15550000003" };

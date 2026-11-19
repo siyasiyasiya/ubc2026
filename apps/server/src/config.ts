@@ -65,3 +65,18 @@ export const config = {
   welcomeUsd: Number(process.env.WELCOME_USD ?? 5),
   stateFile: process.env.STATE_FILE ?? path.resolve(here, "../data/state.json"),
 };
+
+/**
+ * The agent + receipt reader call the real Claude API, so the sim is not truly "offline".
+ * Warn loudly (but don't exit — an `ant auth login` profile is valid auth with no env var) so a
+ * missing key surfaces here instead of as an opaque 401 on the first message.
+ */
+export function warnIfNoClaudeAuth(): void {
+  if (!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN) {
+    console.warn(
+      "⚠️  No ANTHROPIC_API_KEY found. The agent calls Claude for real.\n" +
+        "   Set it in apps/server/.env (see apps/server/.env.example), or run `ant auth login`.\n" +
+        "   Without credentials the first message will fail with a 401.",
+    );
+  }
+}
