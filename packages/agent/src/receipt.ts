@@ -30,7 +30,14 @@ async function toJpeg(file: string): Promise<Buffer> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "receipt-"));
   try {
     const output = path.join(dir, "out.jpg");
-    await run("sips", ["-s", "format", "jpeg", "-Z", "1600", file, "--out", output]);
+    try {
+      await run("sips", ["-s", "format", "jpeg", "-Z", "1600", file, "--out", output]);
+    } catch (err) {
+      // execFile's "Command failed" hides why; surface sips' own stderr so the log is actionable
+      // (missing file, unreadable Attachments dir, or a format sips can't open).
+      const e = err as { stderr?: string; message?: string };
+      throw new Error(`sips couldn't convert ${file}: ${(e.stderr || e.message || "unknown error").trim()}`);
+    }
     return await fs.readFile(output);
   } finally {
     await fs.rm(dir, { recursive: true, force: true });

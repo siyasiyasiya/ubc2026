@@ -1,4 +1,5 @@
 import { usdc, type PurchaseAdapter, type ChatPort, type IncomingMessage, type IncomingReaction, type PullParams, type Receipt, type WalletAdapter } from "@gta/core";
+import { NotAReceiptError } from "@gta/agent";
 import type { runTurn as RunTurn, runDmTurn as RunDmTurn } from "@gta/agent";
 import { groupIdForChat, InMemoryWalletAdapter, inviteTicket } from "@gta/wallet";
 import { describe, expect, it } from "vitest";
@@ -14,7 +15,7 @@ const OUTSIDER = "+1999";
 const CHAT = "group";
 
 /** A runtime whose "agent" proposes a $90 dinner paid by Neena, split three ways. */
-function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapter; wallets?: Record<string, string>; invites?: { baseUrl: string; secret: string }; chats?: string[]; participants?: string[]; chatName?: string; receiptItems?: { name: string; amount: ReturnType<typeof usdc> }[]; purchase?: PurchaseAdapter; calls?: RestaurantCaller; testMoney?: { send: (address: string, amount: bigint) => Promise<string>; maxUsd: number; dailyUsd: number } } = {}) {
+function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapter; wallets?: Record<string, string>; invites?: { baseUrl: string; secret: string }; chats?: string[]; participants?: string[]; chatName?: string; receiptItems?: { name: string; amount: ReturnType<typeof usdc> }[]; receiptError?: Error; purchase?: PurchaseAdapter; calls?: RestaurantCaller; testMoney?: { send: (address: string, amount: bigint) => Promise<string>; maxUsd: number; dailyUsd: number } } = {}) {
   const posted: { id: string; text: string }[] = [];
   const failing = { posts: 0, dms: 0 };
   const dms: { handle: string; text: string }[] = [];
@@ -50,7 +51,9 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
     getParticipants: async () => opts.participants ?? [],
     getChatName: async () => opts.chatName ?? null,
   };
+  const turnEvents: string[] = [];
   const fakeTurn: typeof RunTurn = async ({ actions, event }) => {
+    turnEvents.push(event);
     if (event.includes("join me")) return actions.sendJoinLink({});
     if (event.includes("split by item")) return actions.splitByItem({ payer: "Neena", claims: { Siya: [1], Tristan: [2] } });
     if (event.includes("who owes")) return actions.netDebts();
@@ -105,10 +108,12 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
     ...(opts.calls ? { calls: opts.calls, callPollMs: 1 } : {}),
     ...(opts.testMoney ? { testMoney: opts.testMoney as never } : {}),
     receipts: {
-      read: async (): Promise<Receipt> =>
-        opts.receiptItems
+      read: async (): Promise<Receipt> => {
+        if (opts.receiptError) throw opts.receiptError;
+        return opts.receiptItems
           ? { source: "photo", total: opts.receiptItems.reduce((a, i) => (a + i.amount) as typeof i.amount, usdc(0)), lineItems: opts.receiptItems, at: 0 }
-          : { source: "photo", total: usdc(90), at: 0 },
+          : { source: "photo", total: usdc(90), at: 0 };
+      },
     },
     runTurn: fakeTurn,
     runDmTurn: fakeDmTurn,
@@ -142,7 +147,7 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
     await say(NEENA, "split dinner with siya and tristan");
     return request();
   };
-  return { posted, dms, failing, say, react, dm, image, dmSummaries, proposeDinner, request, runtime, store };
+  return { posted, dms, failing, say, react, dm, image, dmSummaries, turnEvents, proposeDinner, request, runtime, store };
 }
 
 describe("GroupRuntime", () => {
@@ -171,6 +176,20 @@ describe("GroupRuntime", () => {
     const card = t.posted.find((p) => p.id === req.previewMessageId)!.text;
     expect(card).toContain("Siya $50.00");
     expect(card).toContain("Tristan $40.00");
+  });
+
+  it("tells the agent it's not a receipt only when the reader actually says so", async () => {
+    const t = setup(200, { receiptError: new NotAReceiptError("not a receipt") });
+    await t.image(NEENA);
+    expect(t.turnEvents.at(-1)).toContain("isn't a receipt");
+  });
+
+  it("distinguishes a technical read failure from 'not a receipt' so it asks for a resend", async () => {
+    const t = setup(200, { receiptError: new Error("sips couldn't convert /receipt.jpg: no such file") });
+    await t.image(NEENA);
+    const event = t.turnEvents.at(-1)!;
+    expect(event).toContain("couldn't open it");
+    expect(event).not.toContain("isn't a receipt");
   });
 
   it("ignores 👍 from outside the split and other emoji", async () => {

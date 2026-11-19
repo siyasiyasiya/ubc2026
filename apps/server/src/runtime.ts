@@ -37,6 +37,7 @@ import {
   type Usdc,
   type WalletAdapter,
 } from "@gta/core";
+import { NotAReceiptError } from "@gta/agent";
 import type { runTurn as RunTurn, runDmTurn as RunDmTurn, TreasuryActions, DmActions } from "@gta/agent";
 import { groupIdForChat, inviteLink, inviteTicket, type DebtPaidEvent, type JoinEvent, type LimitSetEvent } from "@gta/wallet";
 import type { GroupRecord, RequestRecord, Store } from "./store.js";
@@ -554,8 +555,14 @@ export class GroupRuntime {
           `subtotal ${formatUsdc(receipt.subtotal ?? usdc(0))}, tax ${formatUsdc(receipt.tax ?? usdc(0))}, ` +
           `tip ${formatUsdc(receipt.tip ?? usdc(0))}, total ${formatUsdc(receipt.total)}. Items: ${items || "not listed"}]`;
       } catch (err) {
-        this.log(`receipt not read: ${(err as Error).message}`);
-        event = `[${member.displayName} posted a file that isn't a receipt]`;
+        if (err instanceof NotAReceiptError) {
+          event = `[${member.displayName} posted a file that isn't a receipt]`;
+        } else {
+          // A technical failure (couldn't open the file, converter or vision call errored), not a
+          // verdict that it's not a receipt. Log loudly and tell the agent so it asks for a resend.
+          this.log(`receipt read failed on ${image.mimeType ?? "file"} ${image.uri}: ${(err as Error).message}`);
+          event = `[${member.displayName} posted an image but Kitty couldn't open it this time]`;
+        }
       }
     }
     if (!event) return;
