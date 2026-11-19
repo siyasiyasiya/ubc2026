@@ -15,6 +15,8 @@ import {
   byItemSplit,
   customSplit,
   evenSplit,
+  netTransfers,
+  type Transfer,
   formatUsdc,
   initialState,
   transition,
@@ -760,6 +762,46 @@ export class GroupRuntime {
       });
   }
 
+  /**
+   * The simplest way for the group to settle its outstanding debts: gather recorded debts (debtor
+   * owes that split's payee), use the onchain amount when the adapter can read it (so paid-back
+   * debts drop off), then net them to the fewest transfers.
+   */
+  private async netSettlement(record: GroupRecord): Promise<string> {
+    const wallet = this.walletFor(record);
+    const pairs = new Map<string, { debtor: Member; creditor: Member; local: bigint }>();
+    for (const r of record.requests) {
+      if (!r.split) continue;
+      const creditor = record.group.members.find((m) => m.id === r.split!.payeeMemberId);
+      if (!creditor) continue;
+      const debts = (r.state as { debts?: { memberId: string; amount: Usdc }[] }).debts ?? [];
+      for (const d of debts) {
+        const debtor = record.group.members.find((m) => m.id === d.memberId);
+        if (!debtor || debtor.id === creditor.id) continue;
+        const key = `${debtor.id}->${creditor.id}`;
+        const prev = pairs.get(key);
+        pairs.set(key, { debtor, creditor, local: (prev?.local ?? 0n) + d.amount });
+      }
+    }
+    const debts: Transfer[] = [];
+    for (const { debtor, creditor, local } of pairs.values()) {
+      let amount = local;
+      if (wallet.owed) {
+        try {
+          amount = await wallet.owed(debtor, creditor);
+        } catch {
+          /* keep the locally recorded amount */
+        }
+      }
+      if (amount > 0n) debts.push({ from: debtor.id, to: creditor.id, amount: amount as Usdc });
+    }
+    const net = netTransfers(debts);
+    if (net.length === 0) return "nobody owes anybody right now, you're all square 🎉";
+    const lines = net.map((t) => `${this.name(record, t.from)} → ${this.name(record, t.to)} ${formatUsdc(t.amount)}`);
+    const note = debts.length > net.length ? `\n(${net.length} transfer${net.length === 1 ? "" : "s"} instead of ${debts.length})` : "";
+    return `simplest way to settle up:\n${lines.join("\n")}${note}`;
+  }
+
   private async snapshot(record: GroupRecord): Promise<string> {
     const members = await Promise.all(
       record.group.members.map(async (m) => {
@@ -850,6 +892,7 @@ export class GroupRuntime {
         return `${record.group.name}'s plan is now ${formatUsdc(record.plan.amount)} each ${perPeriod(period)}.`;
       },
       settleUp: async () => this.settleUp(record),
+      netDebts: async () => this.netSettlement(record),
       callRestaurant: async (input) => {
         try {
           return await this.callRestaurant(record, sender, input);

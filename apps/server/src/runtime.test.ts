@@ -53,6 +53,7 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
   const fakeTurn: typeof RunTurn = async ({ actions, event }) => {
     if (event.includes("join me")) return actions.sendJoinLink({});
     if (event.includes("split by item")) return actions.splitByItem({ payer: "Neena", claims: { Siya: [1], Tristan: [2] } });
+    if (event.includes("who owes")) return actions.netDebts();
     if (event.includes("book uchi")) {
       return actions.callRestaurant({ restaurant: "Uchi", phone: event.includes("no number") ? "ask them" : "(512) 555-0100", partySize: 4, when: "tomorrow 7:30pm" });
     }
@@ -229,6 +230,20 @@ describe("GroupRuntime", () => {
     await t.react(SIYA, req.previewMessageId!);
     await t.react(TRISTAN, req.previewMessageId!);
     expect(t.posted.some((p) => p.text.includes("Siya → Neena $30.00 ✗ not set up in Kitty yet, nothing moved"))).toBe(true);
+  });
+
+  it("nets outstanding debts into the simplest pay-backs", async () => {
+    const t = setup(20); // $20/week limit; each $30 share fails and becomes a debt to Neena
+    const req = await t.proposeDinner();
+    await t.react(SIYA, req.previewMessageId!);
+    await t.react(TRISTAN, req.previewMessageId!);
+    expect(t.request().state.name).toBe("done"); // partly settled, two debts recorded
+
+    await t.say(NEENA, "who owes what?");
+    const msg = t.posted.at(-1)!.text;
+    expect(msg).toContain("settle up");
+    expect(msg).toContain("Siya → Neena $30.00");
+    expect(msg).toContain("Tristan → Neena $30.00");
   });
 
   it("stays quiet when the agent has nothing to say", async () => {

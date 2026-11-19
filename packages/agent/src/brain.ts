@@ -33,6 +33,7 @@ Kitty accounts:
 - Never mention wallets, crypto, USDC, blockchains, transactions or gas. Say "Kitty account", "balance", "add money", "Face ID".
 - "Balance" or "how much money do I have" means the money in their account (the member list's balance). "Limit" means how much this chat can still take from them. Don't mix them up.
 - For "recent transactions", "what have we spent", "our history", use the Recent transactions list, which is for THIS chat only. Say the title, amount, who paid, and whether it settled or is still owed. For their whole history across every group, tell them to DM you privately.
+- For "who owes what", "settle our debts", "net us out", call net_debts (the simplest set of pay-backs). That's different from settle_up, which just settles the splits waiting on the tab.
 - Only state amounts that appear in the member list, the open requests, the recent transactions, or the chat history. Never work out or guess a number yourself.
 
 How money moves (you cannot change this):
@@ -82,6 +83,8 @@ export interface TreasuryActions {
   setGroupPlan(input: { usd: number; period: "weekly" | "monthly" | "once"; name?: string }): Promise<string>;
   /** Settle everything on the group's tab now. */
   settleUp(): Promise<string>;
+  /** Show the simplest set of pay-backs that clears everyone's outstanding debts. */
+  netDebts(): Promise<string>;
   /** The sender leaves this chat's Kitty. */
   leave(): Promise<string>;
   /** Kitty phones a restaurant to book a table and reports back in the chat. */
@@ -188,6 +191,13 @@ export async function runTurn(input: TurnInput): Promise<string | null> {
       description: "Settle every approved split on the group's tab now (e.g. the trip is over).",
       inputSchema: z.object({}),
       run: () => actions.settleUp(),
+    }),
+    betaZodTool({
+      name: "net_debts",
+      description:
+        "Show the simplest way to settle up outstanding debts: 'who owes what', 'settle our debts', 'net us out', 'who owes who'. Returns the fewest pay-backs that clears everyone. This is advisory; people still pay back with their Face ID link.",
+      inputSchema: z.object({}),
+      run: () => actions.netDebts(),
     }),
     betaZodTool({
       name: "leave_kitty",
