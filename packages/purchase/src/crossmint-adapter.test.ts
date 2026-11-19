@@ -63,6 +63,7 @@ function adapter(fetch: FetchLike, renderer?: CheckoutScreenshotRenderer): Cross
       fetch,
     }),
     paymentMethodId: "pm_card_1",
+    buyer: { email: "kitty@example.com", name: "Ada Lovelace", zip: "43065", country: "US" },
     screenshotRenderer: renderer,
     pollIntervalMs: 0,
     sleep: async () => {},
@@ -99,6 +100,69 @@ const BUILD_INPUT: BuildCartInput = {
 };
 
 afterEach(() => vi.restoreAllMocks());
+
+/** A run as Crossmint really sends it: the question nested under requiredAction.request. */
+function live(run: WireRun): WireRun {
+  if (!run.requiredAction) return run;
+  const { interaction, ...rest } = run.requiredAction;
+  return { ...run, requiredAction: { ...rest, request: { question: "?", interaction } } as never };
+}
+
+describe("buildCart with store questions", () => {
+  const form = live({
+    runId: RUN_ID,
+    status: "awaiting_input",
+    requiredAction: {
+      requestId: "req_form_1",
+      interaction: {
+        kind: "form",
+        fields: [
+          { key: "email", label: "Email address (for the download link)", required: false },
+          { key: "full_name", label: "Full name (cardholder name)", required: false },
+          { key: "country", label: "Country", required: true },
+          { key: "zip", label: "ZIP / postal code", required: false },
+        ],
+      },
+    },
+  });
+
+  it("answers the store's form from the buyer details, then prices the live payment step", async () => {
+    // The form stays up for one more poll after answering; it must not be answered twice.
+    const { fetch, rec } = makeFetch({ getRunQueue: [form, form, live(paymentRun())] });
+    const cart = await adapter(fetch).buildCart(BUILD_INPUT);
+
+    const answers = rec.calls.filter((c) => c.path.endsWith("/messages"));
+    expect(answers).toHaveLength(1);
+    expect(answers[0]?.body).toMatchObject({
+      parts: [
+        {
+          type: "input_response",
+          requestId: "req_form_1",
+          action: "submit",
+          response: {
+            kind: "form",
+            answers: { email: "kitty@example.com", full_name: "Ada Lovelace", country: "US", zip: "43065" },
+          },
+        },
+      ],
+    });
+    expect(cart.total).toBe(42_500_000n);
+  });
+
+  it("stops without charging when the store needs something Kitty doesn't have", async () => {
+    const needsPhone = live({
+      runId: RUN_ID,
+      status: "awaiting_input",
+      requiredAction: {
+        requestId: "req_form_2",
+        interaction: { kind: "form", fields: [{ key: "phone", label: "Phone", required: true }] },
+      },
+    });
+    const { fetch, rec } = makeFetch({ getRunQueue: [needsPhone] });
+    await expect(adapter(fetch).buildCart(BUILD_INPUT)).rejects.toThrow(/asked for Phone/);
+    expect(rec.calls.find((c) => c.path === "/order-intents")).toBeUndefined();
+  });
+});
 
 describe("buildCart", () => {
   it("starts a run and prices the cart from the payment step", async () => {

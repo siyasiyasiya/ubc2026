@@ -14,6 +14,7 @@ export {
   CrossmintPurchaseAdapter,
   createCrossmintPurchaseAdapterFromEnv,
   crossmintJwtSignerFromEnv,
+  type BuyerDetails,
   type CrossmintPurchaseAdapterConfig,
 } from "./crossmint-adapter.js";
 

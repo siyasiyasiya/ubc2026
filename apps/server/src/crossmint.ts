@@ -4,13 +4,15 @@
  *   pnpm --filter @gta/server crossmint card            print the save-card link (valid 1 hour)
  *   pnpm --filter @gta/server crossmint buy "<what or URL>"   build the cart, show the total,
  *                                                       and charge the card only after you type "yes"
+ *   ... crossmint buy --max 3 "<what or URL>"           no prompt: charge only if the real total
+ *                                                       (tax and shipping included) is at most $3
  *
  * Needs CROSSMINT_API_KEY, CROSSMINT_CLIENT_API_KEY, CROSSMINT_USER_ID, CROSSMINT_JWT_PRIVATE_KEY,
  * and for `buy` CROSSMINT_PAYMENT_METHOD_ID (see apps/server/.env.example).
  */
 
 import { createInterface } from "node:readline/promises";
-import { formatUsdc } from "@gta/core";
+import { formatUsdc, usdc } from "@gta/core";
 import { createCrossmintPurchaseAdapterFromEnv, crossmintJwtSignerFromEnv } from "@gta/purchase";
 
 const [command, ...rest] = process.argv.slice(2);
@@ -33,8 +35,15 @@ if (command === "card") {
   console.log(`Open on your phone or laptop (valid 1 hour):\n\n${onboardUrl}/card.html#${hash}\n`);
   console.log("Then put the id it shows in apps/server/.env as CROSSMINT_PAYMENT_METHOD_ID.");
 } else if (command === "buy" && rest.length > 0) {
+  const maxAt = rest.indexOf("--max");
+  const max = maxAt >= 0 ? usdc(Number(rest.splice(maxAt, 2)[1])) : undefined;
+  if (max !== undefined && !(max > 0n)) {
+    console.error("--max needs a dollar amount, e.g. --max 3");
+    process.exit(1);
+  }
   const request = rest.join(" ");
-  const store = createCrossmintPurchaseAdapterFromEnv();
+  // The cap is also Crossmint's budget, so its browser won't go past it either.
+  const store = createCrossmintPurchaseAdapterFromEnv(process.env, max !== undefined ? { maxCost: max } : {});
   console.log(`Shopping for "${request}" (this takes a minute or two)…`);
   const cart = await store.buildCart({
     requestText: request,
@@ -43,16 +52,23 @@ if (command === "card") {
   console.log(`\n${cart.store}: ${formatUsdc(cart.total)}`);
   for (const li of cart.lineItems) console.log(`  ${li.quantity} × ${li.name}  ${formatUsdc(li.unitPrice)}`);
 
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  const answer = await rl.question(`\nCharge the card ${formatUsdc(cart.total)} and place this order? Type "yes": `);
-  rl.close();
-  if (answer.trim().toLowerCase() !== "yes") {
+  let ok: boolean;
+  if (max !== undefined) {
+    ok = cart.total <= max;
+    console.log(ok ? `\nUnder the ${formatUsdc(max)} cap, ordering.` : `\nOver the ${formatUsdc(max)} cap.`);
+  } else {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const answer = await rl.question(`\nCharge the card ${formatUsdc(cart.total)} and place this order? Type "yes": `);
+    rl.close();
+    ok = answer.trim().toLowerCase() === "yes";
+  }
+  if (!ok) {
     console.log("Not ordered. Nothing was charged.");
     process.exit(0);
   }
   const receipt = await store.placeOrder({ cart });
   console.log(`\nOrdered ✅ ${receipt.merchant}, ${formatUsdc(receipt.total)}`);
 } else {
-  console.error('usage: pnpm --filter @gta/server crossmint card | buy "<what or URL>"');
+  console.error('usage: pnpm --filter @gta/server crossmint card | buy [--max <usd>] "<what or URL>"');
   process.exit(1);
 }

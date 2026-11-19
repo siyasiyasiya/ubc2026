@@ -51,6 +51,7 @@ import type { BuildCartInput, PlaceOrderInput, PreviewResult, PurchaseAdapter } 
 import {
   CrossmintHttpClient,
   type CrossmintAgentCheckouts,
+  type WireFormInteraction,
   type WireLineItem,
   type WirePaymentInteraction,
   type WireRun,
@@ -70,6 +71,8 @@ export interface CrossmintPurchaseAdapterConfig {
   paymentMethodId: string;
   /** Optional merchant/buyer account session (the buyer's own store account). */
   buyerProfileId?: string;
+  /** Answers to the store's checkout questions (email, name, country, zip…), by field kind. */
+  buyer?: BuyerDetails;
   /** Optional persistent browser profile id. */
   browserProfileId?: string;
   /** Spend guardrail per checkout → constraints.maxCost. Default $1,000. */
@@ -104,6 +107,42 @@ function isPayment(run: WireRun): run is WireRun & {
   );
 }
 
+function isForm(run: WireRun): run is WireRun & {
+  requiredAction: { requestId: string; interaction: WireFormInteraction };
+} {
+  return run.status === "awaiting_input" && run.requiredAction?.interaction?.kind === "form";
+}
+
+/** What Kitty can tell a store at checkout. */
+export interface BuyerDetails {
+  email?: string;
+  name?: string;
+  phone?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  country?: string;
+}
+
+/** Match a store's field (key + label) to a buyer detail. Order matters: "email" before "name". */
+function buyerValue(b: BuyerDetails, field: string): string | undefined {
+  const f = field.toLowerCase();
+  const first = b.name?.split(" ")[0];
+  const last = b.name?.split(" ").slice(1).join(" ") || undefined;
+  if (/e-?mail/.test(f)) return b.email;
+  if (/phone|mobile/.test(f)) return b.phone;
+  if (/first/.test(f)) return first;
+  if (/last|surname/.test(f)) return last;
+  if (/name/.test(f)) return b.name;
+  if (/zip|postal|post code|postcode/.test(f)) return b.zip;
+  if (/country/.test(f)) return b.country;
+  if (/state|province|region/.test(f)) return b.state;
+  if (/city|town|locality/.test(f)) return b.city;
+  if (/address|street|line ?1/.test(f)) return b.address;
+  return undefined;
+}
+
 function hostnameOf(url: string): string | undefined {
   try {
     return new URL(url).hostname.replace(/^www\./, "");
@@ -132,7 +171,7 @@ export class CrossmintPurchaseAdapter implements PurchaseAdapter {
       | "sleep"
     >
   > &
-    Pick<CrossmintPurchaseAdapterConfig, "buyerProfileId" | "browserProfileId">;
+    Pick<CrossmintPurchaseAdapterConfig, "buyerProfileId" | "browserProfileId" | "buyer">;
 
   constructor(config: CrossmintPurchaseAdapterConfig) {
     this.store = config.store ?? "crossmint";
@@ -141,6 +180,7 @@ export class CrossmintPurchaseAdapter implements PurchaseAdapter {
       paymentMethodId: config.paymentMethodId,
       buyerProfileId: config.buyerProfileId,
       browserProfileId: config.browserProfileId,
+      buyer: config.buyer,
       maxCost: config.maxCost ?? micros(1_000_000_000n), // $1,000
       countryCode: config.countryCode ?? "US",
       store: this.store,
@@ -170,14 +210,26 @@ export class CrossmintPurchaseAdapter implements PurchaseAdapter {
       },
     });
 
-    // Poll until the run reaches the payment step (total known) or stops.
-    const settled = await this.waitUntil(run.runId, (r) => isPayment(r) || TERMINAL.has(r.status));
+    // Poll until the run reaches the payment step (total known) or stops, answering the
+    // store's questions (email, name, zip…) along the way.
+    const answered = new Set<string>();
+    let settled: WireRun;
+    for (;;) {
+      settled = await this.waitUntil(
+        run.runId,
+        (r) => isPayment(r) || TERMINAL.has(r.status) || (isForm(r) && !answered.has(r.requiredAction.requestId)),
+      );
+      if (!isForm(settled)) break;
+      const { requestId, interaction } = settled.requiredAction;
+      await this.cfg.client.answerForm(run.runId, requestId, this.answerFields(run.runId, interaction.fields ?? []));
+      answered.add(requestId);
+    }
     this.throwIfStopped(settled);
     if (!isPayment(settled)) {
       // Succeeded without a pay gate (nothing to approve) or stuck on a form.
       throw new CrossmintCheckoutError(
         `checkout did not reach an approvable payment step (status=${settled.status}` +
-          `${settled.requiredAction ? `, interaction=${settled.requiredAction.interaction.kind}` : ""})`,
+          `${settled.requiredAction ? `, interaction=${settled.requiredAction.interaction?.kind}` : ""})`,
         { runId: settled.runId, status: settled.status },
       );
     }
@@ -245,6 +297,26 @@ export class CrossmintPurchaseAdapter implements PurchaseAdapter {
   }
 
   // -- internals -------------------------------------------------------------
+
+  /** Answer every field we have a value for; stop (nothing charged) if a required one is unknown. */
+  private answerFields(
+    runId: string,
+    fields: Array<{ key: string; label?: string; required?: boolean }>,
+  ): Record<string, string> {
+    const answers: Record<string, string> = {};
+    const missing: string[] = [];
+    for (const f of fields) {
+      const value = buyerValue(this.cfg.buyer ?? {}, `${f.key} ${f.label ?? ""}`);
+      if (value) answers[f.key] = value;
+      else if (f.required) missing.push(f.label ?? f.key);
+    }
+    if (missing.length > 0) {
+      throw new CrossmintCheckoutError(`the store asked for ${missing.join(", ")}, which Kitty doesn't have`, {
+        runId,
+      });
+    }
+    return answers;
+  }
 
   private async authorizeCard(pay: WirePaymentInteraction, cart: Cart): Promise<string> {
     const expiresAt = new Date(this.cfg.now() + this.cfg.orderIntentTtlMs).toISOString();
@@ -424,6 +496,16 @@ export function createCrossmintPurchaseAdapterFromEnv(
     client,
     paymentMethodId: requireEnv(env, "CROSSMINT_PAYMENT_METHOD_ID"),
     buyerProfileId: env.CROSSMINT_BUYER_PROFILE_ID,
+    buyer: {
+      email: env.CROSSMINT_BUYER_EMAIL,
+      name: env.CROSSMINT_BUYER_NAME,
+      phone: env.CROSSMINT_BUYER_PHONE,
+      address: env.CROSSMINT_BUYER_ADDRESS,
+      city: env.CROSSMINT_BUYER_CITY,
+      state: env.CROSSMINT_BUYER_STATE,
+      zip: env.CROSSMINT_BUYER_ZIP,
+      country: env.CROSSMINT_BUYER_COUNTRY ?? "US",
+    },
     browserProfileId: env.CROSSMINT_BROWSER_PROFILE_ID,
     store: env.CROSSMINT_STORE_LABEL,
     ...overrides,

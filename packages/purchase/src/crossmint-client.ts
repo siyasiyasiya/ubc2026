@@ -85,7 +85,9 @@ export type WireInteraction = WirePaymentInteraction | WireFormInteraction;
 
 export interface WireRequiredAction {
   requestId: string;
+  /** Filled by `getRun` from `request.interaction`, where Crossmint actually puts it. */
   interaction: WireInteraction;
+  request?: { question?: string; expiresAt?: string; interaction?: WireInteraction };
 }
 
 export interface WireReceipt {
@@ -165,6 +167,7 @@ export interface CrossmintClientConfig {
 export interface CrossmintAgentCheckouts {
   createRun(body: CreateRunBody): Promise<WireRun>;
   getRun(runId: string): Promise<WireRun>;
+  answerForm(runId: string, requestId: string, answers: Record<string, string>): Promise<void>;
   answerPayment(runId: string, requestId: string, orderIntentId: string): Promise<void>;
   cancelRun(runId: string): Promise<void>;
   createOrderIntent(body: CreateOrderIntentBody): Promise<WireOrderIntent>;
@@ -232,21 +235,38 @@ export class CrossmintHttpClient implements CrossmintAgentCheckouts {
     return this.request<WireRun>("POST", "/agent-checkouts", body);
   }
 
-  getRun(runId: string): Promise<WireRun> {
-    return this.request<WireRun>("GET", `/agent-checkouts/${encodeURIComponent(runId)}`);
+  async getRun(runId: string): Promise<WireRun> {
+    const run = await this.request<WireRun>("GET", `/agent-checkouts/${encodeURIComponent(runId)}`);
+    // Live runs nest the question: requiredAction.request.interaction.
+    const nested = run.requiredAction?.request?.interaction;
+    if (run.requiredAction && !run.requiredAction.interaction && nested) {
+      run.requiredAction.interaction = nested;
+    }
+    return run;
+  }
+
+  async answerForm(runId: string, requestId: string, answers: Record<string, string>): Promise<void> {
+    await this.sendPart(runId, {
+      type: "input_response",
+      requestId,
+      action: "submit",
+      response: { kind: "form", answers },
+    });
+  }
+
+  private async sendPart(runId: string, part: unknown): Promise<void> {
+    await this.request<unknown>("POST", `/agent-checkouts/${encodeURIComponent(runId)}/messages`, {
+      id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      parts: [part],
+    });
   }
 
   async answerPayment(runId: string, requestId: string, orderIntentId: string): Promise<void> {
-    await this.request<unknown>("POST", `/agent-checkouts/${encodeURIComponent(runId)}/messages`, {
-      id: `msg_${Date.now()}`,
-      parts: [
-        {
-          type: "input_response",
-          requestId,
-          action: "submit",
-          response: { kind: "payment", orderIntentId },
-        },
-      ],
+    await this.sendPart(runId, {
+      type: "input_response",
+      requestId,
+      action: "submit",
+      response: { kind: "payment", orderIntentId },
     });
   }
 
