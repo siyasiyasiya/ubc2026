@@ -1,39 +1,38 @@
 /**
- * @gta/server — composition root.
+ * @gta/server — composition root. Wires the adapters into the runtime and runs the bot.
  *
- * SKELETON. This is where concrete adapters get wired into the core state
- * machine and the agent loop runs:
+ *   pnpm --filter @gta/server dev     (reads apps/server/.env)
  *
- *   chat (ChatPort)      ─┐
- *   purchase (Purchase)   ├─> agent ─> transition(state, event) ─> effects ─┐
- *   wallet (WalletAdapter)┘                                                  │
- *         ^───────────────── perform effects via the ports ──────────────────┘
- *
- * Each adapter below is a clearly-labelled STUB until its decision is made.
+ * Adapters:
+ *   chat     PhotonChatPort (local Messages.app by default; see @gta/imessage)
+ *   agent    Claude via @gta/agent (needs ANTHROPIC_API_KEY)
+ *   receipts ClaudeReceiptReader
+ *   wallet   InMemoryWalletAdapter (not production; swap for the Arc contract adapter)
+ *   purchase not wired yet (pay-before flow)
  */
 
-import { StubPurchaseAdapter } from "@gta/purchase";
-import { StubWalletAdapter } from "@gta/wallet";
+import { ClaudeReceiptReader, runTurn } from "@gta/agent";
 import { PhotonChatPort } from "@gta/imessage";
+import { InMemoryWalletAdapter } from "@gta/wallet";
+import { config } from "./config.js";
+import { GroupRuntime } from "./runtime.js";
+import { Store } from "./store.js";
 
-function main(): void {
-  // Adapters (all stubs for now — see each package's TODO).
-  const chat = new PhotonChatPort();
-  const purchase = new StubPurchaseAdapter();
-  const wallet = new StubWalletAdapter();
-
-  // Keep references so unused-stub wiring is explicit, not accidental.
-  void chat;
-  void purchase;
-  void wallet;
-
-  console.log(
-    [
-      "@gta/server: composition root not wired yet.",
-      "TODO: subscribe to ChatPort events, run the agent, drive the state machine,",
-      "      perform effects (post_preview, place_order, pull_shares) via the ports.",
-    ].join("\n"),
+if (config.allowedChatIds.length === 0) {
+  console.warn(
+    "ALLOWED_CHAT_IDS is empty, so the bot will ignore every chat. Send a message containing #treasury in your test group to see its id.",
   );
 }
 
-main();
+const chat = new PhotonChatPort({ mode: config.imessageMode, allowedChatIds: config.allowedChatIds });
+const runtime = new GroupRuntime({
+  chat,
+  wallet: new InMemoryWalletAdapter(),
+  receipts: new ClaudeReceiptReader(),
+  runTurn,
+  store: new Store(config.stateFile),
+  defaultLimit: config.defaultLimit,
+  names: config.names,
+});
+runtime.attach();
+await chat.start();
