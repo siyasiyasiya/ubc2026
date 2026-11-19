@@ -72,6 +72,9 @@ export type SenderResolver = (messageId: string) => string | null;
  */
 export type SentIdLookup = (chatId: string, sinceMs: number, exclude: ReadonlySet<string>) => string | null;
 
+/** Returns the participant handles of a (group) chat, or an empty list if unknown. */
+export type ParticipantsResolver = (chatId: string) => string[];
+
 export interface PhotonChatPortConfig {
   /** The port ignores every chat not listed here. Required: it can see every chat on the Mac. */
   allowedChatIds: string[];
@@ -86,6 +89,11 @@ export interface PhotonChatPortConfig {
    * read-only chat.db lookup when the real SDK is used; pass `null` to disable.
    */
   resolveSender?: SenderResolver | null;
+  /**
+   * How to read a group chat's participant roster. Defaults to a read-only chat.db lookup when the
+   * real SDK is used; pass `null` to disable (getParticipants then returns an empty list).
+   */
+  resolveParticipants?: ParticipantsResolver | null;
   /**
    * While the bot runs on a member's own Apple ID, that member's messages and 👍s are "from me".
    * Set this to their handle to treat them as that member. The bot's own sends are still skipped.
@@ -163,6 +171,30 @@ export function chatDbSentIdLookup(databasePath?: string): SentIdLookup {
   };
 }
 
+/**
+ * Read-only chat.db lookup of a group chat's participant handles (needs Full Disk Access). The
+ * local account (the bot) isn't a row in `handle`, so the roster is exactly the other members.
+ */
+export function chatDbParticipants(databasePath?: string): ParticipantsResolver {
+  let db: Database.Database | undefined;
+  let stmt: Database.Statement<[string, string], { handle: string }> | undefined;
+  return (chatId) => {
+    try {
+      db ??= new Database(databasePath ?? path.join(os.homedir(), "Library/Messages/chat.db"), {
+        readonly: true,
+        fileMustExist: true,
+      });
+      // imessage-kit routes with chat.guid (e.g. "iMessage;+;chat123"); match chat_identifier too.
+      stmt ??= db.prepare(
+        "SELECT h.id AS handle FROM chat c JOIN chat_handle_join chj ON chj.chat_id = c.ROWID JOIN handle h ON h.ROWID = chj.handle_id WHERE c.guid = ? OR c.chat_identifier = ?",
+      );
+      return stmt.all(chatId, chatId).map((r) => r.handle);
+    } catch {
+      return [];
+    }
+  };
+}
+
 function senderOf(message: Message, resolveSender?: SenderResolver, selfHandle?: string): string | null {
   if (message.isFromMe) return selfHandle ?? null;
   return message.participant ?? resolveSender?.(message.id) ?? null;
@@ -225,6 +257,7 @@ export class PhotonChatPort implements ChatPort {
   private readonly sdk: PhotonSdk;
   private readonly allowed: Set<string>;
   private readonly resolveSender: SenderResolver | undefined;
+  private readonly resolveParticipants: ParticipantsResolver | undefined;
   private readonly selfHandle: string | undefined;
   private readonly sentIdTimeoutMs: number;
   private readonly sentIdPollMs: number;
@@ -256,6 +289,11 @@ export class PhotonChatPort implements ChatPort {
         ? undefined
         : (config.resolveSender ??
           (config.sdk ? undefined : chatDbSenderResolver(config.sdkConfig?.databasePath)));
+    this.resolveParticipants =
+      config.resolveParticipants === null
+        ? undefined
+        : (config.resolveParticipants ??
+          (config.sdk ? undefined : chatDbParticipants(config.sdkConfig?.databasePath)));
     this.selfHandle = config.selfHandle;
     this.sentIdTimeoutMs = config.sentIdTimeoutMs ?? 10_000;
     this.sentIdPollMs = config.sentIdPollMs ?? 250;
@@ -304,6 +342,12 @@ export class PhotonChatPort implements ChatPort {
     // A bare handle (phone/email) routes to a 1-on-1 DM inside the SDK.
     await this.sdk.send({ to: handle, text });
     return this.makeRef(handle);
+  }
+
+  /** The chat's roster from chat.db, deduped. The bot's own handle is never a row, but drop it defensively. */
+  async getParticipants(chatId: string): Promise<string[]> {
+    if (!this.resolveParticipants) return [];
+    return [...new Set(this.resolveParticipants(chatId))].filter((h) => h !== this.selfHandle);
   }
 
   onMessage(handler: MessageHandler): Unsubscribe {

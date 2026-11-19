@@ -39,6 +39,7 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
     },
     onMessage: (h) => (onMessage.push(h), () => undefined),
     onReaction: (h) => (onReaction.push(h), () => undefined),
+    getParticipants: async () => [],
   };
   const fakeTurn: typeof RunTurn = async ({ actions, event }) => {
     if (event.includes("join me")) return actions.sendJoinLink({});

@@ -484,3 +484,22 @@ describe("PhotonChatPort startup replay", () => {
     expect(reactions).toEqual([]);
   });
 });
+
+describe("PhotonChatPort getParticipants", () => {
+  it("returns the chat roster, deduped and without the bot's own handle", async () => {
+    const roster: Record<string, string[]> = { "iMessage;+;chat123": ["+1001", "+1002", "+1002", "+bot"] };
+    const port = new PhotonChatPort({
+      sdk: new FakeSdk(),
+      allowedChatIds: ALLOWED,
+      selfHandle: "+bot",
+      resolveParticipants: (chatId) => roster[chatId] ?? [],
+    });
+    expect(await port.getParticipants("iMessage;+;chat123")).toEqual(["+1001", "+1002"]);
+    expect(await port.getParticipants("iMessage;+;unknown")).toEqual([]);
+  });
+
+  it("returns an empty roster when participant lookup is disabled", async () => {
+    const port = new PhotonChatPort({ sdk: new FakeSdk(), allowedChatIds: ALLOWED, resolveParticipants: null });
+    expect(await port.getParticipants("iMessage;+;chat123")).toEqual([]);
+  });
+});

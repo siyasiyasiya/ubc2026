@@ -40,6 +40,9 @@ const chat: ChatPort = {
   },
   onMessage: (h) => (messageHandlers.push(h), () => undefined),
   onReaction: (h) => (reactionHandlers.push(h), () => undefined),
+  async getParticipants() {
+    return Object.values(handles);
+  },
 };
 
 const store = new Store(process.env.SIM_STATE_FILE);

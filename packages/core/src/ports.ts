@@ -152,6 +152,11 @@ export interface ChatPort {
   sendDirectMessage(handle: string, text: string): Promise<MessageRef>;
   onMessage(handler: (msg: IncomingMessage) => void): Unsubscribe;
   onReaction(handler: (reaction: IncomingReaction) => void): Unsubscribe;
+  /**
+   * The group chat's member handles, so the bot can consider everyone in the chat without waiting
+   * for each person to speak. Returns an empty list when the roster can't be read.
+   */
+  getParticipants(chatId: string): Promise<string[]>;
 }
 
 // ----------------------------------------------------------------------------
