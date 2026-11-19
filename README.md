@@ -1,4 +1,4 @@
-# Group Treasury Agent
+# Kitty: a group treasury agent for iMessage
 
 **An agent in your iMessage group chat that handles shared spending for friends, trips and roommates.**
 
@@ -22,14 +22,31 @@ An agent lives in your iMessage group chat. Members ask for things in plain lang
 
 - **Lives in iMessage.** No app to download. The agent is a contact in your existing group chat and can also text members one-on-one.
 - **No deposits.** Money stays in each member's own wallet until something is actually bought.
-- **Recurring spending limits.** Each member sets a limit that resets on a schedule they choose, like $50 a week or $200 a month. It works like a subscription, and nobody approves a large total up front.
-- **Pay with a card or a crypto wallet.** Members can add a card, which is converted to USDC behind the scenes, or connect a wallet they already have.
+- **A limit per group chat.** Each chat has its own limit per person: one that refills, like $10 a week for roommates, or a one-time amount for a trip. It works like a subscription, and nobody approves a large total up front.
+- **Add money with Apple Pay.** A card payment is converted to USDC behind the scenes, straight into the member's own account.
 - **Plain-language requests.** "We're out of paper towels" or "dinner at Uchi Friday?"
 - **The agent buys things itself.** It places orders across different stores, not just one.
 - **Uses the accounts you already have.** Members can keep using their existing store accounts and memberships, like Amazon Prime or Walmart+.
 - **Screenshot before every purchase.** Before the agent buys anything, it sends a screenshot of the checkout to the group chat, and everyone in the chat approves it with a 👍.
 - **Pay before or pay after.** Things bought ahead of time are paid when they're bought. Things like dinner are only paid after the bill comes, using the real total.
-- **Smart splits.** Only the people in a split pay. "I'm out" or "split it 3 ways" just works.
+- **Smart splits.** Only the people in a split pay. "I'm out" or "split it 3 ways" just works. Trips can put splits on a tab and settle up at the end.
+- **Phone calls.** Kitty can call a restaurant to book a table with an ElevenLabs voice agent and report back in the chat.
+
+## What works today
+
+As of Nov 19, 2026, run live in a real iMessage group on Arc testnet unless noted.
+
+| Feature | State |
+| --- | --- |
+| Join with one Face ID tap from a private invite text (name asked privately first) | ✅ live |
+| Per-chat plan and limits (weekly / monthly / one-time), lower a limit from the chat | ✅ live |
+| Split a bill, everyone 👍s the card (real iMessage tapbacks), shares settle onchain | ✅ live |
+| Trip tab: splits wait until "settle up" | ✅ live |
+| A share that can't be pulled becomes an onchain debt, and the member gets a pay-back link | ✅ live up to the pay-back tap |
+| Raise a limit (one-tap Face ID link), leave a chat's Kitty, private balance questions by text | 🟡 built and tested, live run pending |
+| Kitty buys it (pay before): checkout card, 👍s, order, shares paid back to the card | 🟡 built and tested on a simulated store; real orders need Crossmint production keys |
+| Restaurant calls (ElevenLabs) | 🟡 built and tested against the documented API; needs ElevenLabs keys and a phone number |
+| Using members' existing store accounts, Link one-time cards, connecting an existing wallet | ⬜ not built |
 
 ## How spending works
 
@@ -39,12 +56,14 @@ Every spend follows one of two flows.
 
 For things like paper towels, tickets or an Airbnb.
 
-1. A member asks for something in the chat.
-2. The agent builds the cart, either on a member's existing store account or for checkout with a Link one-time card.
-3. The agent sends a screenshot of the checkout and the split to the group chat.
-4. Everyone in the chat approves with a 👍.
-5. The agent places the order. For a Link checkout, the treasurer approves the spend request with Face ID first.
-6. Each member's share is pulled from their wallet and sent to whoever's account or card paid.
+1. A member asks for something in the chat, and says who's splitting it and whose card pays.
+2. The agent builds the cart at the store (Crossmint Agent Checkouts drives the real checkout up to payment, so the total is the real one).
+3. The agent sends the checkout and the split to the group chat, and flags anyone whose limit is too low.
+4. Everyone in the split approves with a 👍. Nothing is ordered before that.
+5. The agent places the order, paid by that member's saved card.
+6. Each member's share is pulled from their account and sent to whoever's card paid, within their limit for that chat.
+
+If a store blocks the agent, the request ends with "nothing was charged".
 
 ### 2. A member already paid (pay after)
 
@@ -52,17 +71,15 @@ For things like dinner, a bar tab or a ride, where the real amount isn't known u
 
 1. Before: members say they're in. Nothing is charged yet.
 2. After: whoever paid sends a photo of the receipt to the chat.
-3. The agent reads the total, including tax and tip, and splits it evenly or by what each person ordered.
-4. Each member's share is pulled from their wallet and sent to whoever paid. Saying you're in counts as approving your share, as long as it's close to the estimate. If it's higher, the agent asks you first.
+3. The agent reads the total, including tax and tip, and posts a card with the split (evenly, or by what each person ordered).
+4. Everyone in the split 👍s the card. Then each share is pulled from their account and sent to whoever paid, or held on the tab until "settle up".
 
 ```mermaid
 flowchart LR
-    Chat["iMessage group chat"] <-->|requests, checkout screenshot, 👍| Agent["Agent"]
-    Agent -->|orders on| Account["Member's existing<br/>store account"]
-    Agent -->|spend request| Link["Link agent wallet"]
-    Link -->|one-time card| Store["Store"]
-    Account --> Store
-    Agent -->|approved spend| Contract["Group contract"]
+    Chat["iMessage group chat"] <-->|requests, checkout, 👍| Agent["Agent (Claude)"]
+    Agent -->|cart, then order<br/>on the payer's card| Store["Store<br/>(Crossmint)"]
+    Agent -->|books a table| Phone["Restaurant<br/>(ElevenLabs call)"]
+    Agent -->|approved spend| Contract["Group contract<br/>(Arc)"]
     Contract -->|pulls each share,<br/>within each member's limit| Wallets["Members' wallets"]
     Wallets -->|USDC| Payer["Whoever's account<br/>or card paid"]
 ```
@@ -76,11 +93,11 @@ The pieces the system needs, and what each one is built on.
 | Chat interface | Where members send requests, approve spends and get texted one-on-one | iMessage via [Photon](https://photon.codes) |
 | Agent | An LLM with tools that turns requests into proposals, reads receipts and tracks splits | Claude (Sonnet 5) through the Anthropic SDK tool runner |
 | Member wallets | Hold each member's USDC and enforce their recurring spending limit | Circle passkey (Face ID) smart wallets; limits enforced by the group contract |
-| Funding | Converts a card payment to USDC, or connects an existing wallet | Apple Pay through Arc Onramp |
-| Store access | Lets the agent build carts and place orders on members' existing accounts across stores | Crossmint Agent Checkouts |
+| Funding | Converts a card payment to USDC | Apple Pay through Arc Onramp |
+| Store access | Lets the agent build carts and place orders across stores | Crossmint Agent Checkouts (a labelled simulated store when no keys are set) |
 | Group contract | Records approvals and pulls each member's share to whoever paid | [`GroupTreasury`](contracts/README.md), driven by `ArcWalletAdapter` in `packages/wallet` |
 | Chain | Where the contract runs and USDC moves | Arc (USDC is gas) |
-| Checkout wallet | Issues one-time cards so the agent can pay real merchants | [Link agent wallet](https://docs.stripe.com/agentic-commerce/agents/link-agent-wallet) |
+| Checkout wallet | Issues one-time cards so the agent can pay real merchants | [Link agent wallet](https://docs.stripe.com/agentic-commerce/agents/link-agent-wallet) (planned, not built) |
 | Phone calls | Kitty phones restaurants to book a table and reports back in the chat | [ElevenLabs](https://elevenlabs.io) voice agent, outbound through a Twilio number |
 
 ## How ElevenLabs is used
@@ -112,7 +129,7 @@ The chat picks its plan once ("this is a trip, $200 each"), each person confirms
 
 ### Joining a group's kitty
 
-1. In the group chat, a member says they're in. The server makes a single-use invite ticket for that person and chat, derived from a server secret (`packages/wallet/src/join.ts`).
+1. In the group chat, a member says they're in. If Kitty doesn't know their name yet, it asks privately ("what should i call you?"), never in the group. The server makes a single-use invite ticket for that person and chat, derived from a server secret (`packages/wallet/src/join.ts`).
 2. The agent texts them a private link that shows up as a Kitty card in Messages. It opens the one-tap Face ID page (`apps/onboard`, live at [kittyagent.vercel.app](https://kittyagent.vercel.app)) with the chat's plan already filled in.
 3. Face ID creates a **Circle passkey wallet** (an ERC-4337 smart account; we never hold its key), and one **gasless batched operation** (Circle paymaster) approves USDC for the contract and calls `join(group, limit, period, ticket)`.
 4. The server's `JoinWatcher` sees the `Joined` event, matches the ticket to the member's handle, links their account, and posts "✅ Siya is in." (the limit stays private).
@@ -145,20 +162,21 @@ The chat picks its plan once ("this is a trip, $200 each"), each person confirms
 ### Run it
 
 ```bash
-pnpm install && pnpm build
-cd contracts && forge test            # 49 tests
-# apps/server/.env: ARC_RPC_URL, TREASURY_ADDRESS, OPERATOR_PRIVATE_KEY, TREASURY_DEPLOY_BLOCK, INVITE_SECRET (see .env.example)
-pnpm --filter @gta/server dev         # iMessage bot; uses Arc when the settings above are present
-pnpm --filter @gta/server invite <chatId> <phone> [name] [chat name]   # Face ID link, until DMs ship
+pnpm install && pnpm build && pnpm test
+cd contracts && forge test            # 54 tests
+# apps/server/.env (see .env.example): ARC_RPC_URL, TREASURY_ADDRESS, TREASURY_DEPLOY_BLOCK,
+#   OPERATOR_PRIVATE_KEY, INVITE_SECRET, ONBOARD_URL, ANTHROPIC_API_KEY.
+#   Optional: CROSSMINT_* for real store orders, ELEVENLABS_* for restaurant calls.
+pnpm --filter @gta/server dev         # the iMessage bot
 ```
+
+The bot runs on a Mac signed into Messages with **its own Apple ID**, and the terminal needs Full Disk Access (it reads `~/Library/Messages/chat.db`). Add that Apple ID to a group chat and it serves it; with `ALLOWED_CHAT_IDS` empty it serves every group it's in, so never leave it empty on a personal Apple ID. Only one bot can run per Mac (a lock file stops a second one).
 
 **Known limit:** an invite ticket isn't bound to an account, so whoever submits it first (say, from a forwarded link) is linked to that member. The fix is for the server to sign each join for the joining account.
 
-## Open question: individual wallets vs a shared multisig
+## Design choice: individual wallets vs a shared multisig
 
-**Decided: individual wallets**, with limits enforced by the group contract on Arc. See [How Arc and Circle are used](#how-arc-and-circle-are-used). The comparison is kept for context.
-
-Two ways to structure the group's money are still being compared.
+**Decided: individual wallets**, with limits enforced by the group contract on Arc. See [How Arc and Circle are used](#how-arc-and-circle-are-used). The comparison we made is kept for context.
 
 - **Individual wallets.** Money stays in each member's own wallet. After a purchase, each member's share is pulled from their wallet to whoever's account or card paid, within that member's recurring spending limit.
 - **Shared multisig.** The group has a multisig account with every member as a signer, for example Squads on Solana. Approving a purchase also sends the member's share into the group account. Once everyone has approved, the group account sends exactly the approved amount to a card wallet, and the agent checks out with that card.
@@ -187,7 +205,7 @@ Two ways to structure the group's money are still being compared.
 
 ## Optional onchain components (individual wallets)
 
-These are possible additions, not decisions. Each one moves more of the product onchain while keeping each member's money in their own wallet. They borrow the idea of mandates from Google's Agent Payments Protocol (AP2), applied to a group.
+Each one moves more of the product onchain while keeping each member's money in their own wallet. **Built:** per-chat spending limits signed by each member (a simple form of the mandates below) and the onchain debt ledger with pay-back. The rest are possible additions. They borrow the idea of mandates from Google's Agent Payments Protocol (AP2), applied to a group.
 
 | Component | What it does | What it adds |
 | --- | --- | --- |
