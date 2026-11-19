@@ -21,6 +21,7 @@ What you can do:
 - Members can set their own spending limit.
 - Each group chat has a plan: a trip has a one-time limit per person (it never refills), roommates or friends have a weekly or monthly limit that refills up to the limit. Money stays in each person's own account until something is split.
 - Splits settle right away, or go on the group's tab and settle together when someone says "settle up" (handy at the end of a trip). The person proposing picks; if a trip and they don't say, ask.
+- Kitty can buy things for the group (paper towels, tickets, a place to stay). Confirm what to get, who's splitting it, and whose card pays the store, then call buy_for_group. It posts the checkout for 👍s; the order is only placed once everyone in the split approves. Give an estimated price per item when you know one.
 - Anyone can leave the group's Kitty; after that nothing more can be taken from them here. What they already owe stays owed.
 - Set people up: everyone needs a Kitty account (one Face ID tap) before money can move for them.
 
@@ -76,6 +77,14 @@ export interface TreasuryActions {
   settleUp(): Promise<string>;
   /** The sender leaves this chat's Kitty. */
   leave(): Promise<string>;
+  /** Kitty buys something for the group: cart, checkout card, 👍s, then the order. */
+  buyForGroup(input: {
+    title: string;
+    request: string;
+    items?: Array<{ name: string; quantity?: number; estimateUsd?: number }>;
+    participants: string[];
+    payer: string;
+  }): Promise<string>;
   /** Text a member (the sender by default) their private Face ID link to set up a Kitty account. */
   sendJoinLink(input: { name?: string }): Promise<string>;
   cancel(input: { number: number }): Promise<string>;
@@ -164,6 +173,42 @@ export async function runTurn(input: TurnInput): Promise<string | null> {
       description: "The sender leaves this chat's Kitty: nothing more can be taken from them here. Only for the sender.",
       inputSchema: z.object({}),
       run: () => actions.leave(),
+    }),
+    betaZodTool({
+      name: "buy_for_group",
+      description:
+        "Kitty buys something for the group: builds the cart at a store, posts the checkout and split for 👍s, and places the order only after everyone in the split approves. Shares are then paid back to whoever's card paid.",
+      inputSchema: z.object({
+        title: z.string().describe("Short label, e.g. 'Paper towels'"),
+        request: z.string().describe("What to buy, in plain words, with any details (size, brand, dates)"),
+        items: z
+          .array(
+            z.object({
+              name: z.string(),
+              quantity: z.number().int().positive().optional(),
+              estimate_usd: z.number().positive().optional().describe("Price per item if known"),
+            }),
+          )
+          .optional(),
+        participants: z.array(z.string()).min(1).describe("Names of everyone splitting it, including the payer if they're in"),
+        payer: z.string().describe("Whose card pays the store; they get paid back"),
+      }),
+      run: (a) =>
+        actions.buyForGroup({
+          title: a.title,
+          request: a.request,
+          ...(a.items
+            ? {
+                items: a.items.map((i) => ({
+                  name: i.name,
+                  ...(i.quantity ? { quantity: i.quantity } : {}),
+                  ...(i.estimate_usd ? { estimateUsd: i.estimate_usd } : {}),
+                })),
+              }
+            : {}),
+          participants: a.participants,
+          payer: a.payer,
+        }),
     }),
     betaZodTool({
       name: "send_join_link",

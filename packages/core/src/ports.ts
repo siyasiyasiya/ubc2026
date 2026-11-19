@@ -22,7 +22,7 @@ import type {
 export interface BuildCartInput {
   /** Plain-language ask or a structured item list the agent resolved. */
   requestText: string;
-  items?: Array<{ name: string; quantity?: number }>;
+  items?: Array<{ name: string; quantity?: number; /** The agent's guess; a real store prices it itself. */ estimateUsd?: number }>;
   /** Which account / card the order should check out against. */
   checkout: CheckoutMethod;
 }

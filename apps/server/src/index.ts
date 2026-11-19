@@ -16,6 +16,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { ClaudeReceiptReader, runTurn } from "@gta/agent";
 import { PhotonChatPort } from "@gta/imessage";
+import { createCrossmintPurchaseAdapterFromEnv } from "@gta/purchase";
+import { SimulatedPurchaseAdapter } from "./simulated-purchase.js";
 import { usdc } from "@gta/core";
 import { arcClients, arcWalletAdapters, InMemoryWalletAdapter, JoinWatcher, sendWelcomeBalance } from "@gta/wallet";
 import { config, warnIfNoClaudeAuth } from "./config.js";
@@ -46,6 +48,7 @@ const runtime = new GroupRuntime({
   chat,
   wallet,
   receipts: new ClaudeReceiptReader(),
+  purchase: purchaseAdapter(),
   runTurn,
   store,
   defaultLimit: config.defaultLimit,
@@ -142,4 +145,18 @@ function claimSingleInstance(lockFile: string): void {
   };
   process.on("exit", release);
   for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => process.exit(0));
+}
+
+/**
+ * Kitty buys things with Crossmint when its keys are set (a real store order, paid by the payer's
+ * saved card); otherwise with a simulated store that says so wherever it shows.
+ */
+function purchaseAdapter() {
+  if (process.env.CROSSMINT_API_KEY || process.env.CROSSMINT_SERVER_API_KEY) {
+    const crossmint = createCrossmintPurchaseAdapterFromEnv();
+    console.log(`purchase: Crossmint Agent Checkouts (${crossmint.store})`);
+    return crossmint;
+  }
+  console.log("purchase: simulated store (set CROSSMINT_API_KEY for real orders)");
+  return new SimulatedPurchaseAdapter();
 }

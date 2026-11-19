@@ -1,9 +1,10 @@
-import { usdc, type ChatPort, type IncomingMessage, type IncomingReaction, type PullParams, type Receipt, type WalletAdapter } from "@gta/core";
+import { usdc, type PurchaseAdapter, type ChatPort, type IncomingMessage, type IncomingReaction, type PullParams, type Receipt, type WalletAdapter } from "@gta/core";
 import type { runTurn as RunTurn } from "@gta/agent";
 import { groupIdForChat, InMemoryWalletAdapter, inviteTicket } from "@gta/wallet";
 import { describe, expect, it } from "vitest";
 import { GroupRuntime } from "./runtime.js";
 import { Store } from "./store.js";
+import { SimulatedPurchaseAdapter } from "./simulated-purchase.js";
 
 const NEENA = "+1001";
 const SIYA = "+1002";
@@ -12,7 +13,7 @@ const OUTSIDER = "+1999";
 const CHAT = "group";
 
 /** A runtime whose "agent" proposes a $90 dinner paid by Neena, split three ways. */
-function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapter; wallets?: Record<string, string>; invites?: { baseUrl: string; secret: string }; chats?: string[]; participants?: string[] } = {}) {
+function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapter; wallets?: Record<string, string>; invites?: { baseUrl: string; secret: string }; chats?: string[]; participants?: string[]; purchase?: PurchaseAdapter } = {}) {
   const posted: { id: string; text: string }[] = [];
   const failing = { posts: 0, dms: 0 };
   const dms: { handle: string; text: string }[] = [];
@@ -43,6 +44,15 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
   };
   const fakeTurn: typeof RunTurn = async ({ actions, event }) => {
     if (event.includes("join me")) return actions.sendJoinLink({});
+    if (event.includes("buy towels")) {
+      return actions.buyForGroup({
+        title: "Paper towels",
+        request: "a 6-pack of paper towels",
+        items: [{ name: "Paper towels 6-pack", quantity: 1, estimateUsd: 30 }],
+        participants: ["Neena", "Siya", "Tristan"],
+        payer: "Neena",
+      });
+    }
     if (event.includes("trip plan")) return actions.setGroupPlan({ usd: 200, period: "once" });
     if (event.includes("settle up")) return actions.settleUp();
     if (event.includes("leave kitty")) return actions.leave();
@@ -67,6 +77,7 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
     ...(opts.wallets ? { wallets: opts.wallets } : {}),
     ...(opts.invites ? { invites: opts.invites } : {}),
     ...(opts.chats ? { chats: opts.chats } : {}),
+    ...(opts.purchase ? { purchase: opts.purchase } : {}),
     receipts: { read: async (): Promise<Receipt> => ({ source: "photo", total: usdc(90), at: 0 }) },
     runTurn: fakeTurn,
     store,
@@ -422,6 +433,64 @@ describe("GroupRuntime", () => {
     expect(removed).toEqual([SIYA]);
     expect(t.store.get(CHAT)!.group.members.find((m) => m.id === SIYA)!.wallet).toBeUndefined();
     expect(t.posted.at(-1)?.text).toContain("Siya left.");
+  });
+
+  it("buys for the group: checkout card, everyone 👍s, order placed, shares paid back to the card", async () => {
+    const pulls: PullParams[] = [];
+    const inner = new InMemoryWalletAdapter();
+    const wallet: WalletAdapter = {
+      id: "arc-like",
+      getLimitStatus: (m) => inner.getLimitStatus(m),
+      canPull: (m, a) => inner.canPull(m, a),
+      pull: async (p) => (pulls.push(p), { status: "pulled", txRef: "0xtx" }),
+    };
+    const wallets = {
+      [NEENA]: "0x00000000000000000000000000000000000000aa",
+      [SIYA]: "0x00000000000000000000000000000000000000bb",
+      [TRISTAN]: "0x00000000000000000000000000000000000000cc",
+    };
+    const t = setup(200, { wallet, wallets, purchase: new SimulatedPurchaseAdapter({ render: async () => ({ uri: "/tmp/checkout.svg" }) }) });
+    for (const who of [SIYA, TRISTAN]) await t.say(who, "hi");
+    await t.say(NEENA, "buy towels please");
+    await t.runtime.idle();
+
+    const req = t.request();
+    expect(req.flow).toBe("pay_before");
+    expect(req.state.name).toBe("awaiting_approval");
+    const card = t.posted.find((p) => p.id === req.previewMessageId)!.text;
+    expect(card).toContain("🛒 #1 Paper towels: $30.00 at Demo store (simulated)");
+    expect(card).toContain("Siya $10.00, Tristan $10.00");
+
+    await t.react(SIYA, req.previewMessageId!);
+    expect(t.request().state.name).toBe("awaiting_approval"); // nothing ordered until everyone approves
+    await t.react(TRISTAN, req.previewMessageId!);
+    await t.runtime.idle();
+
+    expect(t.request().state.name).toBe("done");
+    expect(pulls.map((p) => p.from.id).sort()).toEqual([SIYA, TRISTAN]);
+    expect(pulls[0]!.to).toEqual({ kind: "wallet", address: wallets[NEENA] });
+    expect(t.posted.some((p) => p.text.includes("placing the order for #1"))).toBe(true);
+  });
+
+  it("a store failure fails the purchase and says nothing was charged", async () => {
+    const broken: PurchaseAdapter = {
+      store: "Broken store",
+      buildCart: async () => {
+        throw new Error("merchant blocked the checkout");
+      },
+      preview: async () => {
+        throw new Error("unreachable");
+      },
+      placeOrder: async () => {
+        throw new Error("unreachable");
+      },
+    };
+    const t = setup(200, { purchase: broken, wallets: { [NEENA]: "0x00000000000000000000000000000000000000aa" } });
+    for (const who of [SIYA, TRISTAN]) await t.say(who, "hi");
+    await t.say(NEENA, "buy towels please");
+    await t.runtime.idle();
+    expect(t.request().state.name).toBe("failed");
+    expect(t.posted.at(-1)?.text).toContain("merchant blocked the checkout. Nothing was charged.");
   });
 
   it("passes errors back from run() so the join watcher retries instead of skipping", async () => {

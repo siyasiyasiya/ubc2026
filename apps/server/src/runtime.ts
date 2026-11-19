@@ -18,12 +18,14 @@ import {
   initialState,
   transition,
   usdc,
+  type Cart,
   type ChatPort,
   type Effect,
   type Group,
   type IncomingMessage,
   type IncomingReaction,
   type Member,
+  type PurchaseAdapter,
   type Receipt,
   type ReceiptReader,
   type RequestEvent,
@@ -41,6 +43,8 @@ export interface RuntimeDeps {
   /** One adapter for every chat, or one per chat (the Arc adapter: limits are per chat onchain). */
   wallet: WalletAdapter | ((chatId: string) => WalletAdapter);
   receipts: ReceiptReader;
+  /** Kitty buys things for the group (pay before). Crossmint for real orders, or a labelled simulation. */
+  purchase?: PurchaseAdapter;
   runTurn: typeof RunTurn;
   store: Store;
   defaultLimit: SpendingLimit;
@@ -87,6 +91,8 @@ export class GroupRuntime {
   private readonly lastReceipt = new Map<string, Receipt>();
   /** Requests being set up right now: the payer and amount are known, so skip the state machine's "Who paid?". */
   private readonly starting = new Set<string>();
+  /** Store work (shopping, placing an order) runs outside the queue so a slow store can't stall the chat. */
+  private readonly background = new Set<Promise<void>>();
   /** Chats whose roster we've already pulled from the chat port, so we seed members once per chat. */
   private readonly seededRosters = new Set<string>();
   private queue: Promise<void> = Promise.resolve();
@@ -108,6 +114,19 @@ export class GroupRuntime {
   serial(task: () => Promise<void>): Promise<void> {
     this.queue = this.queue.then(task).catch((err) => this.log(`error: ${(err as Error).stack ?? err}`));
     return this.queue;
+  }
+
+  /** Resolves once background store work and the queue are done (tests, shutdown). */
+  async idle(): Promise<void> {
+    while (this.background.size) await Promise.all([...this.background]);
+    await this.queue;
+  }
+
+  private inBackground(task: () => Promise<void>): void {
+    const done: Promise<void> = task()
+      .catch((err) => this.log(`error: ${(err as Error).stack ?? err}`))
+      .finally(() => this.background.delete(done));
+    this.background.add(done);
   }
 
   /** Like `serial`, but the caller gets the result or the error (the queue still carries on). */
@@ -552,6 +571,13 @@ export class GroupRuntime {
         return `${record.group.name}'s plan is now ${formatUsdc(record.plan.amount)} each ${perPeriod(period)}.`;
       },
       settleUp: async () => this.settleUp(record),
+      buyForGroup: async (input) => {
+        try {
+          return await this.startPurchase(record, sender, input);
+        } catch (err) {
+          return `Could not start that: ${(err as Error).message}`;
+        }
+      },
       leave: async () => this.leave(record, sender),
       sendJoinLink: async ({ name }) => {
         try {
@@ -614,6 +640,99 @@ export class GroupRuntime {
     return request;
   }
 
+  // --- Kitty buys it (pay before) ---------------------------------------------
+
+  private async startPurchase(
+    record: GroupRecord,
+    sender: Member,
+    input: Parameters<TreasuryActions["buyForGroup"]>[0],
+  ): Promise<string> {
+    const purchase = this.deps.purchase;
+    if (!purchase) return "Buying isn't set up on this bot yet.";
+    const payer = this.resolve(record, input.payer);
+    if (!payer.wallet) return `${payer.displayName} needs a Kitty account first (send_join_link), so they can be paid back.`;
+    const participants = [...new Set(input.participants.map((p) => this.resolve(record, p).id))];
+    const number = record.requests.reduce((max, r) => Math.max(max, r.number), 0) + 1;
+    const request: RequestRecord = {
+      id: `${record.group.id}#${number}`,
+      number,
+      title: input.title,
+      flow: "pay_before",
+      requesterId: sender.id,
+      state: initialState("pay_before"),
+      createdAt: this.now(),
+      buy: { participants, payer: payer.id },
+    };
+    record.requests.push(request);
+    this.deps.store.save();
+
+    this.inBackground(async () => {
+      try {
+        const cart = await purchase.buildCart({
+          requestText: input.request,
+          ...(input.items ? { items: input.items } : {}),
+          checkout: { kind: "store_account", memberId: payer.id, store: purchase.store },
+        });
+        await this.run(async () => {
+          await this.apply(record, request, { type: "cart_built", cart });
+          this.deps.store.save();
+        });
+      } catch (err) {
+        await this.run(() => this.purchaseFailed(record, request, `couldn't build the cart: ${(err as Error).message}`));
+      }
+    });
+    return `Shopping for #${number} ${input.title} at ${purchase.store} now. The checkout will come back for 👍s; nothing is ordered until everyone approves.`;
+  }
+
+  /** The cart is priced: split it, flag anyone whose limit is short, and post the checkout for 👍s. */
+  private async previewCart(record: GroupRecord, request: RequestRecord, built: Cart): Promise<void> {
+    const purchase = this.deps.purchase;
+    if (!purchase || !request.buy) return this.purchaseFailed(record, request, "buying isn't set up");
+    const { screenshot, total, cart } = await purchase.preview(built);
+    const split = evenSplit({ total, participantIds: request.buy.participants, payeeMemberId: request.buy.payer });
+    await this.apply(record, request, {
+      type: "preview_ready",
+      split,
+      screenshot,
+      requiredApprovers: request.buy.participants,
+      deadline: this.now() + APPROVAL_WINDOW_MS,
+      cart,
+    });
+    // The payer's own card pays, so posting the order counts as their approval.
+    await this.apply(record, request, { type: "reaction", memberId: request.buy.payer, emoji: APPROVAL_EMOJI, added: true, at: this.now() });
+    const short: string[] = [];
+    for (const [memberId, amount] of Object.entries(split.shares)) {
+      if (memberId === split.payeeMemberId) continue;
+      const member = record.group.members.find((m) => m.id === memberId);
+      if (!member?.wallet) short.push(`${this.name(record, memberId)} isn't set up in Kitty yet`);
+      else {
+        const { ok, remaining } = await this.walletFor(record).canPull(member, amount);
+        if (!ok) short.push(`${member.displayName} only has ${formatUsdc(remaining)} of limit left`);
+      }
+    }
+    if (short.length) await this.say(record.group.chatId, `heads up before you 👍: ${short.join("; ")}. Their share would be owed instead.`);
+  }
+
+  private async placeOrder(record: GroupRecord, request: RequestRecord, cart: Cart): Promise<void> {
+    const purchase = this.deps.purchase;
+    if (!purchase) return this.run(() => this.purchaseFailed(record, request, "buying isn't set up"));
+    try {
+      const receipt = await purchase.placeOrder({ cart });
+      await this.run(async () => {
+        await this.apply(record, request, { type: "order_placed", receipt });
+        this.deps.store.save();
+      });
+    } catch (err) {
+      await this.run(() => this.purchaseFailed(record, request, `the order didn't go through: ${(err as Error).message}`));
+    }
+  }
+
+  private async purchaseFailed(record: GroupRecord, request: RequestRecord, reason: string): Promise<void> {
+    await this.apply(record, request, { type: "fail", reason });
+    this.deps.store.save();
+    await this.say(record.group.chatId, `❌ #${request.number} ${request.title}: ${reason}. Nothing was charged.`);
+  }
+
   // --- state machine ----------------------------------------------------------
 
   private async apply(record: GroupRecord, request: RequestRecord, event: RequestEvent): Promise<void> {
@@ -631,7 +750,22 @@ export class GroupRuntime {
     switch (effect.type) {
       case "post_preview":
         request.split = effect.split;
+        // A store checkout image goes first; the 👍 goes on the text card after it.
+        if (request.flow === "pay_before" && effect.screenshot.image.uri) {
+          try {
+            await this.deps.chat.postImage(chatId, effect.screenshot.image);
+          } catch (err) {
+            this.log(`#${request.number}: checkout image not posted (${(err as Error).message})`);
+          }
+        }
         request.previewMessageId = await this.say(chatId, this.cardText(record, request));
+        return;
+      case "preview_cart":
+        await this.previewCart(record, request, effect.cart);
+        return;
+      case "place_order":
+        await this.say(chatId, `🛒 everyone's in, placing the order for #${request.number} ${request.title}…`);
+        this.inBackground(() => this.placeOrder(record, request, effect.cart));
         return;
       case "pull_shares":
         if (request.onTab) {
@@ -707,6 +841,14 @@ export class GroupRuntime {
     const shares = Object.entries(split.shares)
       .filter(([id]) => id !== split.payeeMemberId)
       .map(([id, amount]) => `${this.name(record, id)} ${formatUsdc(amount)}`);
+    const store = request.flow === "pay_before" && request.state.name === "awaiting_approval" ? request.state.cart?.store : undefined;
+    if (store) {
+      return [
+        `🛒 #${request.number} ${request.title}: ${formatUsdc(split.total)} at ${store}`,
+        `${this.name(record, split.payeeMemberId)}'s card pays, paid back by: ${shares.join(", ") || "nobody"}`,
+        `👍 this message to approve. I only order once everyone in the split approves.`,
+      ].join("\n");
+    }
     return [
       `🧾 #${request.number} ${request.title}: ${formatUsdc(split.total)}`,
       `Pay back ${this.name(record, split.payeeMemberId)}: ${shares.join(", ")}`,

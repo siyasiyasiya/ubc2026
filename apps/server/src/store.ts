@@ -17,6 +17,8 @@ export interface RequestRecord {
   previewMessageId?: string;
   /** Approved but held on the group's tab until someone says "settle up" (e.g. end of a trip). */
   onTab?: boolean;
+  /** Pay-before: who's in the split and whose card pays the store (they get paid back). */
+  buy?: { participants: MemberId[]; payer: MemberId };
   createdAt: number;
 }
 
