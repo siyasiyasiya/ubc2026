@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type {
   Attachment,
+  Chat,
+  ChatQuery,
   DispatchEvents,
   Message,
   Reaction,
@@ -27,6 +29,8 @@ class FakeSdk implements PhotonSdk {
   watchEvents: DispatchEvents | undefined;
   startWatchingCalls = 0;
   closed = false;
+  chats: Chat[] = [];
+  listChatsCalls = 0;
 
   async send(request: SendRequest): Promise<void> {
     this.sends.push(request);
@@ -38,6 +42,10 @@ class FakeSdk implements PhotonSdk {
   async stopWatching(): Promise<void> {}
   async close(): Promise<void> {
     this.closed = true;
+  }
+  async listChats(query?: ChatQuery): Promise<readonly Chat[]> {
+    this.listChatsCalls += 1;
+    return query?.kind ? this.chats.filter((c) => c.kind === query.kind) : this.chats;
   }
 
   /** Simulate the watcher observing an inbound row. */
@@ -146,6 +154,27 @@ function makeReaction(over: Partial<Reaction> = {}): Reaction {
 function makeReactionRow(reaction: Partial<Reaction> = {}): Message {
   return makeMessage({ reaction: makeReaction(reaction) });
 }
+
+function makeChat(over: Partial<Chat> = {}): Chat {
+  return {
+    chatId: "iMessage;+;chat123",
+    name: null,
+    service: "iMessage",
+    kind: "group",
+    account: null,
+    isArchived: false,
+    isFiltered: false,
+    dropsIncomingMessages: false,
+    autoDeletesIncomingMessages: false,
+    lastReadAt: null,
+    unreadCount: 0,
+    lastMessageAt: null,
+    ...over,
+  };
+}
+
+/** Let queued microtasks/timers run so async chat discovery can finish. */
+const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
 // ----------------------------------------------------------------------------
 // Pure mapping functions
@@ -501,5 +530,63 @@ describe("PhotonChatPort getParticipants", () => {
   it("returns an empty roster when participant lookup is disabled", async () => {
     const port = new PhotonChatPort({ sdk: new FakeSdk(), allowedChatIds: ALLOWED, resolveParticipants: null });
     expect(await port.getParticipants("iMessage;+;chat123")).toEqual([]);
+  });
+});
+
+describe("PhotonChatPort auto-serve", () => {
+  it("serves every group chat it's in when no allowlist is set", async () => {
+    const sdk = new FakeSdk();
+    sdk.chats = [makeChat({ chatId: "iMessage;+;chatAUTO" }), makeChat({ chatId: "iMessage;+;dm1", kind: "dm" })];
+    const port = new PhotonChatPort({ sdk, allowedChatIds: [], log: () => undefined });
+    const received: IncomingMessage[] = [];
+    port.onMessage((m) => received.push(m));
+    await port.start();
+
+    sdk.emit(makeMessage({ chatId: "iMessage;+;chatAUTO", text: "hi all" }));
+    expect(received.map((m) => m.text)).toEqual(["hi all"]);
+  });
+
+  it("discovers a group added after startup, then serves it", async () => {
+    const sdk = new FakeSdk();
+    const port = new PhotonChatPort({ sdk, allowedChatIds: [], log: () => undefined });
+    const received: IncomingMessage[] = [];
+    port.onMessage((m) => received.push(m));
+    await port.start(); // no chats yet
+
+    sdk.chats = [makeChat({ chatId: "iMessage;+;chatLATE" })];
+    sdk.emit(makeMessage({ chatId: "iMessage;+;chatLATE", text: "just added" }));
+    expect(received).toHaveLength(0); // discovery is async
+    await flush();
+    expect(received.map((m) => m.text)).toEqual(["just added"]);
+  });
+
+  it("ignores a chat it's not in and stops re-checking it", async () => {
+    const sdk = new FakeSdk();
+    const port = new PhotonChatPort({ sdk, allowedChatIds: [], log: () => undefined });
+    const received: IncomingMessage[] = [];
+    port.onMessage((m) => received.push(m));
+    await port.start();
+
+    sdk.emit(makeMessage({ chatId: "iMessage;+;dmX", text: "spam" }));
+    await flush();
+    expect(received).toHaveLength(0);
+    const calls = sdk.listChatsCalls;
+    sdk.emit(makeMessage({ chatId: "iMessage;+;dmX", text: "spam again" }));
+    await flush();
+    expect(sdk.listChatsCalls).toBe(calls); // cached as not-served, no second lookup
+  });
+
+  it("with an explicit allowlist, never auto-discovers", async () => {
+    const sdk = new FakeSdk();
+    sdk.chats = [makeChat({ chatId: "iMessage;+;chatAUTO" })];
+    const port = new PhotonChatPort({ sdk, allowedChatIds: ["iMessage;+;chat123"], log: () => undefined });
+    const received: IncomingMessage[] = [];
+    port.onMessage((m) => received.push(m));
+    await port.start();
+
+    sdk.emit(makeMessage({ chatId: "iMessage;+;chatAUTO", text: "not allowlisted" }));
+    await flush();
+    expect(received).toHaveLength(0);
+    expect(sdk.listChatsCalls).toBe(0); // no discovery in explicit mode
   });
 });

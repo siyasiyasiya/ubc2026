@@ -33,6 +33,8 @@ import type {
 } from "@gta/core";
 import {
   IMessageSDK,
+  type Chat,
+  type ChatQuery,
   type DispatchEvents,
   type IMessageConfig,
   type Message,
@@ -61,6 +63,8 @@ export interface PhotonSdk {
   startWatching(events?: DispatchEvents): Promise<void>;
   stopWatching(): Promise<void>;
   close(): Promise<void>;
+  /** Lists chats the bot is in, so it can auto-serve every group it's been added to. */
+  listChats(query?: ChatQuery): Promise<readonly Chat[]>;
 }
 
 /** Returns the sender's handle for a message id, or null if unknown. */
@@ -76,7 +80,11 @@ export type SentIdLookup = (chatId: string, sinceMs: number, exclude: ReadonlySe
 export type ParticipantsResolver = (chatId: string) => string[];
 
 export interface PhotonChatPortConfig {
-  /** The port ignores every chat not listed here. Required: it can see every chat on the Mac. */
+  /**
+   * Explicit chat allowlist. Leave empty to auto-serve every group chat the bot is in (via
+   * `listChats`), which is the norm when the bot runs on its own Apple ID. When non-empty, only
+   * these chats are served and no auto-discovery happens.
+   */
   allowedChatIds: string[];
   /** Only "local" is supported (imessage-kit). Kept so callers can pass their configured mode. */
   mode?: "local" | "cloud";
@@ -255,7 +263,13 @@ type ReactionHandler = (reaction: IncomingReaction) => void;
 
 export class PhotonChatPort implements ChatPort {
   private readonly sdk: PhotonSdk;
+  /** Chats the bot serves. Seeded from config, or grown from `listChats` when auto-serving. */
   private readonly allowed: Set<string>;
+  /** Empty allowlist => serve every group chat the bot is in. */
+  private readonly autoServe: boolean;
+  /** Chats a refresh confirmed aren't group chats we serve (e.g. DMs), so we don't re-check them. */
+  private readonly notServed = new Set<string>();
+  private refreshing: Promise<void> | undefined;
   private readonly resolveSender: SenderResolver | undefined;
   private readonly resolveParticipants: ParticipantsResolver | undefined;
   private readonly selfHandle: string | undefined;
@@ -284,6 +298,7 @@ export class PhotonChatPort implements ChatPort {
     }
     this.sdk = config.sdk ?? new IMessageSDK(config.sdkConfig);
     this.allowed = new Set(config.allowedChatIds);
+    this.autoServe = config.allowedChatIds.length === 0;
     this.resolveSender =
       config.resolveSender === null
         ? undefined
@@ -309,7 +324,22 @@ export class PhotonChatPort implements ChatPort {
   /** Starts watching Messages. Resolves once the watcher is running; events keep arriving after. */
   async start(): Promise<void> {
     await this.ensureWatching();
-    this.log(`watching (local), ${this.allowed.size} chat(s) allowlisted`);
+    if (this.autoServe) await this.refreshServed();
+    this.log(
+      this.autoServe
+        ? `watching (local), auto-serving ${this.allowed.size} group chat(s)`
+        : `watching (local), ${this.allowed.size} chat(s) allowlisted`,
+    );
+  }
+
+  /** Pull the group chats the bot is in into the served set. Safe to call repeatedly. */
+  private async refreshServed(): Promise<void> {
+    try {
+      const chats = await this.sdk.listChats({ kind: "group" });
+      for (const chat of chats) this.allowed.add(chat.chatId);
+    } catch (err) {
+      this.onError(err instanceof Error ? err : new Error(String(err)));
+    }
   }
 
   postMessage(chatId: string, text: string): Promise<MessageRef> {
@@ -441,11 +471,11 @@ export class PhotonChatPort implements ChatPort {
     if (!this.watchStarting) this.watchStartedAt = Date.now() - REPLAY_SLACK_MS;
     this.watchStarting ??= this.sdk
       .startWatching({
-        onIncomingMessage: (message) => this.dispatch(message),
+        onIncomingMessage: (message) => void this.dispatch(message),
         onFromMeMessage: (message) => {
           if (this.isHistory(message)) return;
           if (this.isOurSend(message)) return;
-          if (this.selfHandle) this.dispatch(message);
+          if (this.selfHandle) void this.dispatch(message);
         },
         onError: (error) => this.onError(error),
       })
@@ -456,20 +486,43 @@ export class PhotonChatPort implements ChatPort {
     return this.watchStarting;
   }
 
-  /** Route one watcher row to reaction or message handlers (never both). */
+  /** Rows created before the watcher started are history the watcher replays, not new input. */
   private isHistory(message: Message): boolean {
     return message.createdAt.getTime() < this.watchStartedAt;
   }
 
+  /**
+   * Gate one watcher row. The allowlisted path is synchronous (handlers fire before this returns);
+   * only discovering a just-added group in auto-serve mode goes async.
+   */
   private dispatch(message: Message): void {
     if (this.isHistory(message)) return;
-    if (message.chatId === null || !this.allowed.has(message.chatId)) {
-      // Never log other chats' text. The claim word only reveals the chat id.
-      if (message.text?.toLowerCase().includes(CLAIM_WORD)) {
-        this.log(`claim: add ${message.chatId} to the allowlist`);
-      }
+    const chatId = message.chatId;
+    if (chatId === null) return;
+    if (this.allowed.has(chatId)) {
+      this.deliver(message);
       return;
     }
+    if (this.autoServe && !this.notServed.has(chatId)) {
+      void this.discoverThenDeliver(chatId, message);
+      return;
+    }
+    // Never log other chats' text. The claim word only reveals the chat id.
+    if (message.text?.toLowerCase().includes(CLAIM_WORD)) {
+      this.log(`claim: add ${chatId} to the allowlist`);
+    }
+  }
+
+  /** A chat the bot isn't serving yet: refresh the group list once, then deliver if it's one we're in. */
+  private async discoverThenDeliver(chatId: string, message: Message): Promise<void> {
+    this.refreshing ??= this.refreshServed().finally(() => (this.refreshing = undefined));
+    await this.refreshing;
+    if (this.allowed.has(chatId)) this.deliver(message);
+    else this.notServed.add(chatId); // a DM or a chat we're not in; stop re-checking it
+  }
+
+  /** Route one served row to reaction or message handlers (never both). */
+  private deliver(message: Message): void {
     try {
       if (message.reaction) {
         const reaction = mapReactionRow(message, this.resolveSender, this.selfHandle);

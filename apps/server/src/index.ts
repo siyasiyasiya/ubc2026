@@ -23,9 +23,7 @@ import { Store } from "./store.js";
 warnIfNoClaudeAuth();
 
 if (config.allowedChatIds.length === 0) {
-  console.warn(
-    "ALLOWED_CHAT_IDS is empty, so the bot will ignore every chat. Send a message containing #treasury in your test group to see its id.",
-  );
+  console.log("ALLOWED_CHAT_IDS is empty, so the bot auto-serves every group chat its Apple ID is in.");
 }
 
 const wallet = config.arc ? arcWalletAdapters(config.arc) : new InMemoryWalletAdapter();
