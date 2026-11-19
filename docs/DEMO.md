@@ -81,9 +81,28 @@ amount in text (as above).
 - [ ] Happy path reaches `✅ Settled #1`
 - [ ] (optional) over-limit variant reaches `⚠️ Partly settled`
 
-## Not in this demo (yet)
+## Real iMessage demo (on a Mac)
 
-- **Real iMessage**: `pnpm --filter @gta/server dev` — needs a Mac + Full Disk Access + `ALLOWED_CHAT_IDS`
-  (send `#treasury` in the chat to find its id). See `apps/server/.env.example`.
-- **Pay-before (buy something via Crossmint)**: the `PurchaseAdapter` is built but not yet wired into the runtime.
-- **Onchain settlement**: the Arc `GroupTreasury` contract is Track A (separate).
+The chat layer runs on **imessage-kit** (it reads the Mac's Messages database), so native **👍 tapbacks** and **DMs** both work for real.
+
+**Prereqs**
+- A **Mac** signed into iMessage, with **Full Disk Access** granted to your terminal (System Settings → Privacy & Security → Full Disk Access).
+- `apps/server/.env` with `ANTHROPIC_API_KEY`, plus:
+  - `SELF_HANDLE=` the bot Apple ID's phone/email (so it attributes its own messages correctly)
+  - `MEMBER_NAMES=+15550000001=Neena,+15550000002=Siya` (map handles → names)
+  - Wallet: leave `TREASURY_ADDRESS` / `OPERATOR_PRIVATE_KEY` empty for the **in-memory** wallet, or set them to settle on **Arc**.
+
+**Run**
+1. `pnpm --filter @gta/server dev`
+2. Send a message containing `#treasury` in your test group → the server logs that chat's id → add it to `ALLOWED_CHAT_IDS` in `.env` and restart.
+3. In the group: `dinner at Uchi, I paid $90, split with Siya and Tristan` → the agent posts the split card → members **tap 👍** on it → `✅ Settled`.
+
+**Onboarding (optional — for the Arc / real-wallet demo)**
+- A member replies `in` → the agent DMs them the Face ID link (DMs work on imessage-kit).
+- Or send it manually: `pnpm --filter @gta/server invite <chatId> <handle> [name]` (needs `INVITE_SECRET` set).
+
+**Confirm tapbacks reach the bot:** `pnpm --filter @gta/imessage exec tsx scripts/watch-reactions.ts` — prints each incoming reaction and how the adapter maps it (read-only; never sends).
+
+## Not yet wired
+
+- **Pay-before (the agent *buys* something via Crossmint)** — the `PurchaseAdapter` is built and tested but not yet driven by the runtime. This is the biggest remaining feature.
