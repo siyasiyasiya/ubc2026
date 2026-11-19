@@ -6,6 +6,7 @@
  *   neena: dinner at uchi friday?        a member says something
  *   /photo neena ./receipt.jpg           a member posts a photo
  *   /like siya 1                         a member 👍s the card for request #1
+ *   /dm siya what's my balance?          a member DMs Kitty privately
  *   /state                               print the group's state
  */
 
@@ -26,6 +27,7 @@ const handles: Record<string, string> = { neena: "+15550000001", siya: "+1555000
 let nextId = 1;
 const messageHandlers: ((m: IncomingMessage) => void)[] = [];
 const reactionHandlers: ((r: IncomingReaction) => void)[] = [];
+const directHandlers: ((m: IncomingMessage) => void)[] = [];
 const chat: ChatPort = {
   async postMessage(chatId, text) {
     const id = `sim-${nextId++}`;
@@ -40,6 +42,7 @@ const chat: ChatPort = {
   },
   onMessage: (h) => (messageHandlers.push(h), () => undefined),
   onReaction: (h) => (reactionHandlers.push(h), () => undefined),
+  onDirectMessage: (h) => (directHandlers.push(h), () => undefined),
   async getParticipants() {
     return Object.values(handles);
   },
@@ -70,6 +73,11 @@ for await (const raw of rl) {
   const at = Date.now();
   if (line === "/state") {
     console.dir(store.get(CHAT), { depth: 6 });
+  } else if (line.startsWith("/dm ")) {
+    const [, who = "", ...rest] = line.split(/\s+/);
+    const handle = handles[who];
+    if (!handle || rest.length === 0) console.error("Usage: /dm <member> <message>  (e.g. /dm neena what's my balance?)");
+    else directHandlers.forEach((h) => h({ chatId: `dm:${handle}`, senderHandle: handle, text: rest.join(" "), attachments: [], at }));
   } else if (line.startsWith("/photo ")) {
     const [, who = "", file = ""] = line.split(/\s+/);
     const handle = handles[who];

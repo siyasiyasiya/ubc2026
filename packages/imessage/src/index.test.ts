@@ -533,6 +533,32 @@ describe("PhotonChatPort getParticipants", () => {
   });
 });
 
+describe("PhotonChatPort direct messages", () => {
+  it("routes a 1-on-1 (dm) message to onDirectMessage, not onMessage", () => {
+    const sdk = new FakeSdk();
+    const port = new PhotonChatPort({ sdk, allowedChatIds: ALLOWED });
+    const group: IncomingMessage[] = [];
+    const direct: IncomingMessage[] = [];
+    port.onMessage((m) => group.push(m));
+    port.onDirectMessage((m) => direct.push(m));
+
+    // A dm from a chat NOT in the allowlist still reaches the DM handler (it's addressed to the bot).
+    sdk.emit(makeMessage({ chatId: "iMessage;+;dmX", chatKind: "dm", text: "what's my balance?" }));
+
+    expect(group).toHaveLength(0);
+    expect(direct.map((m) => m.text)).toEqual(["what's my balance?"]);
+  });
+
+  it("does not treat a group message as a dm", () => {
+    const sdk = new FakeSdk();
+    const port = new PhotonChatPort({ sdk, allowedChatIds: ALLOWED });
+    const direct: IncomingMessage[] = [];
+    port.onDirectMessage((m) => direct.push(m));
+    sdk.emit(makeMessage({ text: "group chatter" })); // chatKind defaults to "group"
+    expect(direct).toHaveLength(0);
+  });
+});
+
 describe("PhotonChatPort getChatName", () => {
   it("returns the chat's display name, or null when there is none or lookup is off", async () => {
     const named = new PhotonChatPort({

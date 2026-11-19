@@ -19,6 +19,7 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
   const dms: { handle: string; text: string }[] = [];
   const onMessage: ((m: IncomingMessage) => void)[] = [];
   const onReaction: ((r: IncomingReaction) => void)[] = [];
+  const onDirect: ((m: IncomingMessage) => void)[] = [];
   const chat: ChatPort = {
     async postMessage(chatId, text) {
       if (failing.posts > 0) {
@@ -40,6 +41,7 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
     },
     onMessage: (h) => (onMessage.push(h), () => undefined),
     onReaction: (h) => (onReaction.push(h), () => undefined),
+    onDirectMessage: (h) => (onDirect.push(h), () => undefined),
     getParticipants: async () => opts.participants ?? [],
     getChatName: async () => opts.chatName ?? null,
   };
@@ -97,13 +99,17 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
     await runtime.serial(async () => undefined);
   };
   const request = () => store.get(CHAT)!.requests[0]!;
+  const dm = async (handle: string, text: string) => {
+    onDirect.forEach((h) => h({ chatId: `dm:${handle}`, senderHandle: handle, text, attachments: [], at: 0 }));
+    await runtime.serial(async () => undefined);
+  };
 
   const proposeDinner = async () => {
     for (const who of [SIYA, TRISTAN, OUTSIDER]) await say(who, "hi");
     await say(NEENA, "split dinner with siya and tristan");
     return request();
   };
-  return { posted, dms, failing, say, react, proposeDinner, request, runtime, store };
+  return { posted, dms, failing, say, react, dm, proposeDinner, request, runtime, store };
 }
 
 describe("GroupRuntime", () => {

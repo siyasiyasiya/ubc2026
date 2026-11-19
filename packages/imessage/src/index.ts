@@ -309,6 +309,7 @@ export class PhotonChatPort implements ChatPort {
 
   private readonly messageHandlers = new Set<MessageHandler>();
   private readonly reactionHandlers = new Set<ReactionHandler>();
+  private readonly directHandlers = new Set<MessageHandler>();
   /** Sends waiting to learn their chat.db id from the watcher's from-me rows. */
   private readonly pendingSends: { chatId: string; text: string; resolve: (id: string) => void }[] = [];
   /** Sends are serialized so each one claims the next sent row in its chat, in order. */
@@ -433,10 +434,19 @@ export class PhotonChatPort implements ChatPort {
     };
   }
 
+  onDirectMessage(handler: MessageHandler): Unsubscribe {
+    this.directHandlers.add(handler);
+    void this.ensureWatching();
+    return () => {
+      this.directHandlers.delete(handler);
+    };
+  }
+
   /** Stop the watcher and release the SDK. Not part of ChatPort; call on shutdown. */
   async close(): Promise<void> {
     this.messageHandlers.clear();
     this.reactionHandlers.clear();
+    this.directHandlers.clear();
     await this.sdk.close();
     this.watchStarting = undefined;
   }
@@ -536,6 +546,11 @@ export class PhotonChatPort implements ChatPort {
     if (this.isHistory(message)) return;
     const chatId = message.chatId;
     if (chatId === null) return;
+    // A 1-on-1 message to the bot is inherently its own conversation: no allowlist, no roster.
+    if (message.chatKind === "dm") {
+      this.deliverDirect(message);
+      return;
+    }
     if (this.allowed.has(chatId)) {
       this.deliver(message);
       return;
@@ -573,6 +588,19 @@ export class PhotonChatPort implements ChatPort {
       // Text-less, photo-less rows (e.g. a from-me echo whose text lives in attributedBody) aren't input.
       if (!msg || (!msg.text && msg.attachments.length === 0)) return;
       for (const handler of this.messageHandlers) handler(msg);
+    } catch (err) {
+      this.onError(err instanceof Error ? err : new Error(String(err)));
+    }
+  }
+
+  /** Route a private 1-on-1 message to the DM handlers (account questions). Reactions on DMs are ignored. */
+  private deliverDirect(message: Message): void {
+    try {
+      if (message.reaction) return;
+      const msg = mapMessageRow(message, this.resolveSender, this.selfHandle);
+      if (!msg || !msg.text) return;
+      this.log(`dm from ${msg.senderHandle}`);
+      for (const handler of this.directHandlers) handler(msg);
     } catch (err) {
       this.onError(err instanceof Error ? err : new Error(String(err)));
     }
