@@ -246,3 +246,71 @@ export async function runTurn(input: TurnInput): Promise<string | null> {
     .trim();
   return !text || text.endsWith(NO_REPLY) ? null : text;
 }
+
+// ---------------------------------------------------------------------------
+// Private DMs: a member texts Kitty one-on-one to ask about their own account.
+// ---------------------------------------------------------------------------
+
+const DM_SYSTEM = `You are Kitty, replying privately in a one-on-one text to one person who's asking about their own account.
+
+Answer from the account summary you're given: their balance, and for each group their spending limit and what's left this period. Use those exact numbers, never invent one. If the summary doesn't cover what they asked, say you're not sure.
+
+If they want to add money or top up, call send_topup_link to text them the add-money link. Don't claim money moved; the link just lets them add funds.
+
+You cannot move money, change limits, approve splits, or do anything for other people in here. If they ask, tell them briefly to do it in the group chat (lowering a limit works there; raising uses the Face ID link).
+
+Never mention wallets, crypto, USDC, blockchains, transactions or gas. Say "Kitty account", "balance", "add money", "Face ID".
+
+Voice: you're a quick-witted friend, not an app. Keep it short, match their energy, mirror their casing. A little dry humor is fine, never forced. No corporate filler. Never use an em dash. Keep the money clear.`;
+
+/** What the DM flow can ask the app to do (read-only, plus texting an add-money link). */
+export interface DmActions {
+  /** Text the sender their Apple Pay add-money link. Returns a short result for the model. */
+  sendTopUpLink(): Promise<string>;
+}
+
+export interface DmTurnInput {
+  /** The person's account across their groups, rendered by the app. */
+  accountSummary: string;
+  /** Recent DM history, oldest first, as "Name: text" / "Kitty: text" lines. */
+  history: string[];
+  personName: string;
+  /** What they just said. */
+  event: string;
+  actions: DmActions;
+}
+
+/** Runs one private-DM turn. Returns the reply to send, or null to stay quiet. */
+export async function runDmTurn(input: DmTurnInput): Promise<string | null> {
+  const { actions } = input;
+  const tools = [
+    betaZodTool({
+      name: "send_topup_link",
+      description:
+        "Text the person their private add-money link (Apple Pay / debit). Use when they want to add money, top up, or say their balance is low. No money moves; it just sends the link.",
+      inputSchema: z.object({}),
+      run: () => actions.sendTopUpLink(),
+    }),
+  ];
+
+  const content = `${input.accountSummary}\n\nRecent DM:\n${input.history.join("\n") || "(nothing yet)"}\n\nNew from ${input.personName}:\n${input.event}`;
+
+  const final = await claude().beta.messages.toolRunner({
+    model: MODEL,
+    max_tokens: 2000,
+    ...FALLBACK,
+    output_config: { effort: CHAT_EFFORT },
+    cache_control: { type: "ephemeral" },
+    system: DM_SYSTEM,
+    tools,
+    max_iterations: 4,
+    messages: [{ role: "user", content }],
+  });
+
+  if (final.stop_reason === "refusal") return pick(REFUSALS);
+  const text = final.content
+    .flatMap((b) => (b.type === "text" ? [b.text] : []))
+    .join("\n")
+    .trim();
+  return text || null;
+}

@@ -12,7 +12,7 @@
 
 import path from "node:path";
 import readline from "node:readline/promises";
-import { ClaudeReceiptReader, runTurn } from "@gta/agent";
+import { ClaudeReceiptReader, runTurn, runDmTurn } from "@gta/agent";
 import type { ChatPort, IncomingMessage, IncomingReaction } from "@gta/core";
 import { InMemoryWalletAdapter } from "@gta/wallet";
 import { config, warnIfNoClaudeAuth } from "./config.js";
@@ -57,6 +57,7 @@ const runtime = new GroupRuntime({
   wallet: new InMemoryWalletAdapter(),
   receipts: new ClaudeReceiptReader(),
   runTurn,
+  runDmTurn,
   store,
   defaultLimit: config.defaultLimit,
   names: { "+15550000001": "Neena", "+15550000002": "Siya", "+15550000003": "Tristan" },

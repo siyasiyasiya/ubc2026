@@ -10,6 +10,6 @@
  * (default low, so replies feel instant).
  */
 
-export { NO_REPLY, runTurn, type TreasuryActions, type TurnInput } from "./brain.js";
+export { NO_REPLY, runTurn, runDmTurn, type TreasuryActions, type TurnInput, type DmActions, type DmTurnInput } from "./brain.js";
 export { CHAT_EFFORT, MODEL } from "./claude.js";
 export { ClaudeReceiptReader, NotAReceiptError } from "./receipt.js";

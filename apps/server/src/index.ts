@@ -14,7 +14,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { ClaudeReceiptReader, runTurn } from "@gta/agent";
+import { ClaudeReceiptReader, runTurn, runDmTurn } from "@gta/agent";
 import { PhotonChatPort } from "@gta/imessage";
 import { createCrossmintPurchaseAdapterFromEnv } from "@gta/purchase";
 import { SimulatedPurchaseAdapter } from "./simulated-purchase.js";
@@ -50,6 +50,7 @@ const runtime = new GroupRuntime({
   receipts: new ClaudeReceiptReader(),
   purchase: purchaseAdapter(),
   runTurn,
+  runDmTurn,
   store,
   defaultLimit: config.defaultLimit,
   names: config.names,

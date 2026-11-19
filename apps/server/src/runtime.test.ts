@@ -1,5 +1,5 @@
 import { usdc, type PurchaseAdapter, type ChatPort, type IncomingMessage, type IncomingReaction, type PullParams, type Receipt, type WalletAdapter } from "@gta/core";
-import type { runTurn as RunTurn } from "@gta/agent";
+import type { runTurn as RunTurn, runDmTurn as RunDmTurn } from "@gta/agent";
 import { groupIdForChat, InMemoryWalletAdapter, inviteTicket } from "@gta/wallet";
 import { describe, expect, it } from "vitest";
 import { GroupRuntime } from "./runtime.js";
@@ -73,6 +73,13 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
     });
     return "Splitting dinner three ways.";
   };
+  // The DM brain: echoes the account summary it was given, and sends a top-up link when asked.
+  const dmSummaries: string[] = [];
+  const fakeDmTurn: typeof RunDmTurn = async ({ actions, event, accountSummary }) => {
+    dmSummaries.push(accountSummary);
+    if (event.toLowerCase().includes("add money")) return actions.sendTopUpLink();
+    return `summary: ${accountSummary}`;
+  };
   const store = new Store();
   const runtime = new GroupRuntime({
     chat,
@@ -83,6 +90,7 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
     ...(opts.purchase ? { purchase: opts.purchase } : {}),
     receipts: { read: async (): Promise<Receipt> => ({ source: "photo", total: usdc(90), at: 0 }) },
     runTurn: fakeTurn,
+    runDmTurn: fakeDmTurn,
     store,
     defaultLimit: { amount: usdc(limitUsd), period: "weekly" },
     names: { [NEENA]: "Neena", [SIYA]: "Siya", [TRISTAN]: "Tristan", [OUTSIDER]: "Mallory" },
@@ -109,7 +117,7 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
     await say(NEENA, "split dinner with siya and tristan");
     return request();
   };
-  return { posted, dms, failing, say, react, dm, proposeDinner, request, runtime, store };
+  return { posted, dms, failing, say, react, dm, dmSummaries, proposeDinner, request, runtime, store };
 }
 
 describe("GroupRuntime", () => {
@@ -201,6 +209,37 @@ describe("GroupRuntime", () => {
     expect(members).toContain(SIYA);
     expect(members).toContain(TRISTAN);
     expect(record.group.name).toBe("Cabo Trip"); // the real chat name, not the "Group" default
+  });
+
+  it("answers a private DM with the sender's account summary (balance + per-group limits)", async () => {
+    const wallets = { [SIYA]: "0x00000000000000000000000000000000000000bb" };
+    const t = setup(50, { wallets });
+    await t.say(SIYA, "hi"); // Siya becomes a member of the group
+    await t.dm(SIYA, "what's my balance?");
+
+    expect(t.dmSummaries).toHaveLength(1);
+    expect(t.dmSummaries[0]).toContain("Siya");
+    expect(t.dmSummaries[0]).toContain("$50.00"); // her limit shows up in the summary
+    expect(t.dms.at(-1)?.handle).toBe(SIYA); // the reply went back as a DM
+  });
+
+  it("DMs a top-up link when asked to add money", async () => {
+    const invites = { baseUrl: "https://kittyagent.vercel.app", secret: "s3cret" };
+    const account = "0x00000000000000000000000000000000000000bb";
+    const t = setup(50, { invites, wallets: { [SIYA]: account } });
+    await t.say(SIYA, "hi");
+    await t.dm(SIYA, "add money please");
+
+    const link = t.dms.find((d) => d.text.includes("kittyagent"));
+    expect(link?.handle).toBe(SIYA);
+    expect(new URL(link!.text.split(" ").at(-1)!).searchParams.get("a")).toBe(account);
+  });
+
+  it("tells a DM from someone in no group there's nothing to check", async () => {
+    const t = setup();
+    await t.dm(OUTSIDER, "what's my balance?");
+    expect(t.dmSummaries).toHaveLength(0); // never ran the account brain
+    expect(t.dms.at(-1)?.text.toLowerCase()).toContain("group");
   });
 
   it("pulls through the chat's own wallet adapter, between members' Kitty accounts", async () => {

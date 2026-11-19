@@ -34,7 +34,7 @@ import {
   type Usdc,
   type WalletAdapter,
 } from "@gta/core";
-import type { runTurn as RunTurn, TreasuryActions } from "@gta/agent";
+import type { runTurn as RunTurn, runDmTurn as RunDmTurn, TreasuryActions, DmActions } from "@gta/agent";
 import { groupIdForChat, inviteLink, inviteTicket, type DebtPaidEvent, type JoinEvent, type LimitSetEvent } from "@gta/wallet";
 import type { GroupRecord, RequestRecord, Store } from "./store.js";
 
@@ -46,6 +46,8 @@ export interface RuntimeDeps {
   /** Kitty buys things for the group (pay before). Crossmint for real orders, or a labelled simulation. */
   purchase?: PurchaseAdapter;
   runTurn: typeof RunTurn;
+  /** The private-DM brain: answers a member's account questions one-on-one. */
+  runDmTurn: typeof RunDmTurn;
   store: Store;
   defaultLimit: SpendingLimit;
   /** Display names by handle, e.g. { "+18475551234": "Tristan" }. */
@@ -108,6 +110,7 @@ export class GroupRuntime {
   attach(): void {
     this.deps.chat.onMessage((msg) => void this.serial(() => this.handleMessage(msg)));
     this.deps.chat.onReaction((r) => void this.serial(() => this.handleReaction(r)));
+    this.deps.chat.onDirectMessage((msg) => void this.serial(() => this.handleDirectMessage(msg)));
   }
 
   /** Handles events one at a time so two messages can't race on the same state. Resolves when done. */
@@ -487,6 +490,86 @@ export class GroupRuntime {
     });
     if (reply) await this.say(msg.chatId, reply);
     this.deps.store.save();
+  }
+
+  // --- private DMs ("what's my balance?") -----------------------------------
+
+  /** Every group the person (by handle) is a member of, with their own Member object in each. */
+  private membershipsOf(handle: string): { record: GroupRecord; member: Member }[] {
+    const out: { record: GroupRecord; member: Member }[] = [];
+    for (const record of this.deps.store.all()) {
+      const member = record.group.members.find((m) => m.id === handle);
+      if (member) out.push({ record, member });
+    }
+    return out;
+  }
+
+  /** The person's account across their chats: one global balance, plus each chat's limit and remaining. */
+  private async accountSummary(handle: string, memberships: { record: GroupRecord; member: Member }[]): Promise<string> {
+    const name = memberships[0]?.member.displayName ?? this.deps.names[handle] ?? `…${handle.slice(-4)}`;
+    const anyWallet = memberships.find((m) => m.member.wallet);
+    let balanceLine = "Balance: not set up yet (no Kitty account)";
+    if (anyWallet) {
+      const bal = await this.walletFor(anyWallet.record).balance?.(anyWallet.member);
+      balanceLine = bal === undefined ? "Balance: unknown" : `Balance: ${formatUsdc(bal)} in their Kitty account (shared across all their groups)`;
+    }
+    const groups = await Promise.all(
+      memberships.map(async ({ record, member }) => {
+        const status = await this.walletFor(record).getLimitStatus(member);
+        const limit = status.limit.amount > 0n ? status.limit : member.limit;
+        const per = limit.period === "once" ? "in total (one time)" : `per ${limit.period === "weekly" ? "week" : "month"}`;
+        return `- ${record.group.name}: ${formatUsdc(status.remaining)} left of a ${formatUsdc(limit.amount)} limit ${per}`;
+      }),
+    );
+    return `Person: ${name}\n${balanceLine}\n\nTheir groups:\n${groups.join("\n") || "- (none yet)"}`;
+  }
+
+  private async handleDirectMessage(msg: IncomingMessage): Promise<void> {
+    const handle = msg.senderHandle;
+    const memberships = this.membershipsOf(handle);
+    const name = memberships[0]?.member.displayName ?? this.deps.names[handle] ?? `…${handle.slice(-4)}`;
+    const dmKey = `dm:${handle}`;
+
+    if (memberships.length === 0) {
+      await this.sendDm(handle, dmKey, name, "I don't see you in any Kitty group yet, so there's no account to check. Ask to join in your group chat first.");
+      return;
+    }
+
+    const history = [...(this.history.get(dmKey) ?? [])];
+    this.remember(dmKey, `${name}: ${msg.text}`);
+    const reply = await this.deps.runDmTurn({
+      accountSummary: await this.accountSummary(handle, memberships),
+      history,
+      personName: name,
+      event: msg.text,
+      actions: this.dmActionsFor(handle, dmKey, name, memberships),
+    });
+    if (reply) await this.sendDm(handle, dmKey, name, reply);
+  }
+
+  /** Sends a DM reply and records it in the DM history. */
+  private async sendDm(handle: string, dmKey: string, _name: string, text: string): Promise<void> {
+    this.remember(dmKey, `Kitty: ${text}`);
+    try {
+      await this.deps.chat.sendDirectMessage(handle, text);
+    } catch (err) {
+      this.log(`DM reply to ${handle} failed: ${(err as Error).message}`);
+    }
+  }
+
+  private dmActionsFor(handle: string, dmKey: string, name: string, memberships: { record: GroupRecord; member: Member }[]): DmActions {
+    return {
+      sendTopUpLink: async () => {
+        const linked = memberships.find((m) => m.member.wallet);
+        if (!linked) return "They don't have a Kitty account yet, so there's nothing to add money to. Tell them to join in their group first.";
+        const base = this.deps.invites?.baseUrl;
+        if (!base) return "The add-money page isn't configured, so no link to send.";
+        const url = new URL(base);
+        url.searchParams.set("a", linked.member.wallet!.address);
+        await this.sendDm(handle, dmKey, name, `add money to your Kitty account here (Apple Pay or debit): ${url.toString()}`);
+        return "Sent them the add-money link.";
+      },
+    };
   }
 
   private async handleReaction(reaction: IncomingReaction): Promise<void> {
