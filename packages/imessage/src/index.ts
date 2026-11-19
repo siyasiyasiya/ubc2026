@@ -63,6 +63,12 @@ export interface PhotonSdk {
 /** Returns the sender's handle for a message id, or null if unknown. */
 export type SenderResolver = (messageId: string) => string | null;
 
+/**
+ * Finds the guid of the first message I sent in a chat at or after `sinceMs`, skipping `exclude`.
+ * Used to learn a sent message's id without relying on its text.
+ */
+export type SentIdLookup = (chatId: string, sinceMs: number, exclude: ReadonlySet<string>) => string | null;
+
 export interface PhotonChatPortConfig {
   /** The port ignores every chat not listed here. Required: it can see every chat on the Mac. */
   allowedChatIds: string[];
@@ -84,6 +90,13 @@ export interface PhotonChatPortConfig {
   selfHandle?: string;
   /** How long postMessage waits for the sent row to appear in chat.db to learn its id. */
   sentIdTimeoutMs?: number;
+  /**
+   * Finds a sent message's guid in chat.db. Defaults to a read-only chat.db query when the real
+   * SDK is used; pass `null` to rely on the watcher only.
+   */
+  sentIdLookup?: SentIdLookup | null;
+  /** How often postMessage polls `sentIdLookup` while waiting. */
+  sentIdPollMs?: number;
   log?: (line: string) => void;
   /** Surfaces watcher/dispatch errors (ChatPort has no error channel). */
   onError?: (error: Error) => void;
@@ -108,6 +121,39 @@ export function chatDbSenderResolver(databasePath?: string): SenderResolver {
         "SELECT h.id AS handle FROM message m JOIN handle h ON h.ROWID = m.handle_id WHERE m.guid = ?",
       );
       return stmt.get(messageId)?.handle ?? null;
+    } catch {
+      return null;
+    }
+  };
+}
+
+/** chat.db stores dates as nanoseconds since 2001-01-01. */
+const APPLE_EPOCH_MS = Date.UTC(2001, 0, 1);
+
+/**
+ * Read-only chat.db lookup of my first plain (non-reaction) message in a chat since a time. Works
+ * even when `message.text` is NULL, which newer macOS does for sent rows (text lives in
+ * `attributedBody`), so matching on text alone misses them.
+ */
+export function chatDbSentIdLookup(databasePath?: string): SentIdLookup {
+  let db: Database.Database | undefined;
+  let stmt: Database.Statement<[string, bigint], { guid: string }> | undefined;
+  return (chatId, sinceMs, exclude) => {
+    try {
+      db ??= new Database(databasePath ?? path.join(os.homedir(), "Library/Messages/chat.db"), {
+        readonly: true,
+        fileMustExist: true,
+      });
+      stmt ??= db.prepare(
+        `SELECT m.guid AS guid FROM message m
+         JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
+         JOIN chat c ON c.ROWID = cmj.chat_id
+         WHERE c.guid = ? AND m.is_from_me = 1 AND m.associated_message_type = 0 AND m.date >= ?
+         ORDER BY m.ROWID ASC LIMIT 20`,
+      );
+      // A second of slack: chat.db stamps the row slightly before send() resolves.
+      const since = BigInt(Math.max(0, sinceMs - 1000 - APPLE_EPOCH_MS)) * 1_000_000n;
+      return stmt.all(chatId, since).find((r) => !exclude.has(r.guid))?.guid ?? null;
     } catch {
       return null;
     }
@@ -178,6 +224,8 @@ export class PhotonChatPort implements ChatPort {
   private readonly resolveSender: SenderResolver | undefined;
   private readonly selfHandle: string | undefined;
   private readonly sentIdTimeoutMs: number;
+  private readonly sentIdPollMs: number;
+  private readonly sentIdLookup: SentIdLookup | undefined;
   private readonly log: (line: string) => void;
   private readonly onError: (error: Error) => void;
 
@@ -185,6 +233,8 @@ export class PhotonChatPort implements ChatPort {
   private readonly reactionHandlers = new Set<ReactionHandler>();
   /** Sends waiting to learn their chat.db id from the watcher's from-me rows. */
   private readonly pendingSends: { chatId: string; text: string; resolve: (id: string) => void }[] = [];
+  /** Sends are serialized so each one claims the next sent row in its chat, in order. */
+  private sendQueue: Promise<unknown> = Promise.resolve();
   /** Texts and guids of our own recent sends, so their echoes are never treated as input. */
   private readonly recentSendTexts: string[] = [];
   private readonly ourMessageIds = new Set<string>();
@@ -203,6 +253,12 @@ export class PhotonChatPort implements ChatPort {
           (config.sdk ? undefined : chatDbSenderResolver(config.sdkConfig?.databasePath)));
     this.selfHandle = config.selfHandle;
     this.sentIdTimeoutMs = config.sentIdTimeoutMs ?? 10_000;
+    this.sentIdPollMs = config.sentIdPollMs ?? 250;
+    this.sentIdLookup =
+      config.sentIdLookup === null
+        ? undefined
+        : (config.sentIdLookup ??
+          (config.sdk ? undefined : chatDbSentIdLookup(config.sdkConfig?.databasePath)));
     this.log = config.log ?? ((line) => console.log(`[imessage] ${line}`));
     this.onError = config.onError ?? ((error) => this.log(`watcher error: ${error.message}`));
   }
@@ -213,15 +269,22 @@ export class PhotonChatPort implements ChatPort {
     this.log(`watching (local), ${this.allowed.size} chat(s) allowlisted`);
   }
 
-  async postMessage(chatId: string, text: string): Promise<MessageRef> {
-    this.rememberSend(text);
-    // Listen before sending so a fast chat.db row isn't missed.
-    const sentId = this.awaitSentId(chatId, text);
-    void this.ensureWatching();
-    await this.sdk.send({ to: chatId, text });
-    const id = await sentId;
-    if (id) this.ourMessageIds.add(id);
-    return id ? { id, chatId } : this.makeRef(chatId);
+  postMessage(chatId: string, text: string): Promise<MessageRef> {
+    const run = async (): Promise<MessageRef> => {
+      this.rememberSend(text);
+      const startedAt = Date.now();
+      // Listen before sending so a fast chat.db row isn't missed.
+      const sentId = this.awaitSentId(chatId, text, startedAt);
+      void this.ensureWatching();
+      await this.sdk.send({ to: chatId, text });
+      const id = await sentId;
+      if (id) this.ourMessageIds.add(id);
+      else this.log(`couldn't learn the id of a message sent to ${chatId}; a 👍 on it won't match`);
+      return id ? { id, chatId } : this.makeRef(chatId);
+    };
+    const result = this.sendQueue.then(run, run);
+    this.sendQueue = result.catch(() => undefined);
+    return result;
   }
 
   async postImage(chatId: string, image: ImageRef, caption?: string): Promise<MessageRef> {
@@ -276,26 +339,43 @@ export class PhotonChatPort implements ChatPort {
    * `send()` resolves on AppleScript dispatch and never returns the chat.db guid. The watcher's
    * from-me rows carry it, so wait for the next from-me row in this chat with the same text.
    */
-  private awaitSentId(chatId: string, text: string): Promise<string | undefined> {
+  private awaitSentId(chatId: string, text: string, startedAt: number): Promise<string | undefined> {
     return new Promise((resolve) => {
-      const entry = { chatId, text, resolve: (id: string) => resolve(id) };
-      this.pendingSends.push(entry);
-      setTimeout(() => {
+      let poll: ReturnType<typeof setInterval> | undefined;
+      let done = false;
+      const finish = (id: string | undefined) => {
+        if (done) return;
+        done = true;
         const i = this.pendingSends.indexOf(entry);
-        if (i >= 0) {
-          this.pendingSends.splice(i, 1);
-          resolve(undefined);
-        }
-      }, this.sentIdTimeoutMs).unref?.();
+        if (i >= 0) this.pendingSends.splice(i, 1);
+        clearTimeout(timer);
+        if (poll) clearInterval(poll);
+        resolve(id);
+      };
+      const entry = { chatId, text, resolve: (id: string) => finish(id) };
+      this.pendingSends.push(entry);
+      const timer = setTimeout(() => finish(undefined), this.sentIdTimeoutMs);
+      timer.unref?.();
+      const lookup = this.sentIdLookup;
+      if (lookup) {
+        poll = setInterval(() => {
+          const id = lookup(chatId, startedAt, this.ourMessageIds);
+          if (id) finish(id);
+        }, this.sentIdPollMs);
+        poll.unref?.();
+      }
     });
   }
 
   /** True if a from-me row is one of the bot's own sends (matched now, or seen before). */
   private isOurSend(message: Message): boolean {
     if (this.ourMessageIds.has(message.id)) return true;
-    if (message.reaction || message.text === null) return false;
-    const i = this.pendingSends.findIndex(
-      (p) => p.text === message.text && (message.chatId === null || p.chatId === message.chatId),
+    if (message.reaction) return false;
+    const sameChat = (p: { chatId: string }) => message.chatId === null || p.chatId === message.chatId;
+    // Newer macOS leaves `text` NULL on sent rows, so a text-less row claims the oldest send
+    // waiting in its chat.
+    const i = this.pendingSends.findIndex((p) =>
+      message.text === null ? sameChat(p) : p.text === message.text && sameChat(p),
     );
     if (i >= 0) {
       const [entry] = this.pendingSends.splice(i, 1);
@@ -304,7 +384,7 @@ export class PhotonChatPort implements ChatPort {
       return true;
     }
     // A late echo of something we sent after its wait timed out.
-    return this.recentSendTexts.includes(message.text);
+    return message.text !== null && this.recentSendTexts.includes(message.text);
   }
 
   /** Start the single shared watcher on first use (idempotent; the SDK allows only one). */
@@ -344,7 +424,8 @@ export class PhotonChatPort implements ChatPort {
         return;
       }
       const msg = mapMessageRow(message, this.resolveSender, this.selfHandle);
-      if (!msg) return;
+      // Text-less, photo-less rows (e.g. a from-me echo whose text lives in attributedBody) aren't input.
+      if (!msg || (!msg.text && msg.attachments.length === 0)) return;
       for (const handler of this.messageHandlers) handler(msg);
     } catch (err) {
       this.onError(err instanceof Error ? err : new Error(String(err)));

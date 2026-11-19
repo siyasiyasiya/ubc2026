@@ -52,6 +52,7 @@ class FakeSdk implements PhotonSdk {
 
 const AT = new Date("2026-01-02T03:04:05.000Z");
 const ALLOWED = ["iMessage;+;chat123", "iMessage;+;chatABC"];
+const tick = () => new Promise((r) => setTimeout(r, 0));
 
 function makeAttachment(over: Partial<Attachment> = {}): Attachment {
   return {
@@ -264,7 +265,7 @@ describe("PhotonChatPort send paths", () => {
     const sdk = new FakeSdk();
     const port = new PhotonChatPort({ sdk, allowedChatIds: ALLOWED, sentIdTimeoutMs: 1000 });
     const pending = port.postMessage("iMessage;+;chatABC", "🧾 #1 Dinner");
-    await Promise.resolve();
+    await tick();
     // Another of my messages in a different chat doesn't match; the right one does.
     sdk.watchEvents?.onFromMeMessage?.(makeMessage({ id: "other", chatId: "iMessage;+;elsewhere", text: "🧾 #1 Dinner", isFromMe: true }));
     sdk.watchEvents?.onFromMeMessage?.(makeMessage({ id: "card-guid", chatId: "iMessage;+;chatABC", text: "🧾 #1 Dinner", isFromMe: true }));
@@ -399,7 +400,7 @@ describe("PhotonChatPort allowlist, self handle, and echoes", () => {
 
     // The bot posts a card; its from-me row is matched to the send and not treated as input.
     const pending = port.postMessage("iMessage;+;chat123", "🧾 #1 Dinner");
-    await Promise.resolve();
+    await tick();
     sdk.watchEvents?.onFromMeMessage?.(makeMessage({ id: "card", isFromMe: true, participant: null, text: "🧾 #1 Dinner" }));
     expect((await pending).id).toBe("card");
 
@@ -416,5 +417,52 @@ describe("PhotonChatPort allowlist, self handle, and echoes", () => {
 
   it("refuses cloud mode", () => {
     expect(() => new PhotonChatPort({ sdk: new FakeSdk(), allowedChatIds: [], mode: "cloud" })).toThrow(/local/);
+  });
+});
+
+describe("PhotonChatPort sent-message ids without text", () => {
+  it("learns the card id from chat.db even when no watcher row has text", async () => {
+    const sdk = new FakeSdk();
+    const calls: [string, number, string[]][] = [];
+    let row: string | null = null;
+    const port = new PhotonChatPort({
+      sdk,
+      allowedChatIds: ALLOWED,
+      sentIdPollMs: 5,
+      sentIdTimeoutMs: 1000,
+      sentIdLookup: (chatId, since, exclude) => {
+        calls.push([chatId, since, [...exclude]]);
+        return row && !exclude.has(row) ? row : null;
+      },
+    });
+    const first = port.postMessage("iMessage;+;chat123", "Splitting dinner.");
+    setTimeout(() => (row = "reply-guid"), 20);
+    expect((await first).id).toBe("reply-guid");
+
+    // The next send skips the id already claimed.
+    const second = port.postMessage("iMessage;+;chat123", "🧾 #1 Dinner: $8.00\nPay back Siya: Joey $4.00");
+    setTimeout(() => (row = "card-guid"), 20);
+    expect((await second).id).toBe("card-guid");
+    expect(calls.at(-1)?.[0]).toBe("iMessage;+;chat123");
+    expect(calls.at(-1)?.[2]).toContain("reply-guid");
+  });
+
+  it("matches a text-less from-me row to the oldest send waiting in that chat", async () => {
+    // Seen live: the card's chat.db row had text NULL (text lives in attributedBody).
+    const sdk = new FakeSdk();
+    const port = new PhotonChatPort({ sdk, allowedChatIds: ALLOWED, sentIdTimeoutMs: 1000 });
+    const pending = port.postMessage("iMessage;+;chat123", "🧾 #1 Dinner: $8.00\n👍 this message");
+    await tick();
+    sdk.watchEvents?.onFromMeMessage?.(makeMessage({ id: "card", isFromMe: true, participant: null, text: null }));
+    expect((await pending).id).toBe("card");
+  });
+
+  it("never passes a text-less, photo-less row on as input", () => {
+    const sdk = new FakeSdk();
+    const port = new PhotonChatPort({ sdk, allowedChatIds: ALLOWED, selfHandle: "+16148001324" });
+    const seen: IncomingMessage[] = [];
+    port.onMessage((m) => seen.push(m));
+    sdk.watchEvents?.onFromMeMessage?.(makeMessage({ id: "late", isFromMe: true, participant: null, text: null }));
+    expect(seen).toEqual([]);
   });
 });
