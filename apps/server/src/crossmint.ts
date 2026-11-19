@@ -36,11 +36,12 @@ if (command === "card") {
   console.log("Then put the id it shows in apps/server/.env as CROSSMINT_PAYMENT_METHOD_ID.");
 } else if (command === "buy" && rest.length > 0) {
   const maxAt = rest.indexOf("--max");
-  const max = maxAt >= 0 ? usdc(Number(rest.splice(maxAt, 2)[1])) : undefined;
-  if (max !== undefined && !(max > 0n)) {
+  const maxUsd = maxAt >= 0 ? Number(rest.splice(maxAt, 2)[1]) : undefined;
+  if (maxUsd !== undefined && !(Number.isFinite(maxUsd) && maxUsd > 0)) {
     console.error("--max needs a dollar amount, e.g. --max 3");
     process.exit(1);
   }
+  const max = maxUsd !== undefined ? usdc(maxUsd) : undefined;
   const request = rest.join(" ");
   // The cap is also Crossmint's budget, so its browser won't go past it either.
   const store = createCrossmintPurchaseAdapterFromEnv(process.env, max !== undefined ? { maxCost: max } : {});

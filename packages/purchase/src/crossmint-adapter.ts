@@ -159,6 +159,7 @@ function buyerValue(b: BuyerDetails, field: string): string | undefined {
   if (/country/.test(f)) return b.country;
   if (/state|province|region/.test(f)) return b.state;
   if (/city|town|locality/.test(f)) return b.city;
+  if (/line ?2|apt|suite|unit|floor/.test(f)) return undefined; // we keep one address line
   if (/address|street|line ?1/.test(f)) return b.address;
   return undefined;
 }
@@ -310,6 +311,16 @@ export class CrossmintPurchaseAdapter implements PurchaseAdapter {
 
     const pay = run.requiredAction.interaction;
     const requestId = run.requiredAction.requestId;
+
+    // The group approved cart.total. If the store now asks for more, don't pay: the 👍s were
+    // for the old price.
+    const asked = moneyToUsdc(pay.amount);
+    if (asked > cart.total) {
+      throw new CrossmintCheckoutError(
+        `the price went up to ${formatUsdc(asked)} after the group approved ${formatUsdc(cart.total)}`,
+        { runId: cart.id, status: run.status },
+      );
+    }
 
     // The checkoutAuth may carry a pre-approved order intent (the treasurer's
     // spend approval). Otherwise authorize the configured card up to the exact

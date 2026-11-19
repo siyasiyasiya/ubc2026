@@ -384,6 +384,15 @@ describe("placeOrder", () => {
     expect(rec.calls.find((c) => c.path.endsWith("/messages"))).toBeUndefined();
   });
 
+  it("refuses to pay when the store's price went up after the group approved", async () => {
+    const pricier = paymentRun();
+    (pricier.requiredAction!.interaction as { amount: unknown }).amount = { value: "45.00", currency: "USD" };
+    const { fetch, rec } = makeFetch({ getRunQueue: [pricier] });
+    await expect(adapter(fetch).placeOrder({ cart })).rejects.toThrow(/price went up to \$45\.00/);
+    expect(rec.calls.find((c) => c.path === "/order-intents")).toBeUndefined();
+    expect(rec.calls.find((c) => c.path.endsWith("/messages"))).toBeUndefined();
+  });
+
   it("registers the card for order intents on first use, then charges", async () => {
     const { fetch: base, rec } = makeFetch({ getRunQueue: [paymentRun(), succeeded], orderIntent: { id: "oi_after_reg" } });
     let refused = false;
