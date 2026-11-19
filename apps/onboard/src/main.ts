@@ -1,7 +1,9 @@
 /**
  * The Face ID link the agent DMs a member. Two modes, chosen by the URL:
  *   ?g=<group>&t=<ticket>&c=<chat name>&n=<name>   join this chat's treasury (first time per chat)
- *   ?g=<group>&c=<chat name>                       change my limit for this chat
+ *   ?g=<group>&c=<chat name>[&l=<usd>&p=<period>]  change my limit for this chat (prefilled)
+ *   ?g=<group>&c=<chat name>&r=<payee>&o=<name>    pay back a share that didn't go through
+ *   ?a=<account>&c=<chat name>                     add money
  *
  * Face ID creates (or unlocks) the member's Circle passkey wallet, then one gasless batched user
  * operation approves USDC for the GroupTreasury and joins / sets the limit. The page has no
@@ -36,6 +38,9 @@ const name = params.get("n") ?? "";
 const joining = ticket !== "";
 /** Top-up link from Kitty ("you're $12 short"): ?a=<account>&c=<chat name>. */
 const topUpAccount = params.get("a") ?? "";
+/** Pay-back link: who the member owes (their account) and their name. */
+const creditor = params.get("r") ?? "";
+const creditorName = params.get("o") ?? "them";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const form = $<HTMLFormElement>("form");
@@ -48,6 +53,10 @@ function show(text: string, kind: "info" | "error" | "done" = "info"): void {
 }
 
 function setup(): void {
+  if (creditor) return setupPayBack();
+  const prefill = params.get("l");
+  if (prefill && /^\d+(\.\d{1,2})?$/.test(prefill)) $<HTMLInputElement>("amount").value = prefill;
+  if (params.get("p") === "monthly") form.querySelector<HTMLSelectElement>("select")!.value = "monthly";
   if (topUpAccount && !group) {
     $("title").textContent = "Add money";
     $("lede").textContent = "Top up your Kitty balance with Apple Pay or a debit card.";
@@ -189,6 +198,82 @@ async function submit(event: Event, returning = false): Promise<void> {
     );
     button.disabled = false;
   }
+}
+
+/** Unlocks the member's Kitty account: their passkey, smart account, and a gasless bundler. */
+async function connect(returning: boolean) {
+  const credential = await passkey(returning);
+  const transport = toModularTransport(`${clientUrl}/arcTestnet`, clientKey);
+  const client = createPublicClient({ chain: arcTestnet, transport });
+  const account = await toCircleSmartAccount({ client, owner: toWebAuthnAccount({ credential }) });
+  const bundler = createBundlerClient({ account, chain: arcTestnet, transport });
+  return { client, account, bundler };
+}
+
+/**
+ * Pay-back mode. First tap unlocks the account and shows what's owed (and "Add money" when the
+ * balance is short); second tap pays it back from the member's own account with Face ID.
+ */
+function setupPayBack(): void {
+  $("title").textContent = `Pay ${creditorName} back`;
+  $("lede").textContent = `A share in ${chatName} didn't go through, so it's saved as owed to ${creditorName}.`;
+  form.hidden = true;
+  const pay = $<HTMLButtonElement>("pay");
+  const owedText = $("owed");
+  $("payback").hidden = false;
+  if (!isAddress(creditor) || !clientKey || !treasury) {
+    pay.disabled = true;
+    return show("This link is incomplete. Ask Kitty in your chat for a new one.", "error");
+  }
+
+  let session: Awaited<ReturnType<typeof connect>> | undefined;
+  let owed = 0n;
+  pay.addEventListener("click", async () => {
+    pay.disabled = true;
+    try {
+      if (!session) {
+        show("Waiting for Face ID…");
+        session = await connect(true);
+        owed = await session.client.readContract({
+          address: treasury,
+          abi: treasuryAbi,
+          functionName: "debts",
+          args: [session.account.address, creditor as Hex],
+        });
+        if (owed === 0n) {
+          owedText.textContent = `You don't owe ${creditorName} anything. 🎉`;
+          pay.hidden = true;
+          return show("", "done");
+        }
+        owedText.textContent = `You owe ${creditorName} $${formatUnits(owed, 6)}.`;
+        void showFunding(session.account.address);
+        pay.textContent = `Pay $${formatUnits(owed, 6)} back with Face ID`;
+        return show("If your balance is short, add money first.");
+      }
+      // USDC is native on Arc (18 decimals); the debt is in 6-decimal USDC units.
+      if ((await balance(session.account.address)) < owed * 10n ** 12n) {
+        return show("Your balance is short. Add money first, then tap again.", "error");
+      }
+      show("Waiting for Face ID…");
+      const hash = await session.bundler.sendUserOperation({
+        calls: [{ to: treasury, data: encodeFunctionData({ abi: treasuryAbi, functionName: "payDebt", args: [creditor as Hex, owed] }) }],
+        paymaster: true,
+      });
+      show("Paying…");
+      const { receipt, success } = await session.bundler.waitForUserOperationReceipt({ hash });
+      if (!success) throw new Error("The transaction didn't go through.");
+      console.info("paid back", receipt.transactionHash);
+      owedText.textContent = `Paid ${creditorName} back $${formatUnits(owed, 6)}.`;
+      pay.hidden = true;
+      show("All square. You can head back to Messages.", "done");
+    } catch (err) {
+      console.error(err);
+      const message = (err as Error).message ?? String(err);
+      show(/NotAllowedError|cancel/i.test(message) ? "Face ID was cancelled. Tap to try again." : "That didn't go through. Tap to try again.", "error");
+    } finally {
+      pay.disabled = false;
+    }
+  });
 }
 
 const arc = createPublicClient({ chain: arcTestnet, transport: http() });
