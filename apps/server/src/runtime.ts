@@ -155,6 +155,8 @@ export class GroupRuntime {
   private readonly background = new Set<Promise<void>>();
   /** Chats whose roster we've already pulled from the chat port, so we seed members once per chat. */
   private readonly seededRosters = new Set<string>();
+  /** Nudge keys already sent, so a reminder fires once per item per process run. */
+  private readonly nudged = new Set<string>();
   private queue: Promise<void> = Promise.resolve();
   private readonly now: () => number;
   private readonly log: (line: string) => void;
@@ -800,6 +802,39 @@ export class GroupRuntime {
     const lines = net.map((t) => `${this.name(record, t.from)} → ${this.name(record, t.to)} ${formatUsdc(t.amount)}`);
     const note = debts.length > net.length ? `\n(${net.length} transfer${net.length === 1 ? "" : "s"} instead of ${debts.length})` : "";
     return `simplest way to settle up:\n${lines.join("\n")}${note}`;
+  }
+
+  /**
+   * One pass of proactive reminders across every chat: nudge for approval cards that have gone
+   * stale and for outstanding debts. Each item is nudged once per process run. Run this via `run()`
+   * so it's serialized with normal chat handling. Off unless the server starts the reminder loop.
+   */
+  async remind(staleMs = 12 * 60 * 60 * 1000): Promise<void> {
+    const now = this.now();
+    for (const record of this.deps.store.all()) {
+      for (const r of record.requests) {
+        if (r.state.name !== "awaiting_approval" || now - r.createdAt < staleMs) continue;
+        const key = `stale:${record.group.chatId}:${r.id}`;
+        if (this.nudged.has(key)) continue;
+        this.nudged.add(key);
+        const done = new Set(r.state.approvals.filter((a) => a.emoji === APPROVAL_EMOJI).map((a) => a.memberId));
+        const waiting = r.state.requiredApprovers.filter((m) => !done.has(m)).map((m) => this.name(record, m));
+        if (waiting.length) await this.say(record.group.chatId, `still need a 👍 from ${waiting.join(" and ")} for #${r.number} ${r.title} 👀`);
+      }
+      for (const r of record.requests) {
+        if (!r.split) continue;
+        const debts = (r.state as { debts?: { memberId: string; amount: Usdc }[] }).debts ?? [];
+        for (const d of debts) {
+          const debtor = record.group.members.find((m) => m.id === d.memberId);
+          const creditor = record.group.members.find((m) => m.id === r.split!.payeeMemberId);
+          if (!debtor || !creditor || debtor.id === creditor.id) continue;
+          const key = `debt:${record.group.chatId}:${r.id}:${debtor.id}`;
+          if (this.nudged.has(key)) continue;
+          this.nudged.add(key);
+          await this.say(record.group.chatId, `heads up ${debtor.displayName}, still owe ${creditor.displayName} ${formatUsdc(d.amount)} from ${r.title}`);
+        }
+      }
+    }
   }
 
   /** A spending summary ("what did we spend?"): total, per-person breakdown, biggest spender. */

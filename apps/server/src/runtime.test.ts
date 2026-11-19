@@ -261,6 +261,34 @@ describe("GroupRuntime", () => {
     expect(msg).toContain("biggest spender");
   });
 
+  it("nudges outstanding debts, once each", async () => {
+    const t = setup(20); // over-limit shares become debts to Neena
+    const req = await t.proposeDinner();
+    await t.react(SIYA, req.previewMessageId!);
+    await t.react(TRISTAN, req.previewMessageId!);
+
+    const before = t.posted.length;
+    await t.runtime.remind();
+    const nudges = t.posted.slice(before).map((p) => p.text);
+    expect(nudges.some((n) => n.includes("Siya") && n.includes("still owe"))).toBe(true);
+    expect(nudges.some((n) => n.includes("Tristan") && n.includes("still owe"))).toBe(true);
+
+    const after = t.posted.length;
+    await t.runtime.remind(); // same debts: no repeat
+    expect(t.posted.length).toBe(after);
+  });
+
+  it("nudges an approval card only once it's gone stale", async () => {
+    const t = setup();
+    const req = await t.proposeDinner(); // awaiting_approval, Siya + Tristan haven't 👍'd
+    await t.runtime.remind(); // not stale yet (default 12h) → nothing
+    expect(t.posted.some((p) => p.text.includes("still need a 👍"))).toBe(false);
+
+    req.createdAt = 0; // now it's old
+    await t.runtime.remind(1);
+    expect(t.posted.at(-1)!.text).toContain("still need a 👍");
+  });
+
   it("stays quiet when the agent has nothing to say", async () => {
     const t = setup();
     await t.say(SIYA, "lol");

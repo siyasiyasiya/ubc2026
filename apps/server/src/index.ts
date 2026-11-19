@@ -60,7 +60,20 @@ const runtime = new GroupRuntime({
 });
 runtime.attach();
 startJoinWatcher();
+startReminders();
 await chat.start();
+
+/**
+ * Proactive reminders: nudge stale approval cards and outstanding debts. Off by default; set
+ * NUDGES=on to turn it on (and NUDGE_EVERY_MIN / NUDGE_STALE_HOURS to tune) so it never surprises a demo.
+ */
+function startReminders(): void {
+  if (process.env.NUDGES !== "on") return;
+  const everyMs = (Number(process.env.NUDGE_EVERY_MIN) || 60) * 60_000;
+  const staleMs = (Number(process.env.NUDGE_STALE_HOURS) || 12) * 60 * 60_000;
+  console.log(`nudges: on (every ${everyMs / 60_000} min, cards/debts older than ${staleMs / 3_600_000}h)`);
+  setInterval(() => void runtime.run(() => runtime.remind(staleMs)), everyMs).unref?.();
+}
 
 /** Build the iMessage chat port, turning a raw chat.db access failure into a clear, actionable fix. */
 function startChat(): PhotonChatPort {
