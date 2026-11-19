@@ -83,7 +83,7 @@ Owns: `packages/imessage`, `packages/agent`, `packages/purchase`.
 | `agent` — no crypto words in chat | ⬜ todo | Members see "your Kitty account", "$50", "Face ID" — never wallet, USDC, transaction, Arc, onchain, gas, passkey. |
 | `PurchaseAdapter` — **real** store checkout (Crossmint) | ✅ done | Crossmint Agent Checkouts REST; real (not mocked); 14 tests; `blocked` handled. Needs CROSSMINT creds to run live. |
 | ✅ **Decided:** LLM + framework | ✅ done | **Claude + raw Anthropic SDK** (no web UI → dropped Vercel AI SDK), model **Sonnet 5**. Needs Anthropic API key (not the Claude subscription). |
-| ✅ **Decided:** iMessage SDK | ✅ done | **spectrum-ts** (Photon's current SDK). imessage-kit + PR #4 kept as a proven fallback for group-reaction attribution. |
+| ✅ **Decided:** iMessage SDK | ✅ done | **imessage-kit** (local; reads `chat.db`). spectrum-ts local mode drops tapbacks and has no DMs — so it couldn't do 👍 approvals or onboarding DMs. Switched in 97109f4. |
 | ✅ **Decided:** store + access method | ✅ done | **Crossmint** Agent Checkouts (universal catalog, buyer's own account via Browser Profiles). agent-browser kept as a swappable fallback behind `PurchaseAdapter`. |
 
 ## Shared — coordinate before touching
@@ -92,7 +92,7 @@ Owns: `packages/imessage`, `packages/agent`, `packages/purchase`.
 | --- | --- | --- |
 | `packages/core` — interfaces | ✅ done | frozen contract between tracks; change together only |
 | `apps/server` — wire real adapters | 🟡 pay-after live on Arc | Per-chat `ArcWalletAdapter`, wallets from `Joined`, live in a real group. To do: pay-before (purchase) wiring. |
-| Open PRs to sort out | 🟡 | #3 + #7 merged. Superseded by main, safe to close: #1 (workflow, c6d610d), #5 (wallet + 👍 rule, f8f014a/12487c5), #6 (`model.ts` no longer exists). #4 (imessage-kit 👍 resolver) stays open as the fallback if spectrum-ts group reactions fail. |
+| Open PRs to sort out | 🟡 | #3 + #7 merged. Superseded by main, safe to close: #1 (workflow, c6d610d), #5 (wallet + 👍 rule, f8f014a/12487c5), #6 (`model.ts` no longer exists). #4 (imessage-kit 👍 resolver) superseded by the imessage-kit switch (97109f4), safe to close. |
 | README for judges | ⬜ todo | Architecture, how Arc + Circle (passkeys, paymaster, Onramp) are used, contract address, why onchain. Draft explainer: onboarding + "why onchain" page (Neena has the link). |
 | **Decide:** project name | 🟡 working name | **Kitty**, page at `kittyagent.vercel.app`. Passkeys are tied to the domain, so pick the final domain before real users join. Package scope still `@gta/*`. |
 
