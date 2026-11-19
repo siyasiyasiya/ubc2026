@@ -519,8 +519,9 @@ describe("GroupRuntime", () => {
     expect(card).toContain("Siya $10.00, Tristan $10.00");
 
     await t.react(SIYA, req.previewMessageId!);
-    expect(t.request().state.name).toBe("awaiting_approval"); // nothing ordered until everyone approves
     await t.react(TRISTAN, req.previewMessageId!);
+    expect(t.request().state.name).toBe("awaiting_approval"); // the payer (Neena) hasn't approved yet, so nothing is ordered
+    await t.react(NEENA, req.previewMessageId!);
     await t.runtime.idle();
 
     expect(t.request().state.name).toBe("done");

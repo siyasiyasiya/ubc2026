@@ -927,8 +927,8 @@ export class GroupRuntime {
       deadline: this.now() + APPROVAL_WINDOW_MS,
       cart,
     });
-    // The payer's own card pays, so posting the order counts as their approval.
-    await this.apply(record, request, { type: "reaction", memberId: request.buy.payer, emoji: APPROVAL_EMOJI, added: true, at: this.now() });
+    // Everyone in the split must 👍 the checkout before the order is placed, the payer included:
+    // real money leaves their card, so they approve it too (no auto-approval here).
     const short: string[] = [];
     for (const [memberId, amount] of Object.entries(split.shares)) {
       if (memberId === split.payeeMemberId) continue;
