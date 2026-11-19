@@ -15,26 +15,34 @@
     <meta name="twitter:card" content="summary_large_image" />
     <style>
       :root {
-        --bg: #f6f6f4;
+        --bg: #f2f2f7;
         --card: #ffffff;
-        --text: #1b1b1a;
-        --muted: #6b6b66;
-        --line: #e3e3de;
+        --text: #1c1c1e;
+        --muted: #6e6e73;
+        --line: #e5e5ea;
+        --field: #f2f2f7;
         --accent: #0a7cff;
-        --ok: #1f8a4c;
-        --bad: #c23a2b;
+        --accent-soft: rgba(10, 124, 255, 0.1);
+        --ok: #1f9d55;
+        --ok-soft: rgba(31, 157, 85, 0.1);
+        --bad: #d93025;
+        --bad-soft: rgba(217, 48, 37, 0.08);
         color-scheme: light dark;
       }
       @media (prefers-color-scheme: dark) {
         :root {
-          --bg: #111110;
-          --card: #1c1c1b;
-          --text: #f1f1ee;
-          --muted: #a2a29c;
-          --line: #2f2f2d;
+          --bg: #000000;
+          --card: #1c1c1e;
+          --text: #f2f2f7;
+          --muted: #98989f;
+          --line: #2c2c2e;
+          --field: #2c2c2e;
           --accent: #3b95ff;
-          --ok: #4cc27f;
-          --bad: #ef6a5a;
+          --accent-soft: rgba(59, 149, 255, 0.16);
+          --ok: #4cd17f;
+          --ok-soft: rgba(76, 209, 127, 0.14);
+          --bad: #ff6b5e;
+          --bad-soft: rgba(255, 107, 94, 0.12);
         }
       }
       * { box-sizing: border-box; }
@@ -51,97 +59,222 @@
         background: var(--bg);
         color: var(--text);
         font: 16px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+        -webkit-font-smoothing: antialiased;
       }
       main {
         width: 100%;
         max-width: 420px;
         background: var(--card);
-        border: 1px solid var(--line);
-        border-radius: 20px;
-        padding: 28px 22px;
+        border-radius: 28px;
+        padding: 24px 22px 22px;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 12px 40px rgba(0, 0, 0, 0.06);
+        animation: rise 0.35s ease-out both;
       }
-      h1 { font-size: 24px; margin: 0 0 8px; letter-spacing: -0.01em; }
+      @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+
+      /* Header: app icon, wordmark, and which chat this is for. */
+      .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 22px; }
+      .icon {
+        width: 40px; height: 40px; border-radius: 11px; flex: none;
+        display: grid; place-items: center; font-size: 24px;
+        background: linear-gradient(160deg, #3b95ff, #0a6fe6);
+        box-shadow: 0 4px 12px rgba(10, 124, 255, 0.3);
+      }
+      .brand b { font-size: 18px; letter-spacing: -0.01em; }
+      #chat {
+        margin-left: auto; max-width: 55%;
+        font-size: 13px; font-weight: 600; color: var(--accent);
+        background: var(--accent-soft); padding: 5px 11px; border-radius: 999px;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      #chat:empty { display: none; }
+
+      h1 { font-size: 28px; line-height: 1.15; margin: 0 0 8px; letter-spacing: -0.02em; }
       p { margin: 0; }
       #lede { color: var(--muted); margin-bottom: 22px; }
-      label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
-      .row { display: flex; gap: 10px; margin-bottom: 18px; }
-      .amount { flex: 1; position: relative; }
-      .amount span { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--muted); }
-      input, select {
-        width: 100%;
-        font: inherit;
-        font-size: 20px;
-        padding: 12px 14px;
-        border-radius: 12px;
-        border: 1px solid var(--line);
-        background: var(--bg);
-        color: var(--text);
+
+      /* One-tap amount, decided in the chat. */
+      #summary {
+        margin-bottom: 18px; padding: 20px 16px 16px; text-align: center;
+        background: var(--field); border-radius: 20px;
       }
-      input { padding-left: 28px; }
-      select { font-size: 17px; height: 100%; }
+      #summary small { display: block; font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+      #big, #owed { font-size: 44px; font-weight: 700; letter-spacing: -0.03em; line-height: 1.15; margin: 4px 0 2px; }
+      #big .per { font-size: 20px; font-weight: 600; color: var(--muted); letter-spacing: -0.01em; }
+      #owed { margin-bottom: 18px; text-align: center; }
+      #change { display: inline-block; font-size: 14px; font-weight: 500; color: var(--accent); text-decoration: none; padding: 4px; }
+
+      /* Typed amount: big field, quick picks, and a segmented period control. */
+      label { display: block; font-size: 13px; font-weight: 600; color: var(--muted); margin-bottom: 8px; }
+      .amount { position: relative; margin-bottom: 10px; }
+      .amount span { position: absolute; left: 16px; top: 50%; transform: translateY(-50%); font-size: 28px; font-weight: 600; color: var(--muted); }
+      input {
+        width: 100%;
+        font: inherit; font-size: 32px; font-weight: 700; letter-spacing: -0.02em;
+        padding: 12px 16px 12px 36px;
+        border-radius: 16px;
+        border: 2px solid transparent;
+        background: var(--field);
+        color: var(--text);
+        outline: none;
+        transition: border-color 0.15s;
+      }
+      input:focus { border-color: var(--accent); }
+      input::placeholder { color: var(--muted); opacity: 0.5; font-weight: 600; }
+      .chips { display: flex; gap: 8px; margin-bottom: 18px; }
+      .chips button, .seg button {
+        flex: 1; width: auto;
+        font: inherit; font-size: 15px; font-weight: 600;
+        padding: 9px 0; border-radius: 12px; border: 0;
+        background: var(--field); color: var(--text);
+        cursor: pointer; transition: background 0.15s, color 0.15s, transform 0.1s;
+      }
+      .chips button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+      .chips button:active, .seg button:active { transform: scale(0.96); }
+      .seg { display: flex; gap: 2px; padding: 3px; background: var(--field); border-radius: 13px; margin-bottom: 22px; }
+      .seg button { background: transparent; color: var(--muted); font-size: 14px; padding: 8px 0; border-radius: 10px; }
+      .seg button[aria-pressed="true"] { background: var(--card); color: var(--text); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
+      /* Kept for the form's data; the segmented control drives it. */
+      select { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+
+      /* Primary button, with a Face ID glyph. */
       button {
         width: 100%;
-        font: inherit;
-        font-weight: 600;
-        font-size: 17px;
-        padding: 14px;
-        border: 0;
-        border-radius: 14px;
-        background: var(--accent);
-        color: #fff;
+        font: inherit; font-weight: 600; font-size: 17px;
+        padding: 16px;
+        border: 0; border-radius: 16px;
+        background: var(--accent); color: #fff;
         cursor: pointer;
+        display: flex; align-items: center; justify-content: center; gap: 10px;
+        transition: transform 0.1s, opacity 0.15s;
       }
-      button:disabled { opacity: 0.5; cursor: default; }
-      #returning { display: block; margin-top: 12px; text-align: center; font-size: 14px; color: var(--accent); text-decoration: none; }
-      #fund { margin-top: 20px; display: grid; gap: 10px; border-top: 1px solid var(--line); padding-top: 18px; }
+      #go, #pay, #see { box-shadow: 0 6px 18px rgba(10, 124, 255, 0.28); }
+      #go::before, #pay::before, #see::before {
+        content: ""; width: 22px; height: 22px; flex: none;
+        background: currentColor;
+        -webkit-mask: var(--faceid) center / contain no-repeat;
+        mask: var(--faceid) center / contain no-repeat;
+      }
+      :root {
+        --faceid: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round'%3E%3Cpath d='M3 8V6a3 3 0 0 1 3-3h2M16 3h2a3 3 0 0 1 3 3v2M21 16v2a3 3 0 0 1-3 3h-2M8 21H6a3 3 0 0 1-3-3v-2M9 9v1.5M15 9v1.5M12 9v4h-1M9 16.2c1.8 1.4 4.2 1.4 6 0'/%3E%3C/svg%3E");
+      }
+      button:active { transform: scale(0.98); }
+      button:disabled { opacity: 0.5; cursor: default; transform: none; }
+      #returning { display: block; margin-top: 14px; text-align: center; font-size: 14px; color: var(--muted); text-decoration: none; }
+      #returning:hover { color: var(--accent); }
+      #see { margin-top: 4px; }
+
+      /* How it works: only on a first join. */
+      #how { list-style: none; margin: 0 0 22px; padding: 0; display: grid; gap: 12px; }
+      #how li { display: grid; grid-template-columns: 34px 1fr; gap: 12px; align-items: center; font-size: 15px; }
+      #how li i {
+        font-style: normal; width: 34px; height: 34px; border-radius: 10px;
+        display: grid; place-items: center; font-size: 17px; background: var(--field);
+      }
+      #how li span { color: var(--muted); }
+      #how li b { color: var(--text); font-weight: 600; }
+
+      /* Status: spinner while working, a soft panel for errors, a big check when done. */
+      #status { margin-top: 16px; white-space: pre-line; font-size: 15px; color: var(--muted); text-align: center; }
+      #status:empty { display: none; }
+      #status[data-kind="info"] { display: flex; align-items: center; justify-content: center; gap: 10px; }
+      #status[data-kind="info"]::before {
+        content: ""; width: 16px; height: 16px; flex: none; border-radius: 50%;
+        border: 2px solid var(--line); border-top-color: var(--accent);
+        animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      #status[data-kind="error"] { color: var(--bad); background: var(--bad-soft); padding: 12px 14px; border-radius: 14px; text-align: left; }
+      #status[data-kind="done"] { color: var(--text); font-size: 17px; font-weight: 600; margin-top: 4px; }
+      #status[data-kind="done"]::before {
+        content: "✓"; display: grid; place-items: center;
+        width: 72px; height: 72px; margin: 0 auto 16px; border-radius: 50%;
+        font-size: 38px; font-weight: 700; color: #fff; background: var(--ok);
+        box-shadow: 0 8px 24px rgba(31, 157, 85, 0.35);
+        animation: pop 0.45s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+      }
+      @keyframes pop { from { transform: scale(0.3); opacity: 0; } }
+      #back { margin-top: 18px; }
+      a.button {
+        display: flex; align-items: center; justify-content: center; gap: 8px;
+        text-decoration: none; font-weight: 600; font-size: 17px; padding: 15px;
+        border-radius: 16px; background: var(--text); color: var(--card);
+      }
+      a.button[aria-disabled="true"] { opacity: 0.5; pointer-events: none; }
+      a.button.soft { background: var(--field); color: var(--text); }
+
+      /* Balance + add money. */
+      #fund { margin-top: 22px; display: grid; gap: 10px; border-top: 1px solid var(--line); padding-top: 20px; }
       #balance { font-size: 17px; font-weight: 600; }
       #balance[data-kind="done"] { color: var(--ok); }
-      a.button { display: block; text-align: center; text-decoration: none; font-weight: 600; font-size: 17px; padding: 14px; border-radius: 14px; background: var(--text); color: var(--card); }
-      a.button[aria-disabled="true"] { opacity: 0.5; pointer-events: none; }
-      .hint { font-size: 13px; color: var(--muted); }
-      #status { margin-top: 16px; white-space: pre-line; font-size: 15px; color: var(--muted); }
-      #status[data-kind="error"] { color: var(--bad); }
-      #status[data-kind="done"] { color: var(--ok); font-weight: 500; }
-      footer { margin-top: 20px; font-size: 12px; color: var(--muted); }
-      #summary { margin-bottom: 22px; text-align: center; }
-      #big, #owed { font-size: 34px; font-weight: 700; letter-spacing: -0.02em; }
-      #owed { margin-bottom: 18px; text-align: center; }
-      #kitties { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 18px; }
-      #kitties h2 { font-size: 17px; margin: 0 0 10px; }
-      #kitty-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
-      #kitty-list li { display: grid; gap: 4px; }
+      .hint { font-size: 13px; color: var(--muted); text-align: center; }
+
+      /* Your kitties. */
+      #kitties { margin-top: 22px; border-top: 1px solid var(--line); padding-top: 20px; }
+      #kitties h2 { font-size: 13px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin: 0 0 12px; }
+      #kitty-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+      #kitty-list li { display: grid; gap: 6px; padding: 14px; background: var(--field); border-radius: 16px; }
       #kitty-list span { font-size: 14px; color: var(--muted); }
       #kitty-list .bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
-      #kitty-list .bar i { display: block; height: 100%; background: var(--accent); }
+      #kitty-list .bar i { display: block; height: 100%; border-radius: 3px; background: var(--accent); transition: width 0.6s ease-out; }
       #kitty-note { margin-top: 12px; font-size: 14px; color: var(--bad); }
       #kitty-note:empty { display: none; }
-      #see { margin-top: 4px; }
-      #change { display: inline-block; margin-top: 6px; font-size: 14px; color: var(--accent); text-decoration: none; }
+
+      footer {
+        margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--line);
+        display: grid; grid-template-columns: 18px 1fr; gap: 10px;
+        font-size: 12.5px; color: var(--muted);
+      }
+      footer::before { content: "🔒"; font-size: 14px; }
+
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before { animation: none !important; transition: none !important; }
+      }
     </style>
   </head>
   <body>
     <main>
+      <header class="brand">
+        <div class="icon" aria-hidden="true">🐱</div>
+        <b>Kitty</b>
+        <span id="chat"></span>
+      </header>
       <h1 id="title">Kitty</h1>
       <p id="lede"></p>
       <form id="form">
         <div id="summary" hidden>
+          <small>Your limit</small>
           <p id="big"></p>
           <a id="change" href="#">Change amount</a>
         </div>
         <div id="fields">
-        <label for="amount">Your limit</label>
-        <div class="row">
+          <label for="amount">Your limit</label>
           <div class="amount">
             <span>$</span>
-            <input id="amount" name="amount" inputmode="decimal" placeholder="Amount" autocomplete="off" required />
+            <input id="amount" name="amount" inputmode="decimal" placeholder="0" autocomplete="off" required />
           </div>
-          <select name="period" aria-label="Resets every">
+          <div class="chips" id="presets">
+            <button type="button" data-usd="20">$20</button>
+            <button type="button" data-usd="50">$50</button>
+            <button type="button" data-usd="100">$100</button>
+            <button type="button" data-usd="200">$200</button>
+          </div>
+          <div class="seg" id="periods" role="group" aria-label="Resets every">
+            <button type="button" data-period="weekly">Weekly</button>
+            <button type="button" data-period="monthly">Monthly</button>
+            <button type="button" data-period="once">One time</button>
+          </div>
+          <select name="period" aria-hidden="true" tabindex="-1">
             <option value="weekly">per week</option>
             <option value="monthly">per month</option>
             <option value="once">one time (trip)</option>
           </select>
         </div>
-        </div>
+        <ol id="how" hidden>
+          <li><i>💬</i><span><b>Someone asks in the chat.</b> Kitty posts what it costs and each person's share.</span></li>
+          <li><i>👍</i><span><b>Everyone taps 👍.</b> Nothing is paid until the group agrees.</span></li>
+          <li><i>✨</i><span><b>Kitty pays.</b> Your share comes from your Kitty, never above your limit.</span></li>
+        </ol>
         <button id="go" type="submit">Continue with Face ID</button>
         <a id="returning" href="#">Used Kitty before on another phone?</a>
       </form>
@@ -151,6 +284,7 @@
       </div>
       <button id="see" type="button" hidden>See my kitties with Face ID</button>
       <p id="status" role="status"></p>
+      <a id="back" class="button soft" href="sms:" hidden>Back to Messages</a>
       <div id="kitties" hidden>
         <h2>Your kitties</h2>
         <ul id="kitty-list"></ul>
@@ -161,7 +295,7 @@
         <a id="add" class="button" href="#" target="_blank" rel="noopener" aria-disabled="true">Add money with Apple Pay</a>
         <p class="hint">Apple Pay or debit card. The money goes straight to your Kitty balance.</p>
       </div>
-      <footer>Your money stays yours until something is actually bought. You only pay for things you 👍, and never more than this.</footer>
+      <footer>Your money stays yours until something is actually bought. You only pay for things you 👍, and never more than your limit.</footer>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>

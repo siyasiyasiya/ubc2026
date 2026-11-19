@@ -51,6 +51,46 @@ const status = $<HTMLParagraphElement>("status");
 function show(text: string, kind: "info" | "error" | "done" = "info"): void {
   status.textContent = text;
   status.dataset.kind = kind;
+  // A finished step sends the member back to the chat, where Kitty picks it up.
+  $("back").hidden = kind !== "done";
+  // The setup text no longer applies once it's done; the check and message replace it.
+  $("lede").hidden = kind === "done";
+}
+
+/** Quick-pick amounts and the Weekly / Monthly / One time control both write to the real form fields. */
+function wireAmountPickers(): void {
+  const amount = $<HTMLInputElement>("amount");
+  const select = form.querySelector<HTMLSelectElement>("select")!;
+  const chips = [...document.querySelectorAll<HTMLButtonElement>("#presets button")];
+  const periods = [...document.querySelectorAll<HTMLButtonElement>("#periods button")];
+  const sync = () => {
+    for (const chip of chips) chip.setAttribute("aria-pressed", String(chip.dataset.usd === amount.value.trim()));
+    for (const p of periods) p.setAttribute("aria-pressed", String(p.dataset.period === select.value));
+    labelButton();
+  };
+  for (const chip of chips) {
+    chip.addEventListener("click", () => {
+      amount.value = chip.dataset.usd!;
+      sync();
+    });
+  }
+  for (const p of periods) {
+    p.addEventListener("click", () => {
+      select.value = p.dataset.period!;
+      sync();
+    });
+  }
+  amount.addEventListener("input", sync);
+  sync();
+}
+
+/** "$80" big, "a week" smaller beside it. */
+function showBigAmount(): void {
+  const usd = $<HTMLInputElement>("amount").value.trim();
+  const per = document.createElement("span");
+  per.className = "per";
+  per.textContent = ` ${perWords(form.querySelector<HTMLSelectElement>("select")!.value)}`;
+  $("big").replaceChildren(`$${Number(usd).toLocaleString("en-US")}`, per);
 }
 
 function setup(): void {
@@ -63,8 +103,8 @@ function setup(): void {
   if (asked === "monthly" || asked === "once") form.querySelector<HTMLSelectElement>("select")!.value = asked;
   // Typing replaces the amount rather than adding digits to it ("100" + "50" became $10,050).
   amount.addEventListener("focus", () => amount.select());
-  amount.addEventListener("input", () => labelButton());
-  form.querySelector("select")!.addEventListener("change", () => labelButton());
+  wireAmountPickers();
+  if (group) $("chat").textContent = chatName;
   if (topUpAccount && !group) {
     $("title").textContent = "Add money";
     $("lede").textContent = "Top up your Kitty balance with Apple Pay or a debit card.";
@@ -84,7 +124,7 @@ function setup(): void {
   if (oneTap) {
     $("summary").hidden = false;
     $("fields").hidden = true;
-    $("big").textContent = amountText();
+    showBigAmount();
     $("change").addEventListener("click", (e) => {
       e.preventDefault();
       oneTap = false;
@@ -94,6 +134,7 @@ function setup(): void {
       labelButton();
     });
   }
+  $("how").hidden = !joining;
   labelButton();
   if (!isHex(group) || group.length !== 66 || (joining && (!isHex(ticket) || ticket.length !== 66))) {
     show("This link is incomplete. Ask Kitty in your chat for a new one.", "error");
@@ -122,7 +163,9 @@ function amountText(): string {
 /** The button names the exact amount (unless it's shown big above), so a typo is visible before Face ID. */
 function labelButton(): void {
   const shown = oneTap ? "" : amountText();
-  button.textContent = `${joining ? "Join" : oneTap ? "Confirm" : "Save"}${shown ? ` · ${shown}` : ""} with Face ID`;
+  const verb = joining ? "Join" : oneTap ? "Confirm" : "Save";
+  // The button carries a Face ID glyph, so a long amount drops the words to stay on one line.
+  button.textContent = shown ? `${verb} · ${shown}` : `${verb} with Face ID`;
 }
 
 /** An amount far above what the chat asked for (or over $1,000) needs a second tap. */
