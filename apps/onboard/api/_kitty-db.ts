@@ -35,11 +35,48 @@ export interface StreamRows {
 
 /** QuickNode signs nonce + timestamp + body with the stream's security token (HMAC-SHA256, hex). */
 export function validSignature(secret: string, nonce: string, timestamp: string, body: string, signature: string): boolean {
-  if (!secret || !nonce || !timestamp || !signature) return false;
-  const expected = createHmac("sha256", Buffer.from(secret)).update(Buffer.from(nonce + timestamp + body)).digest("hex");
-  const a = Buffer.from(expected);
-  const b = Buffer.from(signature.toLowerCase());
-  return a.length === b.length && timingSafeEqual(a, b);
+  return signatureVariant(secret, nonce, timestamp, body, signature) !== undefined;
+}
+
+/** Constant-time check of a secret sent as-is in a header. */
+export function sameSecret(given: string, secret: string): boolean {
+  return !!given && !!secret && same(given.trim(), secret);
+}
+
+function same(a: string, b: string): boolean {
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  return x.length === y.length && timingSafeEqual(x, y);
+}
+
+/**
+ * Which way of signing matched, or undefined. The documented one comes first; the others cover
+ * QuickNode signing differently from its docs (the token with or without its `qnsec_` prefix,
+ * fields in another order, base64 digests). Every variant still needs the secret.
+ */
+export function signatureVariant(secret: string, nonce: string, timestamp: string, body: string, signature: string): string | undefined {
+  if (!secret || !signature) return undefined;
+  const keys: [string, Buffer][] = [["token", Buffer.from(secret)]];
+  if (secret.startsWith("qnsec_")) {
+    const bare = secret.slice("qnsec_".length);
+    keys.push(["bare", Buffer.from(bare)], ["bare-b64", Buffer.from(bare, "base64")]);
+  }
+  const messages: [string, string][] = [
+    ["nonce+ts+body", nonce + timestamp + body],
+    ["ts+nonce+body", timestamp + nonce + body],
+    ["body", body],
+    ["ts+body", timestamp + body],
+    ["ts.body", `${timestamp}.${body}`],
+  ];
+  const given = signature.trim().replace(/^sha256=/i, "");
+  for (const [k, key] of keys) {
+    for (const [m, message] of messages) {
+      const mac = createHmac("sha256", key).update(Buffer.from(message)).digest();
+      if (same(mac.toString("hex"), given.toLowerCase())) return `${k}/${m}/hex`;
+      if (same(mac.toString("base64"), given)) return `${k}/${m}/base64`;
+    }
+  }
+  return undefined;
 }
 
 const HEX = /^0x[0-9a-fA-F]*$/;

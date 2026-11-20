@@ -247,14 +247,14 @@ flowchart LR
 | Dataset | `block_with_receipts` | Receipts carry every log of a transaction, so the filter can keep the USDC transfers that happened alongside a treasury event; the block header carries the timestamp the history shows |
 | Range | From block 73141404 (the contract's deploy block) to the live tip | The backfill rebuilds the full history; after that it stays live. `fix_block_reorgs` on |
 | Filter | [`apps/onboard/streams/filter.js`](apps/onboard/streams/filter.js) | Keeps (a) every log emitted by `GroupTreasury` (`Joined`, `LimitSet`, `SpendProposed`, `SpendApproved`, `SharePulled`, `PullFailed`, `SpendSettled`, `DebtPaid`, …) and (b) the USDC `Transfer` logs in those same transactions. Rewrites them into the rows the Arc explorer API returns, so the page's existing decoder reads Stream rows and explorer rows the same way. Blocks with nothing of Kitty's return `null` and are never delivered |
-| Destination | Webhook → `https://kittyagent.vercel.app/api/stream` | Checks QuickNode's HMAC signature (`X-QN-Nonce` + `X-QN-Timestamp` + body, with the stream's security token), then upserts into Postgres keyed on `(tx_hash, log_index)`, so a redelivered batch is a no-op |
+| Destination | Webhook → `https://kittyagent.vercel.app/api/stream`, batch size 1, no compression | Authenticates each delivery with the stream's security token: QuickNode's HMAC headers (`X-QN-Nonce` + `X-QN-Timestamp` + body) or a custom `X-Kitty-Secret` header set on the destination (QuickNode's "Check connection" sends no signature, so the header is what it passes with). Then upserts into Postgres keyed on `(tx_hash, log_index)`, so a redelivered batch is a no-op |
 
 **What reads it:**
 
 - **Dashboard:** `api/history.ts` returns all treasury logs plus the member's transfers from Postgres. The explorer is asked only for top-ups from outside Kitty, and is the full fallback if the store is empty or down.
 - **Bot:** with `KITTY_EVENTS_URL` set, `JoinWatcher` (`packages/wallet/src/join.ts`) reads `api/events.ts` instead of the chain. It welcomes new members, posts cap changes and "✅ paid back" from the Stream's events, moving its cursor block by block. After three failed reads in a row it goes back to RPC polling on its own.
 
-Set up: add Neon Postgres to the Vercel project (`DATABASE_URL`), set `QN_STREAM_SECRET` and `EVENTS_SECRET` in Vercel, then run `node apps/onboard/scripts/create-stream.mjs` with `QUICKNODE_API_KEY` in `apps/server/.env` (`--dry-run` prints the request, `--list` shows existing streams). The tables create themselves on the first delivery (`scripts/schema.sql` has the same schema).
+Set up: add Neon Postgres to the Vercel project (`DATABASE_URL`), set `QN_STREAM_SECRET` and `EVENTS_SECRET` in Vercel, then create the Stream in the QuickNode dashboard with the settings above (paste `filter.js` with the contract address filled in, add the `X-Kitty-Secret` header) or run `node apps/onboard/scripts/create-stream.mjs` with `QUICKNODE_API_KEY` in `apps/server/.env` (`--dry-run` prints the request, `--list` shows existing streams). The tables create themselves on the first delivery (`scripts/schema.sql` has the same schema).
 
 ## Design choice: individual wallets vs a shared multisig
 

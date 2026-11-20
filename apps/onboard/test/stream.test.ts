@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { encodeAbiParameters, encodeEventTopics, pad, type Hex } from "viem";
 import { describe, expect, it } from "vitest";
-import { logOut, rowsFrom, transferOut, validSignature } from "../api/_kitty-db";
+import { logOut, rowsFrom, sameSecret, transferOut, validSignature } from "../api/_kitty-db";
 import { treasuryEvents } from "../src/abi";
 import { buildHistory, type ExplorerLog, type ExplorerTransfer } from "../src/history";
 
@@ -102,6 +102,15 @@ describe("webhook payload", () => {
     expect(validSignature(secret, "n1", "1700000000", body + " ", sig)).toBe(false);
     expect(validSignature(secret, "n2", "1700000000", body, sig)).toBe(false);
     expect(validSignature("", "n1", "1700000000", body, sig)).toBe(false);
+  });
+
+  it("accepts the secret as a custom header, and nothing else", () => {
+    const secret = "qnsec_" + "x".repeat(40);
+    expect(sameSecret(secret, secret)).toBe(true);
+    expect(sameSecret(` ${secret} `, secret)).toBe(true);
+    expect(sameSecret(secret.slice(0, -1), secret)).toBe(false);
+    expect(sameSecret("", secret)).toBe(false);
+    expect(sameSecret("", "")).toBe(false);
   });
 
   it("stored rows read back in the explorer's shape", () => {
