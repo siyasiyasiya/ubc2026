@@ -439,6 +439,9 @@ export class GroupRuntime {
     url.searchParams.set("c", this.chatLabel(record, member.id));
     url.searchParams.set("n", member.displayName);
     for (const [k, v] of Object.entries(extra)) url.searchParams.set(k, v);
+    // Testnet/demo: TEST_MONEY_LINKS=1 adds `test=1` so the page shows the "Add $20 test money"
+    // button (faucet USDC), not just the real Apple Pay / Onramp flow.
+    if (process.env.TEST_MONEY_LINKS === "1") url.searchParams.set("test", "1");
     return this.withChats(url, member.id);
   }
 
