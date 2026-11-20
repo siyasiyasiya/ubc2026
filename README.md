@@ -34,18 +34,18 @@ An agent lives in your iMessage group chat. Members ask for things in plain lang
 
 ## What works today
 
-As of Nov 19, 2026, run live in a real iMessage group on Arc testnet unless noted.
+As of Nov 20, 2026, run live in a real iMessage group on Arc testnet unless noted. The contract was redeployed Nov 19 (netSettle), members rejoined, and the money flows below were re-run live on the new deployment on Nov 20.
 
 | Feature | State |
 | --- | --- |
 | Join with one Face ID tap from a private invite text (name asked privately first) | ✅ live |
 | Per-chat plan and limits (weekly / monthly / one-time), lower a limit from the chat | ✅ live |
-| Split a bill, everyone 👍s the card (real iMessage tapbacks), shares settle onchain | ✅ live |
+| Split a bill, everyone 👍s the card (real iMessage tapbacks), shares settle onchain | ✅ live (Nov 20 on the new contract: $4 coffee, Akash → Neena $2.00, tx `0x733dbf26…`) |
 | Read the receipt from a photo or a PDF (merchant, tax, tip, line items), handwritten tip included | ✅ live |
 | Trip tab: splits wait until "settle up" | ✅ live |
-| A share that can't be pulled becomes an onchain debt, and the member gets a pay-back link | ✅ live up to the pay-back tap |
+| A share that can't be pulled becomes an onchain debt, and the member gets a pay-back link | ✅ live end to end Nov 20: Akash's $50 grocery share failed (balance $23), became a debt, he paid it back with Face ID (`DebtPaid` $50) |
 | Itemized split: "i had the pasta and a sake", tax and tip shared proportionally | 🟡 built and tested, live run pending |
-| Settle-up netting: collapses the debt graph to the fewest who-pays-whom transfers, onchain (`netSettle`, balance-preserving) | 🟡 built and tested (contract + 8 Foundry tests); needs a contract redeploy to run against the live group |
+| Settle-up netting: collapses the debt graph to the fewest who-pays-whom transfers, onchain (`netSettle`, balance-preserving) | ✅ live Nov 20: Neena owed Akash $70, Akash owed Neena $10; "who owes who" committed `DebtsNetted` (2 cleared, 1 added) → Neena owed $60, paid it with Face ID. Each debtor is now texted a fresh pay-back link after netting |
 | Kitty wrapped: spending summary (total, per person, top spender) in the chat or a DM | 🟡 built and tested, live run pending |
 | Vague buy ("dishwasher soap"): Kitty web-searches real products for options, saves a group or personal usual so it stops asking | 🟡 built and tested, live run pending |
 | Proactive nudges for stale approval cards and unpaid debts (off by default, `NUDGES=on`) | 🟡 built and tested, off for demos |
