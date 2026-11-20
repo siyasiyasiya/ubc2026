@@ -15,6 +15,8 @@ export type Usdc = bigint & { readonly [usdcBrand]: true };
 /** USDC has 6 decimals. */
 export const USDC_DECIMALS = 6;
 const SCALE = 1_000_000n;
+/** Micro-dollars in one cent. Money is split and shown to the cent, never to a fraction of one. */
+const CENT = 10_000n;
 
 /** Construct a Usdc amount from micro-dollars (the raw on-chain unit). */
 export function micros(value: bigint | number): Usdc {
@@ -41,30 +43,34 @@ export function gtUsdc(a: Usdc, b: Usdc): boolean {
   return a > b;
 }
 
-/** Split a total evenly across `n` participants, distributing the remainder
- * one micro at a time so the parts always sum exactly back to the total. */
+/** Split a total evenly across `n` participants. Each share is a whole number of cents (no sub-cent
+ * amounts), the leftover cent(s) go one at a time to the first shares, and the parts sum exactly
+ * back to the total. Any sub-cent dust in `total` (normally none, since money is built to the cent)
+ * is kept on the first share so nothing is lost. */
 export function splitEven(total: Usdc, n: number): Usdc[] {
   if (n <= 0) throw new Error("splitEven: need at least one participant");
-  const base = total / BigInt(n);
-  let remainder = total % BigInt(n);
+  const cents = total / CENT;
+  const dust = total % CENT; // sub-cent remainder, normally 0n
+  const base = cents / BigInt(n);
+  let remainder = cents % BigInt(n);
   const parts: Usdc[] = [];
   for (let i = 0; i < n; i++) {
-    let share = base;
+    let shareCents = base;
     if (remainder > 0n) {
-      share = share + 1n;
+      shareCents += 1n;
       remainder -= 1n;
     }
-    parts.push(share as Usdc);
+    parts.push((shareCents * CENT + (i === 0 ? dust : 0n)) as Usdc);
   }
   return parts;
 }
 
-/** Human-readable string, e.g. "$12.50". */
+/** Human-readable string, e.g. "$12.50", rounded to the nearest cent (half up). */
 export function formatUsdc(amount: Usdc): string {
   const neg = amount < 0n;
   const abs = neg ? -amount : amount;
-  const whole = abs / SCALE;
-  const frac = abs % SCALE;
-  const cents = (frac / 10_000n).toString().padStart(2, "0");
-  return `${neg ? "-" : ""}$${whole.toString()}.${cents}`;
+  const cents = (abs + CENT / 2n) / CENT; // round to the nearest cent (carries into dollars)
+  const whole = cents / 100n;
+  const centsPart = (cents % 100n).toString().padStart(2, "0");
+  return `${neg ? "-" : ""}$${whole.toString()}.${centsPart}`;
 }

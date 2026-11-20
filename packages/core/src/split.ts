@@ -68,18 +68,21 @@ export function byItemSplit({ lineItems, claims, tax, tip, payeeMemberId }: ByIt
     who.forEach((m, i) => (base[m]! += parts[i]!));
   }
 
-  // Distribute tax + tip proportional to each member's item subtotal (largest remainder = exact sum).
+  // Distribute tax + tip proportional to each member's item subtotal, in whole cents (no sub-cent
+  // shares), using largest remainder so the cents still sum exactly to the tax+tip.
+  const CENT = 10_000n;
   const itemsTotal = members.reduce((a, m) => a + base[m]!, 0n);
   const extra = (tax ?? 0n) + (tip ?? 0n);
+  const extraCents = extra / CENT;
   const shares: Record<MemberId, Usdc> = {};
-  if (extra > 0n && itemsTotal > 0n) {
-    const rows = members.map((m) => ({ m, whole: (base[m]! * extra) / itemsTotal, rem: (base[m]! * extra) % itemsTotal }));
-    let leftover = extra - rows.reduce((a, r) => a + r.whole, 0n);
+  if (extraCents > 0n && itemsTotal > 0n) {
+    const rows = members.map((m) => ({ m, whole: (base[m]! * extraCents) / itemsTotal, rem: (base[m]! * extraCents) % itemsTotal }));
+    let leftover = extraCents - rows.reduce((a, r) => a + r.whole, 0n);
     rows.sort((a, b) => (b.rem > a.rem ? 1 : b.rem < a.rem ? -1 : 0));
     for (const r of rows) {
       const bonus = leftover > 0n ? 1n : 0n;
       leftover -= bonus;
-      shares[r.m] = (base[r.m]! + r.whole + bonus) as Usdc;
+      shares[r.m] = (base[r.m]! + (r.whole + bonus) * CENT) as Usdc;
     }
   } else {
     for (const m of members) shares[m] = base[m]! as Usdc;

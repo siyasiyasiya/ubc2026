@@ -57,6 +57,9 @@ describe("byItemSplit", () => {
     const sum = Object.values(split.shares).reduce((a, b) => a + b, 0n);
     expect(sum).toBe(split.total);
     expect(split.total).toBe(usdc(16));
+    // $1 tip split 2:1 lands on whole cents ($0.67 / $0.33), never a sub-cent amount.
+    expect(split.shares).toEqual({ x: usdc(10.67), y: usdc(5.33) });
+    for (const share of Object.values(split.shares)) expect(share % 10_000n).toBe(0n);
   });
 
   it("throws when nobody claimed anything", () => {
