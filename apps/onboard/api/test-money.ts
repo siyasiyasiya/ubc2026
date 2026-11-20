@@ -14,7 +14,11 @@ import { createPublicClient, createWalletClient, getAddress, http, isAddress, pa
 import { privateKeyToAccount } from "viem/accounts";
 import { arcTestnet } from "viem/chains";
 
-const AMOUNT_USD = Number(process.env.TESTNET_TOPUP_USD ?? 20);
+/** $20 unless TESTNET_TOPUP_USD is a positive number (an empty value must not mean $0). */
+function amountUsd(): number {
+  const n = Number(process.env.TESTNET_TOPUP_USD);
+  return n > 0 ? n : 20;
+}
 const ONLY_UNDER_USD = 10;
 // Arc's native currency is USDC with 18 decimals.
 const toWei = (usd: number) => parseUnits(usd.toFixed(2), 18);
@@ -52,11 +56,12 @@ export async function POST(request: Request): Promise<Response> {
         { status: 409 },
       );
     }
-    const tx = await walletClient.sendTransaction({ to, value: toWei(AMOUNT_USD) });
+    const usd = amountUsd();
+    const tx = await walletClient.sendTransaction({ to, value: toWei(usd) });
     await publicClient.waitForTransactionReceipt({ hash: tx });
     const balance = await publicClient.getBalance({ address: to });
-    console.log(`test money: $${AMOUNT_USD} -> ${to} (${tx})`);
-    return Response.json({ added: AMOUNT_USD, balance: toUsd(balance), tx });
+    console.log(`test money: $${usd} -> ${to} (${tx})`);
+    return Response.json({ added: usd, balance: toUsd(balance), tx });
   } catch (err) {
     console.error("test money failed", err);
     const empty = /insufficient funds/i.test((err as Error).message);
