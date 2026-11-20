@@ -40,7 +40,7 @@ import {
 import { NotAReceiptError } from "@gta/agent";
 import type { runTurn as RunTurn, runDmTurn as RunDmTurn, TreasuryActions, DmActions } from "@gta/agent";
 import { groupIdForChat, inviteLink, inviteTicket, type DebtPaidEvent, type JoinEvent, type LimitSetEvent } from "@gta/wallet";
-import type { GroupRecord, RequestRecord, Store } from "./store.js";
+import { normalizePreferenceKey, type GroupRecord, type RequestRecord, type Store } from "./store.js";
 import type { RestaurantCaller } from "./restaurant-call.js";
 import { asPng } from "./svg-to-png.js";
 
@@ -886,7 +886,8 @@ export class GroupRuntime {
       .filter((r) => r.onTab && r.state.name === "settling")
       .map((r) => `- #${r.number} ${r.title} ${formatUsdc(r.split?.total ?? usdc(0))}`);
     const recent = this.recentActivity(record);
-    return `Plan: ${plan}\n\nMembers:\n${members.join("\n") || "- (none yet)"}\n\nOpen requests:\n${open.join("\n") || "- none"}\n\nOn the tab (settles on "settle up"):\n${tab.join("\n") || "- nothing"}\n\nRecent transactions in THIS chat (for history questions):\n${recent.join("\n") || "- none yet"}`;
+    const usuals = Object.values(record.preferences ?? {}).map((p) => `- ${p.item}: ${p.choice}`);
+    return `Plan: ${plan}\n\nMembers:\n${members.join("\n") || "- (none yet)"}\n\nOpen requests:\n${open.join("\n") || "- none"}\n\nOn the tab (settles on "settle up"):\n${tab.join("\n") || "- nothing"}\n\nUsuals (saved picks for generic buys; use these instead of asking):\n${usuals.join("\n") || "- none set"}\n\nRecent transactions in THIS chat (for history questions):\n${recent.join("\n") || "- none yet"}`;
   }
 
   // --- what the agent can do --------------------------------------------------
@@ -968,6 +969,15 @@ export class GroupRuntime {
         }
       },
       leave: async () => this.leave(record, sender),
+      setPreference: async ({ item, choice }) => {
+        const key = normalizePreferenceKey(item);
+        if (!key || !choice.trim()) return "Tell me the item and what to get for it.";
+        record.preferences ??= {};
+        record.preferences[key] = { item: item.trim(), choice: choice.trim(), setBy: sender.id, at: this.now() };
+        this.deps.store.put(record);
+        this.deps.store.save();
+        return `Saved: ${item.trim()} means ${choice.trim()} from now on.`;
+      },
       sendJoinLink: async ({ name }) => {
         try {
           return await this.sendJoinLink(record, name ? this.resolve(record, name) : sender);

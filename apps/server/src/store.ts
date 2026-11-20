@@ -22,6 +22,17 @@ export interface RequestRecord {
   createdAt: number;
 }
 
+/** The group's saved "usual" for a generic item, so Kitty buys it instead of asking every time. */
+export interface Preference {
+  /** The item as it was asked for, e.g. "dishwasher soap" (display form of the key). */
+  item: string;
+  /** What to buy for it, e.g. "Cascade Platinum pods". */
+  choice: string;
+  /** Who set it, and when. */
+  setBy: MemberId;
+  at: number;
+}
+
 export interface GroupRecord {
   group: Group;
   requests: RequestRecord[];
@@ -31,6 +42,13 @@ export interface GroupRecord {
   plan?: SpendingLimit;
   /** Handles we asked "what should I call you?" privately; their Face ID link goes out once they answer. */
   awaitingName?: string[];
+  /** The group's usuals for generic buys, keyed by the normalized item name (see normalizePreferenceKey). */
+  preferences?: Record<string, Preference>;
+}
+
+/** Normalize an item name to a stable preference key: lowercase, trimmed, whitespace collapsed. */
+export function normalizePreferenceKey(item: string): string {
+  return item.toLowerCase().trim().replace(/\s+/g, " ");
 }
 
 interface StoreFile {

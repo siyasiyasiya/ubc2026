@@ -29,7 +29,8 @@ What you can do:
 - Each group chat has a plan: a trip has a one-time limit per person (it never refills), roommates or friends have a weekly or monthly limit that refills up to the limit. Money stays in each person's own account until something is split.
 - Splits settle right away, or go on the group's tab and settle together when someone says "settle up" (handy at the end of a trip). The person proposing picks; if a trip and they don't say, ask.
 - Kitty can buy things for the group (paper towels, tickets, a place to stay). Confirm what to get, who's splitting it, and whose card pays the store, then call buy_for_group. It posts the checkout for 👍s; the order is only placed once everyone in the split approves. Give an estimated price per item when you know one.
-- When someone asks for something generic without naming a brand or product ("we need dishwasher soap", "get paper towels"), don't just pick one. First reply with 2 or 3 common options (name the brand/variant and a rough price each, cheap to nicer), numbered, and ask which they want. Only then call buy_for_group with their pick. Skip the options and go straight to buy_for_group when: they named a specific brand or product, they say "whatever's cheapest" or "you pick", or the chat history shows the group already has a usual for this ("we always get Cascade"). Keep the options short, a line or two, not a catalog.
+- When someone asks for something generic without naming a brand or product ("we need dishwasher soap", "get paper towels"), don't just pick one. First reply with 2 or 3 common options (name the brand/variant and a rough price each, cheap to nicer), numbered, and ask which they want. Only then call buy_for_group with their pick. Skip the options and go straight to buy_for_group when: they named a specific brand or product, they say "whatever's cheapest" or "you pick", or the group already has a saved usual for this item (the snapshot lists them under "Usuals"). Keep the options short, a line or two, not a catalog.
+- When the group settles on a usual ("always get Cascade for dishwasher soap", "make Bounty our paper towels"), call set_preference to save it, and confirm. From then on, a generic request for that item uses the saved choice without asking again.
 - Kitty can phone a restaurant to book a table (an AI voice call). You need the restaurant's phone number from the chat; never guess or look one up. Confirm party size, day and time, and whose name it's under, then call call_restaurant. The result comes back in the chat after the call.
 - Anyone can leave the group's Kitty; after that nothing more can be taken from them here. What they already owe stays owed.
 - Set people up: everyone needs a Kitty account (one Face ID tap) before money can move for them.
@@ -107,6 +108,8 @@ export interface TreasuryActions {
     participants: string[];
     payer: string;
   }): Promise<string>;
+  /** Save the group's usual for a generic item ("dishwasher soap" -> "Cascade Platinum pods"). */
+  setPreference(input: { item: string; choice: string }): Promise<string>;
   /** Text a member (the sender by default) their private Face ID link to set up a Kitty account. */
   sendJoinLink(input: { name?: string }): Promise<string>;
   cancel(input: { number: number }): Promise<string>;
@@ -279,6 +282,16 @@ export async function runTurn(input: TurnInput): Promise<string | null> {
           participants: a.participants,
           payer: a.payer,
         }),
+    }),
+    betaZodTool({
+      name: "set_preference",
+      description:
+        "Save the group's usual for a generic item, so next time Kitty buys it without asking. Use when someone sets a standing choice ('always get Cascade for dishwasher soap', 'our usual paper towels is Bounty'). item is the generic thing ('dishwasher soap'); choice is the specific product ('Cascade Platinum pods').",
+      inputSchema: z.object({
+        item: z.string().describe("The generic item, e.g. 'dishwasher soap'"),
+        choice: z.string().describe("The specific product to buy for it, e.g. 'Cascade Platinum pods'"),
+      }),
+      run: (a) => actions.setPreference({ item: a.item, choice: a.choice }),
     }),
     betaZodTool({
       name: "send_join_link",

@@ -52,8 +52,11 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
     getChatName: async () => opts.chatName ?? null,
   };
   const turnEvents: string[] = [];
-  const fakeTurn: typeof RunTurn = async ({ actions, event }) => {
+  const turnSnapshots: string[] = [];
+  const fakeTurn: typeof RunTurn = async ({ actions, event, groupSnapshot }) => {
     turnEvents.push(event);
+    turnSnapshots.push(groupSnapshot);
+    if (event.includes("always get")) return actions.setPreference({ item: "dishwasher soap", choice: "Cascade Platinum pods" });
     if (event.includes("join me")) return actions.sendJoinLink({});
     if (event.includes("split by item")) return actions.splitByItem({ payer: "Neena", claims: { Siya: [1], Tristan: [2] } });
     if (event.includes("who owes")) return actions.netDebts();
@@ -147,7 +150,7 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
     await say(NEENA, "split dinner with siya and tristan");
     return request();
   };
-  return { posted, dms, failing, say, react, dm, image, dmSummaries, turnEvents, proposeDinner, request, runtime, store };
+  return { posted, dms, failing, say, react, dm, image, dmSummaries, turnEvents, turnSnapshots, proposeDinner, request, runtime, store };
 }
 
 describe("GroupRuntime", () => {
@@ -190,6 +193,27 @@ describe("GroupRuntime", () => {
     const event = t.turnEvents.at(-1)!;
     expect(event).toContain("couldn't open it");
     expect(event).not.toContain("isn't a receipt");
+  });
+
+  it("saves a group preference and surfaces it in the next snapshot", async () => {
+    const t = setup();
+    await t.say(NEENA, "always get cascade for dishwasher soap");
+
+    const prefs = t.store.get(CHAT)!.preferences!;
+    expect(prefs["dishwasher soap"]).toMatchObject({ item: "dishwasher soap", choice: "Cascade Platinum pods", setBy: NEENA });
+
+    // The saved usual now reaches the agent in the snapshot for later requests.
+    await t.say(SIYA, "we need dishwasher soap");
+    expect(t.turnSnapshots.at(-1)).toContain("dishwasher soap: Cascade Platinum pods");
+  });
+
+  it("persists preferences across a store reload", () => {
+    const file = `${process.env.CLAUDE_JOB_DIR ?? "/tmp"}/pref-${Date.now()}.json`;
+    const a = new Store(file);
+    a.put({ group: { id: "g", kind: "roommates", name: "roomies", chatId: "g", members: [] }, requests: [], preferences: { "paper towels": { item: "paper towels", choice: "Bounty", setBy: SIYA, at: 1 } } });
+    a.save();
+    const b = new Store(file);
+    expect(b.get("g")!.preferences!["paper towels"]!.choice).toBe("Bounty");
   });
 
   it("ignores 👍 from outside the split and other emoji", async () => {
