@@ -132,6 +132,6 @@ Built but needs **Siya's bot restart** on latest `main` (plus keys) to run live:
 | --- | --- |
 | ElevenLabs agent | `agent_9401m7v381pmfb8rz7yzrvrrd03z`, "Kitty (booking calls)", on the ElevenLabs account signed in as "Akash" |
 | Test "business" phone | Akash, +1 518-817-3144 |
-| GroupTreasury (Arc testnet) | `0xAF2b75eda3c50358Ce754b93c60F76F0871bE235` |
+| GroupTreasury (Arc testnet) | `0x8e55291277d4D282dC4a1c00132fcdE610e06BdC` |
 | Bot Apple ID | `ubc2026.agent@gmail.com` (Messages on Siya's Mac) |
 | Web pages | `kittyagent.vercel.app` (Face ID, card.html, dashboard, `/k/` links) |

@@ -34,7 +34,7 @@ An agent lives in your iMessage group chat. Members ask for things in plain lang
 
 ## What works today
 
-As of Nov 20, 2026, run live in a real iMessage group on Arc testnet unless noted. The contract was redeployed Nov 19 (netSettle), members rejoined, and the money flows below were re-run live on the new deployment on Nov 20.
+As of Nov 20, 2026, run live in a real iMessage group on Arc testnet unless noted. The contract was redeployed Nov 19 (netSettle), members rejoined, and the money flows below were re-run live on that deployment on Nov 20. It was redeployed again Nov 20 (block 73182149) to add auto pay-back and all-or-nothing group buys; members rejoin with Face ID.
 
 | Feature | State |
 | --- | --- |
@@ -147,7 +147,7 @@ Code: `apps/server/src/booking-call.ts`, `GroupRuntime.callToBook` in `apps/serv
 
 Members only see iMessage, one web page and Face ID. Underneath, every rule about money is enforced by a contract on **Arc testnet** that the agent can't change.
 
-**Deployed:** `GroupTreasury` at [`0xAF2b75eda3c50358Ce754b93c60F76F0871bE235`](https://testnet.arcscan.app/address/0xAF2b75eda3c50358Ce754b93c60F76F0871bE235) (Arc testnet, chain 5042002). Details in [`contracts/README.md`](contracts/README.md).
+**Deployed:** `GroupTreasury` at [`0x8e55291277d4D282dC4a1c00132fcdE610e06BdC`](https://testnet.arcscan.app/address/0x8e55291277d4D282dC4a1c00132fcdE610e06BdC) (Arc testnet, chain 5042002). Details in [`contracts/README.md`](contracts/README.md).
 
 ### Each group chat has its own limit
 
@@ -255,7 +255,7 @@ flowchart LR
 | --- | --- | --- |
 | Network | Arc Testnet (`arc-testnet`) | Where `GroupTreasury` runs |
 | Dataset | `block_with_receipts` | Receipts carry every log of a transaction, so the filter can keep the USDC transfers that happened alongside a treasury event; the block header carries the timestamp the history shows |
-| Range | From block 73141404 (the contract's deploy block) to the live tip | The backfill rebuilds the full history; after that it stays live. `fix_block_reorgs` on |
+| Range | From the contract's deploy block to the live tip (the stream's filter was repointed to the Nov 20 deployment at block 73182149, which it had not yet passed) | The backfill rebuilds the full history; after that it stays live. `fix_block_reorgs` off (not on our QuickNode plan) |
 | Filter | [`apps/onboard/streams/filter.js`](apps/onboard/streams/filter.js) | Keeps (a) every log emitted by `GroupTreasury` (`Joined`, `LimitSet`, `SpendProposed`, `SpendApproved`, `SharePulled`, `PullFailed`, `SpendSettled`, `DebtPaid`, …) and (b) the USDC `Transfer` logs in those same transactions. Rewrites them into the rows the Arc explorer API returns, so the page's existing decoder reads Stream rows and explorer rows the same way. Blocks with nothing of Kitty's return `null` and are never delivered |
 | Destination | Webhook → `https://kittyagent.vercel.app/api/stream`, batch size 1, no compression | Authenticates each delivery with the stream's security token: QuickNode's HMAC headers (`X-QN-Nonce` + `X-QN-Timestamp` + body), which real deliveries carry, or a custom `X-Kitty-Secret` header set on the destination (QuickNode's "Check connection" sends no signature, so the header is what it passes with). Then upserts into Postgres keyed on `(tx_hash, log_index)`, so a redelivered batch is a no-op |
 

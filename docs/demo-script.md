@@ -11,7 +11,7 @@ About 4 minutes. Three phones in one iMessage group: **Neena**, **Siya**, **Joey
 - [ ] Each member has a few test dollars: text Kitty privately "add $20" (or `pnpm --filter @gta/server fund <phone> 20`), then "how much money do i have".
 - [ ] Booking call: the bot's Mac has BlackHole + SwitchAudioSource (`brew install --cask blackhole-16ch`, `brew install switchaudio-osx`), Calls from iPhone on, no headphones plugged in, the call page running (`apps/onboard`: `vite --port 5199`), and `.env` with ELEVENLABS_API_KEY, ELEVENLABS_AGENT_ID, KITTY_CALL_BRIDGE=1, KITTY_CALL_PAGE_URL=http://localhost:5199/call.html (log: `calls: ElevenLabs voice agent, real phone calls from this Mac`). Chrome has mic access for localhost. The teammate playing the canoe rental is somewhere the room can't hear.
 - [ ] Crossmint keys set for a real order, or the store reads "(simulated)": say so out loud.
-- [ ] Explorer tab open: https://testnet.arcscan.app/address/0xAF2b75eda3c50358Ce754b93c60F76F0871bE235
+- [ ] Explorer tab open: https://testnet.arcscan.app/address/0x8e55291277d4D282dC4a1c00132fcdE610e06BdC
 - [ ] Phones: Do Not Disturb off, Messages open on the group, screen mirroring tested.
 
 ## 1. The problem (20s)
