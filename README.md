@@ -94,21 +94,7 @@ What the contract guarantees, no matter what the agent does:
 
 Live on the current contract: a $4 coffee split settled onchain (Akash → Neena $2.00), an over-limit grocery share became a debt and was paid back with Face ID (`DebtPaid` $50), and settle-up netting collapsed a debt graph onchain (`DebtsNetted`, balance-preserving). Full detail in [`contracts/README.md`](contracts/README.md).
 
-### 🎙️ elevenlabs
-
-Two ElevenLabs products, each tied to money movement. Voice is how Kitty reaches the real world, and how you reach Kitty.
-
-**booking calls (voice agent).** "kitty book 3 canoes at Lakeside Canoe Rentals, (518) 817-3144, saturday 9am, under neena" →
-1. The `call_to_book` tool starts an **ElevenLabs Conversational AI agent** (business, booking, party size, time, and whose name it's under passed as dynamic variables).
-2. The agent introduces itself, books it, and **asks what the total comes to**. It never accepts a different time on its own.
-3. On hang-up, the server reads the **post-call analysis** (`GET /v1/convai/conversations/{id}`): `booking_confirmed`, `confirmed_time`, `total_price_usd`, transcript summary.
-4. **The price becomes a split.** Kitty posts "booked, 3 canoes saturday 9am, $250" and proposes the pay-back split on the trip tab → 👍 → "settle up" settles it on Arc.
-
-Placed as a **real phone call** with no paid line: the Mac dials through its paired iPhone ("Calls from iPhone") and the agent runs on Kitty's call page (`@elevenlabs/client` over WebRTC), its voice bridged in through a virtual audio device (`scripts/call-bridge/`). *Verified live Nov 20: booked 3 canoes, $250, split $83.33 each, settled on Arc.*
-
-**voice memos (Speech-to-Text).** Send a spoken memo in the chat and Kitty transcribes it with **ElevenLabs Scribe** (`POST /v1/speech-to-text`), then acts on it exactly like a typed message. Any `audio/*` attachment routes to Scribe instead of the receipt reader. Code: `apps/server/src/speech.ts`, `booking-call.ts`. Agent setup: [`docs/elevenlabs-agent.md`](docs/elevenlabs-agent.md).
-
-### 🟢 quicknode streams
+## 🟢 quicknode streams
 
 Kitty reacts to onchain events (joins, cap changes, pay-backs, settles) in real time. Instead of polling `eth_getLogs`, one **QuickNode Stream** pushes exactly Kitty's events, in order, as they're mined. Both the dashboard and the bot read from it.
 
@@ -130,7 +116,21 @@ flowchart LR
 
 Config lives in the repo (`apps/onboard/scripts/create-stream.mjs`). The bot's `JoinWatcher` reads `/api/events` and falls back to RPC after repeated failures. *Live: verified delivering current-contract events with valid QuickNode signatures into Neon.*
 
-### 🛒 crossmint + claude
+## 🎙️ elevenlabs
+
+Two ElevenLabs products, each tied to money movement. Voice is how Kitty reaches the real world, and how you reach Kitty.
+
+**booking calls (voice agent).** "kitty book 3 canoes at Lakeside Canoe Rentals, (518) 817-3144, saturday 9am, under neena" →
+1. The `call_to_book` tool starts an **ElevenLabs Conversational AI agent** (business, booking, party size, time, and whose name it's under passed as dynamic variables).
+2. The agent introduces itself, books it, and **asks what the total comes to**. It never accepts a different time on its own.
+3. On hang-up, the server reads the **post-call analysis** (`GET /v1/convai/conversations/{id}`): `booking_confirmed`, `confirmed_time`, `total_price_usd`, transcript summary.
+4. **The price becomes a split.** Kitty posts "booked, 3 canoes saturday 9am, $250" and proposes the pay-back split on the trip tab → 👍 → "settle up" settles it on Arc.
+
+Placed as a **real phone call** with no paid line: the Mac dials through its paired iPhone ("Calls from iPhone") and the agent runs on Kitty's call page (`@elevenlabs/client` over WebRTC), its voice bridged in through a virtual audio device (`scripts/call-bridge/`). *Verified live Nov 20: booked 3 canoes, $250, split $83.33 each, settled on Arc.*
+
+**voice memos (Speech-to-Text).** Send a spoken memo in the chat and Kitty transcribes it with **ElevenLabs Scribe** (`POST /v1/speech-to-text`), then acts on it exactly like a typed message. Any `audio/*` attachment routes to Scribe instead of the receipt reader. Code: `apps/server/src/speech.ts`, `booking-call.ts`. Agent setup: [`docs/elevenlabs-agent.md`](docs/elevenlabs-agent.md).
+
+## 🛒 crossmint + claude
 
 Kitty buys real things across stores with **Crossmint Agent Checkouts**: it drives the store's checkout to the real total, posts a screenshot + split to the chat, and only orders after everyone 👍s. The order goes on the payer's own saved card (card numbers never touch Kitty; it signs short-lived Crossmint user tokens itself, RS256). *A real $1 Gumroad order was placed from the terminal ($1.07 charged).* The brain is **Claude Sonnet 5** via the Anthropic SDK tool runner: receipt reading, split math as tool calls (never floats, money is integer micro-USDC), preferences, and the booking/buy/split tools.
 
