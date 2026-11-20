@@ -19,7 +19,7 @@ import { ClaudeReceiptReader, runTurn, runDmTurn } from "@gta/agent";
 import { PhotonChatPort } from "@gta/imessage";
 import { createCrossmintPurchaseAdapterFromEnv, crossmintJwtSignerFromEnv } from "@gta/purchase";
 import { SimulatedPurchaseAdapter } from "./simulated-purchase.js";
-import { elevenLabsFromEnv } from "./restaurant-call.js";
+import { elevenLabsFromEnv, macDialerFromEnv } from "./booking-call.js";
 import { usdc, type Usdc } from "@gta/core";
 import { getAddress } from "viem";
 import { arcClients, arcWalletAdapters, InMemoryWalletAdapter, JoinWatcher, sendWelcomeBalance } from "@gta/wallet";
@@ -53,7 +53,7 @@ const runtime = new GroupRuntime({
   wallet,
   receipts: new ClaudeReceiptReader(),
   purchase: purchaseAdapter(),
-  ...restaurantCalls(),
+  ...bookingCalls(),
   runTurn,
   runDmTurn,
   ...testMoney(),
@@ -313,12 +313,17 @@ function purchaseAdapter() {
   return new SimulatedPurchaseAdapter();
 }
 
-/** ElevenLabs voice calls to restaurants, when ELEVENLABS_API_KEY and _AGENT_ID are set (by phone with _PHONE_NUMBER_ID, else by link). */
-function restaurantCalls() {
+/** ElevenLabs booking calls, when ELEVENLABS_API_KEY and _AGENT_ID are set (by phone with _PHONE_NUMBER_ID, else by link). */
+function bookingCalls() {
   const calls = elevenLabsFromEnv();
-  const how = process.env.ELEVENLABS_PHONE_NUMBER_ID ? "phone calls" : "texts the restaurant a link to talk (no ELEVENLABS_PHONE_NUMBER_ID)";
+  const dial = macDialerFromEnv();
+  const how = process.env.ELEVENLABS_PHONE_NUMBER_ID
+    ? "phone calls"
+    : dial
+      ? "real phone calls from this Mac (KITTY_CALL_BRIDGE)"
+      : "texts the business a link to talk (no ELEVENLABS_PHONE_NUMBER_ID)";
   console.log(calls ? `calls: ElevenLabs voice agent, ${how}` : "calls: off (set ELEVENLABS_API_KEY and ELEVENLABS_AGENT_ID; ELEVENLABS_PHONE_NUMBER_ID for real phone calls)");
-  return calls ? { calls } : {};
+  return calls ? { calls, ...(dial ? { dial } : {}) } : {};
 }
 
 /**

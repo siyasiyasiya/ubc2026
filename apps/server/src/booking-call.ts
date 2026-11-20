@@ -1,14 +1,14 @@
 /**
- * Kitty phones a restaurant with an ElevenLabs voice agent (Agents Platform, outbound via a Twilio
+ * Kitty phones a business (a canoe rental, a restaurant, a tour) to book for the group with an ElevenLabs voice agent (Agents Platform, outbound via a Twilio
  * number connected to ElevenLabs), then reads back how the call went.
  *
  *   start:  POST /v1/convai/twilio/outbound-call   { agent_id, agent_phone_number_id, to_number,
  *                                                    conversation_initiation_client_data.dynamic_variables }
  *   result: GET  /v1/convai/conversations/{id}      status initiated | in-progress | processing | done | failed
- *           analysis.data_collection_results.{reservation_confirmed, confirmed_time, alternative_offered}
+ *           analysis.data_collection_results.{booking_confirmed, confirmed_time, alternative_offered, total_price_usd}
  *           analysis.transcript_summary, metadata.phone_call.call_result (answered | voicemail | busy | no_answer | failed)
  *
- * Without a phone number (no paid Twilio account), Kitty texts the restaurant's phone a link to its own
+ * Without a phone number (no paid Twilio account), Kitty texts the business's phone a link to its own
  * incoming-call page (apps/onboard/call.html) instead, with the same details as `var_…` parameters plus a
  * `call_ref`. They tap Accept and talk to the same agent in the browser (ElevenLabs client SDK over WebRTC);
  * the server finds that conversation by its `call_ref`
@@ -18,36 +18,44 @@
  * collection fields above) is set up once in the ElevenLabs dashboard; see docs/elevenlabs-agent.md.
  */
 
-export interface RestaurantCallRequest {
-  restaurant: string;
+import { execFile } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
+export interface BookingCallRequest {
+  /** Who Kitty calls, e.g. "Lakeside Canoe Rentals". */
+  business: string;
+  /** What to book there, e.g. "3 canoes for 2 hours". */
+  booking: string;
   /** E.164, e.g. +15551234567. */
   phone: string;
   partySize: number;
   /** As the group said it, e.g. "tomorrow at 7:30pm". */
   when: string;
-  /** Name the reservation goes under. */
+  /** Name the booking goes under. */
   reservationName: string;
   notes?: string;
   /** The group chat's name, so the agent can say who it's calling for. */
   group: string;
 }
 
-export interface RestaurantCallResult {
+export interface BookingCallResult {
   status: "in_progress" | "done" | "failed";
   /** answered | voicemail | busy | no_answer | failed, when the phone system reports it. */
   pickedUp?: string;
   booked?: boolean;
   confirmedTime?: string;
   alternative?: string;
+  /** The total price the business quoted, in whole US dollars and cents (e.g. 240 or 239.5). */
+  totalUsd?: number;
   summary?: string;
   error?: string;
 }
 
-/** Places restaurant calls. ElevenLabs in production; a fake in tests. */
-export interface RestaurantCaller {
-  /** `link` is set when there's no phone line: send it to the restaurant's phone to start the call. */
-  start(request: RestaurantCallRequest): Promise<{ callId: string; link?: string }>;
-  result(callId: string): Promise<RestaurantCallResult>;
+/** Places booking calls. ElevenLabs in production; a fake in tests. */
+export interface BookingCaller {
+  /** `link` is set when there's no phone line: send it to the business's phone to start the call. */
+  start(request: BookingCallRequest): Promise<{ callId: string; link?: string }>;
+  result(callId: string): Promise<BookingCallResult>;
 }
 
 export interface ElevenLabsConfig {
@@ -66,9 +74,10 @@ type Json = Record<string, unknown>;
 const LINK_PREFIX = "link:";
 export const DEFAULT_CALL_PAGE = "https://kittyagent.vercel.app/call.html";
 
-function dynamicVariables(request: RestaurantCallRequest): Record<string, string | number> {
+function dynamicVariables(request: BookingCallRequest): Record<string, string | number> {
   return {
-    restaurant: request.restaurant,
+    business: request.business,
+    booking: request.booking,
     party_size: request.partySize,
     when: request.when,
     reservation_name: request.reservationName,
@@ -77,7 +86,7 @@ function dynamicVariables(request: RestaurantCallRequest): Record<string, string
   };
 }
 
-export class ElevenLabsRestaurantCaller implements RestaurantCaller {
+export class ElevenLabsBookingCaller implements BookingCaller {
   private readonly base: string;
   private readonly fetch: typeof fetch;
   /** Link calls whose conversation has been found: callId → conversation_id. */
@@ -88,7 +97,7 @@ export class ElevenLabsRestaurantCaller implements RestaurantCaller {
     this.fetch = config.fetch ?? fetch;
   }
 
-  async start(request: RestaurantCallRequest): Promise<{ callId: string; link?: string }> {
+  async start(request: BookingCallRequest): Promise<{ callId: string; link?: string }> {
     if (!this.config.phoneNumberId) return this.startByLink(request);
     const body = await this.call("POST", "/v1/convai/twilio/outbound-call", {
       agent_id: this.config.agentId,
@@ -103,7 +112,7 @@ export class ElevenLabsRestaurantCaller implements RestaurantCaller {
     return { callId: id };
   }
 
-  private startByLink(request: RestaurantCallRequest): { callId: string; link: string } {
+  private startByLink(request: BookingCallRequest): { callId: string; link: string } {
     const ref = crypto.randomUUID().slice(0, 8);
     const since = Math.floor(Date.now() / 1000) - 5;
     const url = new URL(this.config.callPageUrl ?? DEFAULT_CALL_PAGE);
@@ -134,7 +143,7 @@ export class ElevenLabsRestaurantCaller implements RestaurantCaller {
     return undefined;
   }
 
-  async result(callId: string): Promise<RestaurantCallResult> {
+  async result(callId: string): Promise<BookingCallResult> {
     if (callId.startsWith(LINK_PREFIX)) {
       const id = await this.findLinked(callId);
       return id ? this.result(id) : { status: "in_progress" };
@@ -157,7 +166,9 @@ export class ElevenLabsRestaurantCaller implements RestaurantCaller {
       const v = value(key);
       return typeof v === "string" && v.trim() && v.trim().toLowerCase() !== "null" ? v.trim() : undefined;
     };
-    const booked = value("reservation_confirmed");
+    const booked = value("booking_confirmed");
+    const total = value("total_price_usd");
+    const totalUsd = typeof total === "number" ? total : typeof total === "string" ? Number(total.replace(/[$,\s]/g, "")) : NaN;
     const confirmedTime = text("confirmed_time");
     const alternative = text("alternative_offered");
     const summary = typeof analysis.transcript_summary === "string" ? analysis.transcript_summary : undefined;
@@ -167,6 +178,7 @@ export class ElevenLabsRestaurantCaller implements RestaurantCaller {
       ...(typeof booked === "boolean" ? { booked } : {}),
       ...(confirmedTime ? { confirmedTime } : {}),
       ...(alternative ? { alternative } : {}),
+      ...(Number.isFinite(totalUsd) && totalUsd > 0 ? { totalUsd } : {}),
       ...(summary ? { summary } : {}),
     };
   }
@@ -187,11 +199,24 @@ export class ElevenLabsRestaurantCaller implements RestaurantCaller {
 }
 
 /** ElevenLabs settings from the environment, or undefined when calling isn't set up. No phone number id → link calls. */
-export function elevenLabsFromEnv(env: NodeJS.ProcessEnv = process.env): ElevenLabsRestaurantCaller | undefined {
+export function elevenLabsFromEnv(env: NodeJS.ProcessEnv = process.env): ElevenLabsBookingCaller | undefined {
   const apiKey = env.ELEVENLABS_API_KEY;
   const agentId = env.ELEVENLABS_AGENT_ID;
   const phoneNumberId = env.ELEVENLABS_PHONE_NUMBER_ID;
   const callPageUrl = env.KITTY_CALL_PAGE_URL;
   if (!apiKey || !agentId) return undefined;
-  return new ElevenLabsRestaurantCaller({ apiKey, agentId, ...(phoneNumberId ? { phoneNumberId } : {}), ...(callPageUrl ? { callPageUrl } : {}) });
+  return new ElevenLabsBookingCaller({ apiKey, agentId, ...(phoneNumberId ? { phoneNumberId } : {}), ...(callPageUrl ? { callPageUrl } : {}) });
+}
+
+/**
+ * KITTY_CALL_BRIDGE=1: dial link calls as real phone calls from this Mac (scripts/call-bridge/dial.sh:
+ * "Calls from iPhone" plus BlackHole audio routing to the call page). Otherwise undefined (calls go by text).
+ */
+export function macDialerFromEnv(env: NodeJS.ProcessEnv = process.env): ((phone: string, link: string) => Promise<void>) | undefined {
+  if (env.KITTY_CALL_BRIDGE !== "1") return undefined;
+  const script = fileURLToPath(new URL("../../../scripts/call-bridge/dial.sh", import.meta.url));
+  return (phone, link) =>
+    new Promise((resolve, reject) =>
+      execFile(script, [phone, link], (err, stdout, stderr) => (err ? reject(new Error(stderr.trim() || err.message)) : resolve(void stdout))),
+    );
 }

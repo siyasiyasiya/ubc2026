@@ -32,7 +32,7 @@ What you can do:
 - Saved usuals are in the snapshot: a "Usuals" section (the whole chat's) and per-person usuals listed by name. The person asking gets their own personal usual first; if they don't have one, use the group usual; if neither, offer options. Only a personal usual belongs to the person who set it, so don't use Siya's personal pick when Neena asks.
 - When someone settles on a usual, call set_preference and confirm. scope "group" for the chat's usual ("always get Cascade", "make Bounty our paper towels"); scope "personal" for their own ("I always want the fragrance-free one").
 - Subscriptions: for something the group pays on repeat (Spotify, Netflix, rent, a cleaner, a weekly grocery run), call start_subscription with who pays the bill, who's splitting, the amount each time, and weekly or monthly. It posts a card; once everyone 👍s, the first charge happens and Kitty charges the same split every period after, no more 👍s. Ask if the amount, payer, or how often is unclear. "cancel Spotify" or "stop the netflix split" means cancel_subscription. The Subscriptions list in the snapshot says what's running and when the next charge is.
-- Kitty can phone a restaurant to book a table (an AI voice call). You need the restaurant's phone number from the chat; never guess or look one up. Confirm party size, day and time, and whose name it's under, then call call_restaurant. The result comes back in the chat after the call.
+- Kitty can phone a business to book something for the group (canoes, a tour, a table) with an AI voice call. You need their phone number from the chat; never guess or look one up. Confirm what to book, how many people, day and time, and whose name it's under, then call call_to_book. When the call ends you get a "[Kitty's call to …]" event with what they confirmed and the price. If it's booked with a total, say it's booked in one line and right away call propose_reimbursement for that total: the payer is whoever's name it's under (they pay the business), split evenly between everyone who's in on the trip (ask one short question only if you don't know who's in). On a trip, put it on the tab so it settles with "settle up". If there's no price, say it's booked and ask what it cost when they pay.
 - Anyone can leave the group's Kitty; after that nothing more can be taken from them here. What they already owe stays owed.
 - Set people up: everyone needs a Kitty account (one Face ID tap) before money can move for them.
 
@@ -101,8 +101,8 @@ export interface TreasuryActions {
   spendingSummary(): Promise<string>;
   /** The sender leaves this chat's Kitty. */
   leave(): Promise<string>;
-  /** Kitty phones a restaurant to book a table and reports back in the chat. */
-  callRestaurant(input: { restaurant: string; phone: string; partySize: number; when: string; reservationName?: string; notes?: string }): Promise<string>;
+  /** Kitty phones a business to book something for the group and reports back in the chat. */
+  callToBook(input: { business: string; booking: string; phone: string; partySize: number; when: string; reservationName?: string; notes?: string }): Promise<string>;
   /** Kitty buys something for the group: cart, checkout card, 👍s, then the order. */
   buyForGroup(input: {
     title: string;
@@ -242,20 +242,22 @@ export async function runTurn(input: TurnInput): Promise<string | null> {
       run: () => actions.leave(),
     }),
     betaZodTool({
-      name: "call_restaurant",
+      name: "call_to_book",
       description:
-        "Phone a restaurant to book a table with an AI voice agent that says it's calling for the group. Only with a phone number someone gave in the chat. The outcome is posted in the chat when the call ends.",
+        "Phone a business (canoe or kayak rental, a tour, a restaurant) to book something for the group with an AI voice agent that says it's calling for the group and asks the total price. Only with a phone number someone gave in the chat. The outcome comes back as an event when the call ends.",
       inputSchema: z.object({
-        restaurant: z.string(),
+        business: z.string().describe("Who to call, e.g. 'Lakeside Canoe Rentals'"),
+        booking: z.string().describe("What to book, e.g. '3 canoes for 2 hours'"),
         phone: z.string().describe("The number someone gave, e.g. +1 512 555 0100"),
         party_size: z.number().int().positive(),
         when: z.string().describe("Day and time as the group said it, e.g. 'tomorrow 7:30pm'"),
         reservation_name: z.string().optional().describe("Whose name it's under; defaults to the sender"),
-        notes: z.string().optional().describe("Anything to mention: outdoor seating, a birthday, flexible on time"),
+        notes: z.string().optional().describe("Anything to mention: life jackets, a beginner group, flexible on time"),
       }),
       run: (a) =>
-        actions.callRestaurant({
-          restaurant: a.restaurant,
+        actions.callToBook({
+          business: a.business,
+          booking: a.booking,
           phone: a.phone,
           partySize: a.party_size,
           when: a.when,

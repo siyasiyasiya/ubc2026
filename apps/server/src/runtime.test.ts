@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { GroupRuntime, nextCharge, resetsIn } from "./runtime.js";
 import { Store } from "./store.js";
 import { SimulatedPurchaseAdapter } from "./simulated-purchase.js";
-import type { RestaurantCallRequest, RestaurantCaller, RestaurantCallResult } from "./restaurant-call.js";
+import type { BookingCallRequest, BookingCaller, BookingCallResult } from "./booking-call.js";
 
 const NEENA = "+1001";
 const SIYA = "+1002";
@@ -15,7 +15,7 @@ const OUTSIDER = "+1999";
 const CHAT = "group";
 
 /** A runtime whose "agent" proposes a $90 dinner paid by Neena, split three ways. */
-function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapter; wallets?: Record<string, string>; invites?: { baseUrl: string; secret: string }; chats?: string[]; participants?: string[]; chatName?: string; receiptItems?: { name: string; amount: ReturnType<typeof usdc> }[]; receiptError?: Error; purchase?: PurchaseAdapter; calls?: RestaurantCaller; now?: () => number; subscriptionEveryMs?: number; autoTopUp?: ConstructorParameters<typeof GroupRuntime>[0]["autoTopUp"]; cards?: ConstructorParameters<typeof GroupRuntime>[0]["cards"]; shortLink?: ConstructorParameters<typeof GroupRuntime>[0]["shortLink"]; testMoney?: { send: (address: string, amount: bigint) => Promise<string>; maxUsd: number; dailyUsd: number } } = {}) {
+function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapter; wallets?: Record<string, string>; invites?: { baseUrl: string; secret: string }; chats?: string[]; participants?: string[]; chatName?: string; receiptItems?: { name: string; amount: ReturnType<typeof usdc> }[]; receiptError?: Error; purchase?: PurchaseAdapter; calls?: BookingCaller; dial?: (phone: string, link: string) => Promise<void>; now?: () => number; subscriptionEveryMs?: number; autoTopUp?: ConstructorParameters<typeof GroupRuntime>[0]["autoTopUp"]; cards?: ConstructorParameters<typeof GroupRuntime>[0]["cards"]; shortLink?: ConstructorParameters<typeof GroupRuntime>[0]["shortLink"]; testMoney?: { send: (address: string, amount: bigint) => Promise<string>; maxUsd: number; dailyUsd: number } } = {}) {
   const posted: { id: string; text: string }[] = [];
   const failing = { posts: 0, dms: 0 };
   const dms: { handle: string; text: string }[] = [];
@@ -63,8 +63,13 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
     if (event.includes("split by item")) return actions.splitByItem({ payer: "Neena", claims: { Siya: [1], Tristan: [2] } });
     if (event.includes("who owes")) return actions.netDebts();
     if (event.includes("what did we spend")) return actions.spendingSummary();
-    if (event.includes("book uchi")) {
-      return actions.callRestaurant({ restaurant: "Uchi", phone: event.includes("no number") ? "ask them" : "(512) 555-0100", partySize: 4, when: "tomorrow 7:30pm" });
+    if (event.includes("book canoes")) {
+      return actions.callToBook({ business: "Lakeside Canoe", booking: "3 canoes", phone: event.includes("no number") ? "ask them" : "(512) 555-0100", partySize: 4, when: "tomorrow 7:30pm" });
+    }
+    if (event.includes("[Kitty's call to Lakeside Canoe: booked")) {
+      const total = Number(/Total price \$([\d.]+)/.exec(event)![1]);
+      await actions.proposeReimbursement({ title: "Canoes", totalUsd: total, payer: "Neena", participants: ["Neena", "Siya", "Tristan"], settle: "tab" });
+      return "📞 canoes booked ✅ on the tab";
     }
     if (event.includes("buy towels")) {
       return actions.buyForGroup({
@@ -115,6 +120,7 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
     ...(opts.chats ? { chats: opts.chats } : {}),
     ...(opts.purchase ? { purchase: opts.purchase } : {}),
     ...(opts.calls ? { calls: opts.calls, callPollMs: 1 } : {}),
+    ...(opts.dial ? { dial: opts.dial } : {}),
     ...(opts.testMoney ? { testMoney: opts.testMoney as never } : {}),
     ...(opts.now ? { now: opts.now } : {}),
     ...(opts.subscriptionEveryMs ? { subscriptionEveryMs: opts.subscriptionEveryMs } : {}),
@@ -840,39 +846,69 @@ describe("GroupRuntime", () => {
     expect(t.dms.at(-1)?.text).toContain("kittyagent.vercel.app");
   });
 
-  it("phones a restaurant and posts the booking when the call ends", async () => {
-    const started: RestaurantCallRequest[] = [];
-    const results: RestaurantCallResult[] = [{ status: "in_progress" }, { status: "done", pickedUp: "answered", booked: true, confirmedTime: "7:45pm" }];
-    const calls: RestaurantCaller = {
+  it("phones a business and posts the booking when the call ends", async () => {
+    const started: BookingCallRequest[] = [];
+    const results: BookingCallResult[] = [{ status: "in_progress" }, { status: "done", pickedUp: "answered", booked: true, confirmedTime: "7:45pm" }];
+    const calls: BookingCaller = {
       start: async (r) => (started.push(r), { callId: "conv_1" }),
       result: async () => results.shift() ?? { status: "done", booked: true },
     };
     const t = setup(200, { calls });
-    await t.say(NEENA, "book uchi for us");
-    expect(started[0]).toMatchObject({ restaurant: "Uchi", phone: "+15125550100", partySize: 4, reservationName: "Neena" });
+    await t.say(NEENA, "book canoes for us");
+    expect(started[0]).toMatchObject({ business: "Lakeside Canoe", booking: "3 canoes", phone: "+15125550100", partySize: 4, reservationName: "Neena" });
     await t.runtime.idle();
-    expect(t.posted.at(-1)?.text).toBe("📞 booked Uchi for 4, 7:45pm, under Neena ✅");
+    expect(t.posted.at(-1)?.text).toBe("📞 booked 3 canoes at Lakeside Canoe for 4, 7:45pm, under Neena ✅");
   });
 
-  it("with no phone line, texts the restaurant a link and still posts the result", async () => {
-    const results: RestaurantCallResult[] = [{ status: "in_progress" }, { status: "done", booked: false, alternative: "8:30" }];
-    const calls: RestaurantCaller = {
+  it("with no phone line, texts the business a link and still posts the result", async () => {
+    const results: BookingCallResult[] = [{ status: "in_progress" }, { status: "done", booked: false, alternative: "8:30" }];
+    const calls: BookingCaller = {
       start: async () => ({ callId: "link:abc:1", link: "https://elevenlabs.io/app/talk-to?agent_id=a&var_call_ref=abc" }),
       result: async () => results.shift() ?? { status: "done" },
     };
     const t = setup(200, { calls });
-    await t.say(NEENA, "book uchi for us");
+    await t.say(NEENA, "book canoes for us");
     const text = t.dms.find((d) => d.handle === "+15125550100")?.text;
     expect(text).toContain("Kitty, an AI assistant");
     expect(text).toContain("https://elevenlabs.io/app/talk-to?agent_id=a&var_call_ref=abc");
     await t.runtime.idle();
-    expect(t.posted.at(-1)?.text).toBe("📞 Uchi can't do tomorrow 7:30pm. they offered 8:30. want it? I can call back");
+    expect(t.posted.at(-1)?.text).toBe("📞 Lakeside Canoe can't do tomorrow 7:30pm. they offered 8:30. want it? I can call back");
+  });
+
+  it("a booking with a price goes back to Kitty, which proposes the split", async () => {
+    const calls: BookingCaller = {
+      start: async () => ({ callId: "conv_2" }),
+      result: async () => ({ status: "done", pickedUp: "answered", booked: true, confirmedTime: "Sat 9am", totalUsd: 240 }),
+    };
+    const t = setup(200, { calls });
+    await t.say(SIYA, "hi");
+    await t.say(TRISTAN, "hi");
+    await t.say(NEENA, "book canoes for us");
+    await t.runtime.idle();
+    expect(t.turnEvents.at(-1)).toContain("Total price $240.00, paid to Lakeside Canoe by Neena");
+    expect(t.posted.some((p) => p.text.includes("📞 canoes booked"))).toBe(true);
+    expect(t.request().onTab).toBe(true);
+    expect(t.request().state.name).toBe("awaiting_approval");
+  });
+
+  it("with a Mac dialer, dials the link call instead of texting it", async () => {
+    const calls: BookingCaller = {
+      start: async () => ({ callId: "link:abc:1", link: "https://kittyagent.vercel.app/call.html?agent_id=a&var_call_ref=abc" }),
+      result: async () => ({ status: "done", booked: true, confirmedTime: "9am" }),
+    };
+    const dialed: [string, string][] = [];
+    const t = setup(200, { calls, dial: async (phone, link) => void dialed.push([phone, link]) });
+    await t.say(NEENA, "book canoes for us");
+    expect(dialed).toEqual([["+15125550100", "https://kittyagent.vercel.app/call.html?agent_id=a&var_call_ref=abc"]]);
+    expect(t.dms.find((d) => d.handle === "+15125550100")).toBeUndefined();
+    await t.runtime.idle();
+    expect(t.posted.at(-1)?.text).toBe("📞 booked 3 canoes at Lakeside Canoe for 4, 9am, under Neena ✅");
   });
 
   it("won't call without a real phone number", async () => {
-    const calls: RestaurantCaller = { start: async () => ({ callId: "x" }), result: async () => ({ status: "done" }) };
+    const calls: BookingCaller = { start: async () => ({ callId: "x" }), result: async () => ({ status: "done" }) };
     const t = setup(200, { calls });
-    await t.say(NEENA, "book uchi, no number");
+    await t.say(NEENA, "book canoes, no number");
     expect(t.posted.at(-1)?.text).toContain("doesn't look like a phone number");
   });
 

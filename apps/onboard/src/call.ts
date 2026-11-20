@@ -7,6 +7,13 @@ import { Conversation } from "@elevenlabs/client";
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
 const params = new URLSearchParams(location.search);
+// Bridge mode (real phone call through the Mac): `mic` and `speaker` name the audio devices to use, by
+// part of their label (e.g. mic=BlackHole 2ch carries the phone call in, speaker=Kitty out sends Kitty's
+// voice into the call). `answer=auto` starts right away, with no ring.
+const micLabel = params.get("mic");
+const speakerLabel = params.get("speaker");
+const autoAnswer = params.get("answer") === "auto";
+const monitorLabel = params.get("monitor");
 const agentId = params.get("agent_id");
 const variables: Record<string, string> = {};
 for (const [key, value] of params) if (key.startsWith("var_")) variables[key.slice(4)] = value;
@@ -79,14 +86,83 @@ function startRing(): { stop(): void; resume(): void } | undefined {
   }
 }
 
+/** The device ids for `mic` / `speaker` labels. Labels are only visible after mic permission. */
+async function pickDevices(): Promise<{ inputDeviceId?: string; outputDeviceId?: string }> {
+  if (!micLabel && !speakerLabel) return {};
+  const probe = await navigator.mediaDevices.getUserMedia({ audio: true });
+  probe.getTracks().forEach((t) => t.stop());
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  const find = (kind: MediaDeviceKind, label: string | null) => {
+    if (!label) return undefined;
+    const d = devices.find((x) => x.kind === kind && x.label.toLowerCase().includes(label.toLowerCase()));
+    if (!d) throw new Error(`no ${kind} named "${label}" (have: ${devices.filter((x) => x.kind === kind).map((x) => x.label).join(", ")})`);
+    return d.deviceId;
+  };
+  const inputDeviceId = find("audioinput", micLabel);
+  const outputDeviceId = find("audiooutput", speakerLabel);
+  return { ...(inputDeviceId ? { inputDeviceId } : {}), ...(outputDeviceId ? { outputDeviceId } : {}) };
+}
+
+/**
+ * Plays the bridge's input (the caller) on another output, e.g. the laptop speakers, so the room hears both
+ * sides. Phone calls on a Mac skip multi-output devices, so the call itself can only go to BlackHole.
+ */
+async function monitor(inputDeviceId: string, outputLabel: string): Promise<void> {
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  const out = devices.find((d) => d.kind === "audiooutput" && d.label.toLowerCase().includes(outputLabel.toLowerCase()));
+  if (!out) return console.warn(`no output named "${outputLabel}" to play the caller on`);
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: inputDeviceId }, echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+  const audio = new Audio();
+  audio.srcObject = stream;
+  await (audio as HTMLAudioElement & { setSinkId(id: string): Promise<void> }).setSinkId(out.deviceId);
+  await audio.play();
+}
+
+/** Resolves when the input device carries speech-level sound for a moment (the callee saying "hello?"). */
+async function heardVoice(deviceId: string): Promise<void> {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: deviceId }, echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+  const ctx = new AudioContext();
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 1024;
+  ctx.createMediaStreamSource(stream).connect(analyser);
+  const samples = new Float32Array(analyser.fftSize);
+  let loudFor = 0;
+  try {
+    await new Promise<void>((resolve) => {
+      const tick = setInterval(() => {
+        analyser.getFloatTimeDomainData(samples);
+        let sum = 0;
+        for (const v of samples) sum += v * v;
+        loudFor = Math.sqrt(sum / samples.length) > 0.02 ? loudFor + 1 : 0;
+        if (loudFor >= 3) { // ~150ms of sound
+          clearInterval(tick);
+          resolve();
+        }
+      }, 50);
+    });
+  } finally {
+    stream.getTracks().forEach((t) => t.stop());
+    void ctx.close();
+  }
+}
+
 async function accept() {
   ring?.stop();
   if (!agentId) return ended("this call link is incomplete");
   setState("connecting");
   status.textContent = "connecting…";
   try {
+    const devices = await pickDevices();
+    if (devices.inputDeviceId && monitorLabel) await monitor(devices.inputDeviceId, monitorLabel);
+    if (autoAnswer && devices.inputDeviceId) {
+      // A real phone call is ringing on the other end: start Kitty only once someone picks up and talks.
+      status.textContent = "ringing…";
+      await heardVoice(devices.inputDeviceId);
+      status.textContent = "connecting…";
+    }
     conversation = await Conversation.startSession({
       agentId,
+      ...devices,
       connectionType: "webrtc",
       dynamicVariables: variables,
       onConnect: () => {
@@ -101,7 +177,7 @@ async function accept() {
     });
   } catch (err) {
     console.error(err);
-    ended(err instanceof DOMException && err.name === "NotAllowedError" ? "allow the microphone to answer" : "couldn't connect");
+    ended(err instanceof DOMException && err.name === "NotAllowedError" ? "allow the microphone to answer" : err instanceof Error && err.message.startsWith("no ") ? err.message : "couldn't connect");
   }
 }
 
@@ -119,6 +195,7 @@ $("mute").addEventListener("click", (e) => {
 });
 
 setState("ringing");
-ring = startRing();
+if (autoAnswer) void accept();
+else ring = startRing();
 // Sound is usually blocked until a tap; the first tap anywhere starts the ring while it's still ringing.
 document.addEventListener("pointerdown", () => { if (document.body.dataset.state === "ringing") ring?.resume(); }, { once: true });

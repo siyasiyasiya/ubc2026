@@ -41,7 +41,7 @@ import { NotAReceiptError } from "@gta/agent";
 import type { runTurn as RunTurn, runDmTurn as RunDmTurn, TreasuryActions, DmActions } from "@gta/agent";
 import { groupIdForChat, inviteLink, inviteTicket, type DebtPaidEvent, type JoinEvent, type LimitSetEvent } from "@gta/wallet";
 import { normalizePreferenceKey, type GroupRecord, type RequestRecord, type Store, type Subscription } from "./store.js";
-import type { RestaurantCaller } from "./restaurant-call.js";
+import type { BookingCallRequest, BookingCaller } from "./booking-call.js";
 import { asPng } from "./svg-to-png.js";
 
 export interface RuntimeDeps {
@@ -53,8 +53,13 @@ export interface RuntimeDeps {
   purchase?: PurchaseAdapter;
   /** Testnet only: send test dollars to an account (the operator's faucet). Off in production. */
   testMoney?: { send: (address: string, amount: Usdc) => Promise<string>; maxUsd: number; dailyUsd: number };
-  /** Kitty phones restaurants (ElevenLabs voice agent). Off when unset. */
-  calls?: RestaurantCaller;
+  /** Kitty phones businesses to book for the group (ElevenLabs voice agent). Off when unset. */
+  calls?: BookingCaller;
+  /**
+   * Real phone calls without a phone line: dials `phone` from this Mac (through the paired iPhone) with the
+   * link-call page bridged into the call's audio. When set, link calls are dialed instead of texted.
+   */
+  dial?: (phone: string, link: string) => Promise<void>;
   /** How often to check on a call in progress. Default 5s. */
   callPollMs?: number;
   runTurn: typeof RunTurn;
@@ -1154,9 +1159,9 @@ export class GroupRuntime {
       settleUp: async () => this.settleUp(record),
       netDebts: async () => this.netSettlement(record),
       spendingSummary: async () => this.spendingSummary(record),
-      callRestaurant: async (input) => {
+      callToBook: async (input) => {
         try {
-          return await this.callRestaurant(record, sender, input);
+          return await this.callToBook(record, sender, input);
         } catch (err) {
           return `Could not place the call: ${(err as Error).message}`;
         }
@@ -1474,19 +1479,20 @@ export class GroupRuntime {
     return request;
   }
 
-  // --- Kitty calls a restaurant (ElevenLabs) -----------------------------------
+  // --- Kitty calls to book (ElevenLabs) -------------------------------------------
 
-  private async callRestaurant(
+  private async callToBook(
     record: GroupRecord,
     sender: Member,
-    input: Parameters<TreasuryActions["callRestaurant"]>[0],
+    input: Parameters<TreasuryActions["callToBook"]>[0],
   ): Promise<string> {
     const calls = this.deps.calls;
     if (!calls) return "Phone calls aren't set up on this bot (needs ElevenLabs keys).";
     const phone = toE164(input.phone);
-    if (!phone) return `"${input.phone}" doesn't look like a phone number. Ask for the restaurant's number.`;
+    if (!phone) return `"${input.phone}" doesn't look like a phone number. Ask for ${input.business}'s number.`;
     const request = {
-      restaurant: input.restaurant,
+      business: input.business,
+      booking: input.booking,
       phone,
       partySize: input.partySize,
       when: input.when,
@@ -1495,22 +1501,31 @@ export class GroupRuntime {
       group: record.group.name,
     };
     const { callId, link } = await calls.start(request);
-    this.log(`calling ${input.restaurant} (${phone}) for ${record.group.chatId}: ${callId}`);
+    this.log(`calling ${input.business} (${phone}) for ${record.group.chatId}: ${callId}`);
+    const follow = () => this.inBackground(() => this.followCall(record, sender, request, callId));
+    if (link && this.deps.dial) {
+      await this.deps.dial(phone, link);
+      follow();
+      return `Calling ${input.business} now (a real phone call) to book ${input.booking}. The result comes back as an event when the call ends.`;
+    }
     if (link) {
-      // No phone line: the restaurant gets a text with a link that starts the same voice call in the browser.
+      // No phone line: the business gets a text with a link that starts the same voice call in the browser.
       await this.deps.chat.sendDirectMessage(
         phone,
-        `📞 Hi! This is Kitty, an AI assistant for a group called ${request.group}. I'd like to book a table at ${request.restaurant} for ${request.partySize}, ${request.when}. Tap to answer my call: ${link}`,
+        `📞 Hi! This is Kitty, an AI assistant for a group called ${request.group}. I'd like to book ${request.booking} for ${request.partySize}, ${request.when}. Tap to answer my call: ${link}`,
       );
-      this.inBackground(() => this.followCall(record, request, callId));
-      return `No phone line on this bot, so Kitty texted ${input.restaurant} at ${phone} a link that opens Kitty's call (answered in the browser). Tell the group Kitty is reaching out to ${input.restaurant} now; the result will be posted when the call ends.`;
+      follow();
+      return `No phone line on this bot, so Kitty texted ${input.business} at ${phone} a link that opens Kitty's call (answered in the browser). Tell the group Kitty is reaching out to ${input.business} now; the result comes back when the call ends.`;
     }
-    this.inBackground(() => this.followCall(record, request, callId));
-    return `Calling ${input.restaurant} now for ${input.partySize} ${input.when}. The result will be posted when the call ends.`;
+    follow();
+    return `Calling ${input.business} now to book ${input.booking}. The result comes back as an event when the call ends.`;
   }
 
-  /** Waits for the call to finish (up to 15 minutes), then tells the group how it went. */
-  private async followCall(record: GroupRecord, request: { restaurant: string; partySize: number; when: string; reservationName: string }, callId: string): Promise<void> {
+  /**
+   * Waits for the call to finish (up to 15 minutes). A booking with a price goes back to the agent as an
+   * event, so Kitty posts it and proposes the split in the same breath; anything else is posted as is.
+   */
+  private async followCall(record: GroupRecord, requester: Member, request: BookingCallRequest, callId: string): Promise<void> {
     const calls = this.deps.calls!;
     const every = this.deps.callPollMs ?? 5_000;
     const deadline = this.now() + 15 * 60_000;
@@ -1523,7 +1538,27 @@ export class GroupRuntime {
         this.log(`call ${callId}: ${(err as Error).message}`);
       }
     }
-    const who = `${request.restaurant}`;
+    const who = request.business;
+    if (result.status === "done" && result.booked && result.totalUsd !== undefined) {
+      const event =
+        `[Kitty's call to ${who}: booked ${request.booking} for ${request.partySize}, ${result.confirmedTime ?? request.when}, ` +
+        `under ${request.reservationName}. Total price $${result.totalUsd.toFixed(2)}, paid to ${who} by ${request.reservationName}. ` +
+        `Asked for by ${requester.displayName}.]`;
+      await this.run(async () => {
+        const history = [...(this.history.get(record.group.chatId) ?? [])];
+        this.remember(record.group.chatId, event);
+        const reply = await this.deps.runTurn({
+          groupSnapshot: await this.snapshot(record),
+          history,
+          senderName: requester.displayName,
+          event,
+          actions: this.actionsFor(record, requester),
+        });
+        if (reply) await this.sayReply(record.group.chatId, reply);
+        this.deps.store.save();
+      });
+      return;
+    }
     let text: string;
     if (result.status === "in_progress") text = `📞 still no word back from the ${who} call, I'll stop waiting. might be worth calling them yourselves`;
     else if (result.pickedUp && result.pickedUp !== "answered") {
@@ -1531,7 +1566,7 @@ export class GroupRuntime {
       text = `📞 called ${who} but ${why}. want me to try again later?`;
     } else if (result.status === "failed") text = `📞 the call to ${who} didn't go through (${result.error ?? "unknown error"})`;
     else if (result.booked) {
-      text = `📞 booked ${who} for ${request.partySize}, ${result.confirmedTime ?? request.when}, under ${request.reservationName} ✅`;
+      text = `📞 booked ${request.booking} at ${who} for ${request.partySize}, ${result.confirmedTime ?? request.when}, under ${request.reservationName} ✅`;
     } else if (result.alternative) {
       text = `📞 ${who} can't do ${request.when}. they offered ${result.alternative}. want it? I can call back`;
     } else {
