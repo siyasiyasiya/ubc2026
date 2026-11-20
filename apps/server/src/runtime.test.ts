@@ -803,6 +803,16 @@ describe("GroupRuntime", () => {
     expect(link.searchParams.getAll("k")).toEqual([`${groupIdForChat(CHAT)}:${t.store.get(CHAT)!.group.name}`]);
   });
 
+  it("names an unnamed group chat after the other people in it on the web page", async () => {
+    const invites = { baseUrl: "https://kittyagent.vercel.app", secret: "s3cret" };
+    const t = setup(200, { invites, participants: [NEENA, SIYA, TRISTAN], wallets: { [SIYA]: "0x00000000000000000000000000000000000000bb" } });
+    await t.say(SIYA, "hi");
+    await t.dm(SIYA, "show me all my kitties");
+    const link = new URL(t.dms.find((d) => d.text.startsWith("all your kitties"))!.text.split(" ").at(-1)!);
+    // Siya's own link leaves Siya out, like Messages does.
+    expect(link.searchParams.getAll("k")).toEqual([`${groupIdForChat(CHAT)}:Neena & Tristan`]);
+  });
+
   it("says when a limit resets in days or hours, and that one-time limits never refill", () => {
     const now = Date.UTC(2026, 10, 19);
     const weekly = { amount: usdc(20), period: "weekly" as const };

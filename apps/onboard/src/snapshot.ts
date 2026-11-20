@@ -44,7 +44,8 @@ export function rememberChats(chats: ChatRef[]): ChatRef[] {
     // Storage blocked or garbled: the link's own chats still work.
   }
   // The link is newer than what's saved: a renamed chat shows its new name.
-  for (const c of chats) if (c.name !== "a group chat" || !known.has(c.group.toLowerCase())) known.set(c.group.toLowerCase(), c);
+  // A placeholder ("Group", from a chat with no name yet) never replaces a real name.
+  for (const c of chats) if (!/^(|group|a group chat|this chat)$/i.test(c.name.trim()) || !known.has(c.group.toLowerCase())) known.set(c.group.toLowerCase(), c);
   const all = [...known.values()];
   try {
     localStorage.setItem(NAMES_KEY, JSON.stringify(all));

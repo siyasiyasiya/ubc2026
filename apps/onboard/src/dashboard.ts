@@ -105,6 +105,11 @@ export function describePurchase(p: Purchase, account: string): { title: string;
   return { title: "Purchase", detail, amount: "", tone: "" };
 }
 
+/** Names that only mean "a chat we couldn't name" (older links and pages used these). */
+export function isPlaceholder(name: string): boolean {
+  return /^(|group|a group chat|this chat)$/i.test(name.trim());
+}
+
 const $ = (id: string) => document.getElementById(id) as HTMLElement;
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string): HTMLElementTagNameMap[K] {
@@ -183,7 +188,7 @@ export class Dashboard {
       this.history = history.value;
       // Kitties this wallet joined that no link named yet.
       const known = new Set(this.chats.map((c) => c.group.toLowerCase()));
-      const extra = history.value.joined.filter((g) => !known.has(g.toLowerCase())).map((group) => ({ group, name: "A group chat" }));
+      const extra = history.value.joined.filter((g) => !known.has(g.toLowerCase())).map((group) => ({ group, name: "" }));
       if (extra.length) {
         this.chats = [...this.chats, ...extra];
         this.statuses = [...this.statuses, ...(await readStatuses(client, treasury, account, extra).catch(() => []))];
@@ -219,7 +224,11 @@ export class Dashboard {
 
   private name = (group?: Hex): string => {
     if (!group) return "";
-    return this.chats.find((c) => c.group.toLowerCase() === group.toLowerCase())?.name ?? "A group chat";
+    const known = this.chats.find((c) => c.group.toLowerCase() === group.toLowerCase())?.name;
+    if (known && !isPlaceholder(known)) return known;
+    // No link has named it on this phone: say who's in it, as far as the chain knows.
+    const members = this.history?.kitties.get(group.toLowerCase())?.members ?? 0;
+    return members > 1 ? `Group chat · ${members} people` : "Group chat";
   };
 
   private render(): void {

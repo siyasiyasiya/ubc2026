@@ -270,7 +270,7 @@ export class GroupRuntime {
       baseUrl: invites.baseUrl,
       secret: invites.secret,
       chatId,
-      chatName: record.group.name,
+      chatName: this.chatLabel(record, handle),
       handle,
       displayName: member.displayName,
       nonce,
@@ -346,10 +346,28 @@ export class GroupRuntime {
     if (!base) throw new Error("The Face ID page isn't configured (set ONBOARD_URL).");
     const url = new URL(base);
     url.searchParams.set("g", groupIdForChat(record.group.chatId));
-    url.searchParams.set("c", record.group.name);
+    url.searchParams.set("c", this.chatLabel(record, member.id));
     url.searchParams.set("n", member.displayName);
     for (const [k, v] of Object.entries(extra)) url.searchParams.set(k, v);
     return this.withChats(url, member.id);
+  }
+
+  /**
+   * What this person calls the chat on the web page: its iMessage name, or for an unnamed group
+   * text (most of them) the other people in it, the way Messages does ("Joey & Siya").
+   */
+  private chatLabel(record: GroupRecord, viewer: string): string {
+    const name = record.group.name.trim();
+    if (name && name !== "Group") return name;
+    // "…1234" is a member Kitty hasn't learned a name for yet: not worth showing.
+    const names = record.group.members
+      .filter((m) => m.id !== viewer && !m.displayName.startsWith("…"))
+      .map((m) => m.displayName.trim().split(/\s+/)[0]!)
+      .filter(Boolean);
+    if (names.length === 0) return name || "Group";
+    if (names.length === 1) return names[0]!;
+    if (names.length <= 3) return `${names.slice(0, -1).join(", ")} & ${names.at(-1)}`;
+    return `${names.slice(0, 3).join(", ")} +${names.length - 3}`;
   }
 
   /** Adds `k=<group id>:<chat name>` for every chat this person has joined, for the page's snapshot. */
@@ -357,7 +375,7 @@ export class GroupRuntime {
     const current = url.searchParams.get("g")?.toLowerCase();
     for (const { record, member } of this.membershipsOf(handle)) {
       const group = groupIdForChat(record.group.chatId);
-      if (member.wallet && group.toLowerCase() !== current) url.searchParams.append("k", `${group}:${record.group.name}`);
+      if (member.wallet && group.toLowerCase() !== current) url.searchParams.append("k", `${group}:${this.chatLabel(record, handle)}`);
     }
     return url.toString();
   }

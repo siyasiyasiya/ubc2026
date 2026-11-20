@@ -1,7 +1,7 @@
 import { encodeAbiParameters, encodeEventTopics, type Hex } from "viem";
 import { describe as suite, expect, it } from "vitest";
 import { treasuryEvents } from "../src/abi";
-import { describe, describePurchase, money, plain } from "../src/dashboard";
+import { describe, describePurchase, isPlaceholder, money, plain } from "../src/dashboard";
 import { allowedQuery } from "../api/explorer";
 import { buildHistory, loadHistory, type ExplorerLog, type ExplorerTransfer } from "../src/history";
 
@@ -216,6 +216,11 @@ suite("formatting", () => {
     expect(money(33_549_667n)).toBe("$33.55");
     expect(plain($(80))).toBe("80");
     expect(plain(4_005_000n)).toBe("4.01");
+  });
+
+  it("treats leftover placeholder chat names as unnamed", () => {
+    for (const name of ["Group", "a group chat", " ", "this chat"]) expect(isPlaceholder(name)).toBe(true);
+    for (const name of ["Cabo Trip", "Joey & Siya", "Group chat with Joey"]) expect(isPlaceholder(name)).toBe(false);
   });
 
   it("describes activity in plain words", () => {
