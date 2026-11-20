@@ -64,20 +64,18 @@ describe("/api/test-money", () => {
     expect(chain.sent).toEqual([{ to: ALICE, value: 20n * USD }]);
   });
 
-  it("refuses accounts holding $10 or more", async () => {
-    chain.balances.set(ALICE, 10n * USD);
+  it("tops up again on every tap, whatever the balance", async () => {
+    chain.balances.set(ALICE, 100n * USD);
+    expect((await post({ address: ALICE })).status).toBe(200);
     const res = await post({ address: ALICE });
-    expect(res.status).toBe(409);
-    expect((await res.json()).error).toContain("$10.00");
-    expect(chain.sent).toEqual([]);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ added: 20, balance: 140, tx: "0xabc" });
+    expect(chain.sent).toHaveLength(2);
   });
 
-  it("lets a second tap through only while still under $10", async () => {
+  it("uses TESTNET_TOPUP_USD when set", async () => {
     vi.stubEnv("TESTNET_TOPUP_USD", "5");
-    expect((await post({ address: ALICE })).status).toBe(200);
-    expect((await post({ address: ALICE })).status).toBe(200);
-    expect((await post({ address: ALICE })).status).toBe(409);
-    expect(chain.sent).toHaveLength(2);
+    expect(await (await post({ address: ALICE })).json()).toMatchObject({ added: 5, balance: 5 });
   });
 
   it("rejects a bad address or body", async () => {

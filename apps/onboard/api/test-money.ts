@@ -6,8 +6,8 @@
  * endpoint can never touch the bot's funds or collide with its nonces. Refill the faucet with
  * `pnpm --filter @gta/server fund <faucet address> 100`.
  *
- * No database, so the cap is stateless: it only tops up accounts holding under $10, which keeps
- * one account from draining the faucet. Off unless the key is set.
+ * No cap per account: anyone with the page can keep tapping, so the faucet only ever holds what
+ * the team is fine losing (it's testnet money). Off unless the key is set.
  */
 
 import { createPublicClient, createWalletClient, getAddress, http, isAddress, parseUnits, type Hex } from "viem";
@@ -19,7 +19,6 @@ function amountUsd(): number {
   const n = Number(process.env.TESTNET_TOPUP_USD);
   return n > 0 ? n : 20;
 }
-const ONLY_UNDER_USD = 10;
 // Arc's native currency is USDC with 18 decimals.
 const toWei = (usd: number) => parseUnits(usd.toFixed(2), 18);
 const toUsd = (wei: bigint) => Number(wei / 10n ** 16n) / 100;
@@ -49,13 +48,6 @@ export async function POST(request: Request): Promise<Response> {
   const walletClient = createWalletClient({ chain: arcTestnet, transport, account: privateKeyToAccount(key) });
 
   try {
-    const before = await publicClient.getBalance({ address: to });
-    if (before >= toWei(ONLY_UNDER_USD)) {
-      return Response.json(
-        { error: `You already have $${toUsd(before).toFixed(2)}. Test money is for balances under $${ONLY_UNDER_USD}.` },
-        { status: 409 },
-      );
-    }
     const usd = amountUsd();
     const tx = await walletClient.sendTransaction({ to, value: toWei(usd) });
     await publicClient.waitForTransactionReceipt({ hash: tx });

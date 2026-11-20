@@ -180,7 +180,7 @@ pnpm --filter @gta/server crossmint card               # link to save the card K
 pnpm --filter @gta/server crossmint buy "<item or URL>"  # real test order, asks "yes" before charging
 ```
 
-**Testing on testnet:** members text Kitty privately "add $20" and get test dollars straight into their Kitty account (from the bot's wallet, up to $20 a request and $50 a day; top the bot up at faucet.circle.com). The add-money page has the same thing as a button, **Add $20 test money**: it sends test USDC on Arc from a separate faucet wallet (`apps/onboard/api/test-money.ts`), only to accounts holding under $10. Real money comes in through Apple Pay (Arc Onramp) instead.
+**Testing on testnet:** members text Kitty privately "add $20" and get test dollars straight into their Kitty account (from the bot's wallet, up to $20 a request and $50 a day; top the bot up at faucet.circle.com). The add-money page has the same thing as a button, **Add $20 test money**: it sends test USDC on Arc from a separate faucet wallet (`apps/onboard/api/test-money.ts`). Real money comes in through Apple Pay (Arc Onramp) instead.
 
 The bot runs on a Mac signed into Messages with **its own Apple ID**, and the terminal needs Full Disk Access (it reads `~/Library/Messages/chat.db`). Add that Apple ID to a group chat and it serves it; with `ALLOWED_CHAT_IDS` empty it serves every group it's in, so never leave it empty on a personal Apple ID. Only one bot can run per Mac (a lock file stops a second one).
 

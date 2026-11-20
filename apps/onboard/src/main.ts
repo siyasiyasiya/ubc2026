@@ -530,13 +530,13 @@ async function offerTestMoney(address: Hex, balanceText: HTMLElement, add: HTMLA
       if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
       balanceText.textContent = `Added $${body.added} of test money. Balance: $${body.balance?.toFixed(2)}`;
       balanceText.dataset.kind = "done";
-      test.hidden = true;
     } catch (err) {
       balanceText.textContent = (err as Error).message;
       delete balanceText.dataset.kind;
-      test.textContent = "Add $20 test money";
-      test.removeAttribute("aria-disabled");
     }
+    // Tap again for more.
+    test.textContent = "Add $20 test money";
+    test.removeAttribute("aria-disabled");
   });
 }
 
