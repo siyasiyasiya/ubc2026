@@ -174,6 +174,8 @@ export class Dashboard {
   private statuses: ChatStatus[] = [];
   private chats: ChatRef[];
   private failed = false;
+  /** True once a load pass has finished, so an empty result stops showing "Loading…" and says why. */
+  private loaded = false;
 
   constructor(private readonly deps: DashboardDeps) {
     this.chats = deps.chats;
@@ -206,6 +208,7 @@ export class Dashboard {
   private async load(): Promise<void> {
     const { client, treasury, account } = this.deps;
     this.failed = false;
+    this.loaded = false;
     $("dash-error").hidden = true;
     this.render();
     // Limits come from the contract (always current); history comes from the explorer, which can lag or fail.
@@ -233,6 +236,7 @@ export class Dashboard {
       $("dash-error").firstChild!.textContent = this.history ? "Showing your last saved history. " : "Couldn't load your history. ";
       $("dash-error").hidden = false;
     }
+    this.loaded = true;
     this.render();
   }
 
@@ -302,10 +306,11 @@ export class Dashboard {
   private renderKitties(): void {
     const list = $("dash-kitties");
     if (this.statuses.length === 0) {
-      if (this.chats.length === 0 && (this.history || this.failed)) {
+      if (!this.loaded) return empty(list, "Loading your kitties…");
+      if (this.chats.length === 0) {
         return empty(list, "You're not in any kitties yet. Ask Kitty in a group chat to start one.");
       }
-      return empty(list, "Loading your kitties…");
+      return empty(list, "Couldn't load your kitties just now. Tap retry above.");
     }
     // Active kitties first, the ones you left after.
     const sorted = [...this.statuses].sort((a, b) => Number(b.active) - Number(a.active));

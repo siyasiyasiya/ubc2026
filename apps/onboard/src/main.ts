@@ -366,8 +366,9 @@ function setupStatus(): void {
       show("");
       $("lede").hidden = true;
       void showFunding(account.address, false);
-      // `client` is typed for the Arc chain; the dashboard only needs reads, so the generic chain type is dropped.
-      await new Dashboard({ client: client as unknown as PublicClient, treasury, account: account.address, chats, params, subscriptions }).start();
+      // Dashboard only reads chain state: use the plain Arc RPC (reliable for eth_call), not the
+      // Circle modular transport, which is for userOps and can stall contract reads (stuck "Loading").
+      await new Dashboard({ client: arc as unknown as PublicClient, treasury, account: account.address, chats, params, subscriptions }).start();
     } catch (err) {
       console.error(err);
       show("Couldn't sign in. Tap to try again.", "error");
