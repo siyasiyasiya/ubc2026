@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🐱 kitty
+# 😸 kitty
 
 **your group chat's treasurer. split the bill, buy the thing, book the call, settle up onchain. all from a text.**
 
