@@ -18,6 +18,8 @@ import {
   type DebtEdge,
   type LimitStatus,
   type Member,
+  type PledgeOutcome,
+  type PoolParams,
   type PullOutcome,
   type PullParams,
   type Usdc,
@@ -53,6 +55,11 @@ export function groupIdForChat(chatId: string): Hex {
 /** The onchain split id for one pull. */
 export function pullSpendId(chatId: string, idempotencyKey: string): Hex {
   return keccak256(toBytes(`pull:${chatId}:${idempotencyKey}`));
+}
+
+/** The onchain id for a group buy. */
+export function poolIdFor(chatId: string, poolId: string): Hex {
+  return keccak256(toBytes(`pool:${chatId}:${poolId}`));
 }
 
 /** The public Arc RPC rejects `eth_getLogs` ranges much larger than this. */
@@ -178,6 +185,49 @@ export class ArcWalletAdapter implements WalletAdapter {
     return true;
   }
 
+  async openPool(params: PoolParams): Promise<void> {
+    const payee = walletOf(params.payee);
+    if (!payee) throw new Error(`${params.payee.displayName} hasn't set up their Kitty account yet`);
+    const id = poolIdFor(this.opts.chatId, params.poolId);
+    const [status] = await this.read("getPool", [id]);
+    if (status !== SpendStatus.None) return; // a retry after it already opened
+    await this.write("openPool", [id, this.group, payee, params.each, params.needed, BigInt(Math.floor(params.deadline / 1000))]);
+  }
+
+  /** Simulated first, so a pledge that would revert (over limit, closed, no money) says why without spending gas. */
+  async pledge(poolId: string, member: Member): Promise<PledgeOutcome> {
+    const wallet = walletOf(member);
+    if (!wallet) return { status: "failed", reason: "not set up in Kitty yet" };
+    const id = poolIdFor(this.opts.chatId, poolId);
+    const { walletClient, publicClient, treasury } = this.opts;
+    try {
+      await publicClient.simulateContract({
+        address: treasury,
+        abi: groupTreasuryAbi,
+        functionName: "pledgeFor",
+        args: [id, wallet],
+        account: walletClient.account,
+      } as never);
+    } catch (err) {
+      return { status: "failed", reason: pledgeReason(err) };
+    }
+    const receipt = await this.write("pledgeFor", [id, wallet]);
+    const events = parseEventLogs({ abi: groupTreasuryAbi, logs: receipt.logs, eventName: ["Pledged", "PoolFilled"] });
+    const pledged = events.find((e) => e.eventName === "Pledged");
+    return {
+      status: "pledged",
+      count: pledged?.eventName === "Pledged" ? Number(pledged.args.count) : 0,
+      filled: events.some((e) => e.eventName === "PoolFilled"),
+      txRef: receipt.transactionHash,
+    };
+  }
+
+  async refundPool(poolId: string): Promise<void> {
+    const id = poolIdFor(this.opts.chatId, poolId);
+    const [status] = await this.read("getPool", [id]);
+    if (status === SpendStatus.Proposed) await this.write("refundPool", [id]);
+  }
+
   async pull(params: PullParams): Promise<PullOutcome> {
     const id = pullSpendId(this.opts.chatId, params.idempotencyKey);
     const done = this.settled.get(id);
@@ -295,8 +345,24 @@ function outcomeFromLogs(id: Hex, logs: Parameters<typeof parseEventLogs>[0]["lo
   const events = parseEventLogs({ abi: groupTreasuryAbi, logs, eventName: ["SharePulled", "PullFailed"] });
   const mine = events.find((e) => e.args.id === id);
   if (!mine) return undefined;
-  if (mine.eventName === "SharePulled") return { status: "pulled", txRef: mine.transactionHash ?? undefined };
+  if (mine.eventName === "SharePulled") {
+    const autoPaid = parseEventLogs({ abi: groupTreasuryAbi, logs, eventName: "DebtAutoPaid" })
+      .filter((e) => e.args.id === id)
+      .map((e) => ({ creditor: getAddress(e.args.creditor), amount: micros(e.args.amount) }));
+    return { status: "pulled", txRef: mine.transactionHash ?? undefined, ...(autoPaid.length ? { autoPaid } : {}) };
+  }
   return { status: "failed", reason: mine.args.reason, txRef: mine.transactionHash ?? undefined };
+}
+
+/** A pledge revert in chat words. */
+function pledgeReason(err: unknown): string {
+  const text = shortError(err) + " " + String((err as { cause?: { data?: { errorName?: string } } })?.cause?.data?.errorName ?? "");
+  if (/OverLimit/.test(text)) return "over their limit here";
+  if (/AlreadyPledged/.test(text)) return "already in";
+  if (/NotOpen|Expired/.test(text)) return "this buy is closed";
+  if (/NotMember/.test(text)) return "not set up in Kitty yet";
+  if (/TransferFailed/.test(text)) return "not enough money in their Kitty account";
+  return `Arc error: ${shortError(err)}`;
 }
 
 function shortError(err: unknown): string {

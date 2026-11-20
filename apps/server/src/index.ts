@@ -105,6 +105,7 @@ function startSubscriptions(): void {
     void runtime.run(async () => {
       await runtime.topUpBalances();
       await runtime.chargeSubscriptions();
+      await runtime.expireGroupBuys();
     });
   tick();
   setInterval(tick, checkMs).unref?.();

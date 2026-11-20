@@ -60,6 +60,7 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
     if (event.includes("always get")) return actions.setPreference({ item: "dishwasher soap", choice: "Cascade Platinum pods", scope: "group" });
     if (event.includes("i always want")) return actions.setPreference({ item: "coffee", choice: "fragrance-free dark roast", scope: "personal" });
     if (event.includes("join me")) return actions.sendJoinLink({});
+    if (event.includes("group buy")) return actions.startGroupBuy({ title: "Concert tickets", eachUsd: 40, needed: 2, payer: "Neena", hours: 1 });
     if (event.includes("split by item")) return actions.splitByItem({ payer: "Neena", claims: { Siya: [1], Tristan: [2] } });
     if (event.includes("who owes")) return actions.netDebts();
     if (event.includes("what did we spend")) return actions.spendingSummary();
@@ -641,6 +642,63 @@ describe("GroupRuntime", () => {
     down = true;
     await t.say(TRISTAN, "join me");
     expect(new URL(t.dms.at(-1)!.text.split(" ").at(-1)!).searchParams.get("t")).toBe(inviteTicket(invites.secret, CHAT, TRISTAN));
+  });
+
+  it("says when part of a share went straight to someone the payer owed (auto pay-back)", async () => {
+    const inner = new InMemoryWalletAdapter();
+    const wallet: WalletAdapter = {
+      id: "arc-like",
+      getLimitStatus: (m) => inner.getLimitStatus(m),
+      canPull: (m, a) => inner.canPull(m, a),
+      pull: async (p) => ({ ...(await inner.pull(p)), ...(p.from.id === SIYA ? { autoPaid: [{ creditor: "0x00000000000000000000000000000000000000cc", amount: usdc(20) }] } : {}) }),
+    };
+    const t = setup(200, {
+      wallet: () => wallet,
+      wallets: { [NEENA]: "0x00000000000000000000000000000000000000aa", [TRISTAN]: "0x00000000000000000000000000000000000000cc" },
+    });
+    const req = await t.proposeDinner();
+    await t.react(SIYA, req.previewMessageId!);
+    await t.react(TRISTAN, req.previewMessageId!);
+    const settled = t.posted.find((p) => p.text.includes("Settled #1"))!.text;
+    expect(settled).toContain("Siya → Neena $30.00 ✓ ♻️ $20.00 of it went straight to Tristan, paying back what Neena owed");
+    expect(settled).toMatch(/^Tristan → Neena \$30\.00 ✓$/m);
+  });
+
+  describe("all-or-nothing group buys", () => {
+    const wallets = {
+      [NEENA]: "0x00000000000000000000000000000000000000aa",
+      [SIYA]: "0x00000000000000000000000000000000000000bb",
+      [TRISTAN]: "0x00000000000000000000000000000000000000cc",
+    };
+
+    it("posts a card, takes 👍s as pledges, and pays out the moment it fills", async () => {
+      const t = setup(200, { wallets });
+      for (const who of [SIYA, TRISTAN]) await t.say(who, "hi");
+      await t.say(NEENA, "group buy concert tickets");
+      const card = t.posted.find((p) => p.text.startsWith("🎟️ Concert tickets"))!;
+      expect(card.text).toContain("$40.00 each, happens if 2 of us are in");
+
+      await t.react(SIYA, card.id);
+      expect(t.posted.at(-1)?.text).toBe("Siya's in for Concert tickets (1/2), 1 more to go");
+      await t.react(SIYA, card.id); // a second 👍 changes nothing
+      await t.react(TRISTAN, card.id);
+      expect(t.posted.at(-1)?.text).toContain("🎉 Concert tickets is on! 2/2 in, so the $80.00 pot just went to Neena");
+      expect(t.store.get(CHAT)!.groupBuys![0]!.status).toBe("filled");
+    });
+
+    it("refunds everyone when the deadline passes without enough people", async () => {
+      let now = Date.UTC(2026, 10, 20, 12);
+      const t = setup(200, { wallets, now: () => now });
+      for (const who of [SIYA, TRISTAN]) await t.say(who, "hi");
+      await t.say(NEENA, "group buy concert tickets");
+      const card = t.posted.find((p) => p.text.startsWith("🎟️ Concert tickets"))!;
+      await t.react(SIYA, card.id);
+      now += 2 * 3_600_000;
+      await t.runtime.expireGroupBuys();
+      expect(t.posted.at(-1)?.text).toBe("Concert tickets didn't get to 2 (1 in), so everyone got their $40.00 back");
+      await t.react(TRISTAN, card.id);
+      expect(t.posted.at(-1)?.text).toContain("everyone got their $40.00 back");
+    });
   });
 
   it("lowers a limit onchain right away but sends a Face ID link to raise it", async () => {

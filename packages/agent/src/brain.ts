@@ -129,6 +129,8 @@ export interface TreasuryActions {
   cancelSubscription(input: { title: string }): Promise<string>;
   /** Text a member (the sender by default) a private link to save their own card, used when Kitty buys something they're paying for. */
   sendCardLink(input: { name?: string }): Promise<string>;
+  /** All-or-nothing group buy: `needed` people put in `eachUsd` by the deadline, or everyone gets it back. */
+  startGroupBuy(input: { title: string; eachUsd: number; needed: number; payer: string; hours: number }): Promise<string>;
 }
 
 export interface TurnInput {
@@ -234,6 +236,19 @@ export async function runTurn(input: TurnInput): Promise<string | null> {
         "Settle up outstanding debts the simplest way: 'who owes what', 'settle our debts', 'net us out', 'who owes who'. Works out the fewest pay-backs and collapses the debts down to that onchain when the contract supports it. Post what it returns as-is. When the netting is committed onchain it privately texts each person who owes a fresh pay-back link and its reply says so; only mention a link if the reply does.",
       inputSchema: z.object({}),
       run: () => actions.netDebts(),
+    }),
+    betaZodTool({
+      name: "start_group_buy",
+      description:
+        "An all-or-nothing group buy, only when it needs a minimum number of people: 'concert tickets $80 each if 5 of us go', 'cabin only works if 6 people are in'. Posts a card; each 👍 puts that person's share in, held onchain. The moment the last needed person is in, the whole pot goes to the payer to buy it. If not enough people are in by the deadline, everyone gets their money back automatically. For a normal split of something already decided, use propose_reimbursement or buy_for_group instead.",
+      inputSchema: z.object({
+        title: z.string().describe("Short label, e.g. 'Concert tickets'"),
+        each_usd: z.number().positive().describe("What each person puts in"),
+        needed: z.number().int().min(2).describe("How many people it takes"),
+        payer: z.string().describe("Who buys it and gets the pot; defaults to the sender"),
+        hours: z.number().positive().max(720).optional().describe("How long people have to get in. Default 24."),
+      }),
+      run: (a) => actions.startGroupBuy({ title: a.title, eachUsd: a.each_usd, needed: a.needed, payer: a.payer, hours: a.hours ?? 24 }),
     }),
     betaZodTool({
       name: "leave_kitty",

@@ -18,6 +18,13 @@ contract MockUSDC {
         return true;
     }
 
+    function transfer(address to, uint256 amount) external returns (bool) {
+        require(balanceOf[msg.sender] >= amount, "balance");
+        balanceOf[msg.sender] -= amount;
+        balanceOf[to] += amount;
+        return true;
+    }
+
     function transferFrom(address from, address to, uint256 amount) external returns (bool) {
         require(balanceOf[from] >= amount, "balance");
         require(allowance[from][msg.sender] >= amount, "allowance");
@@ -705,5 +712,196 @@ contract GroupTreasuryTest is Test {
         treasury.settle(ID);
         assertLe(usdc.balanceOf(operator), 50 * USD);
         assertGe(usdc.balanceOf(siya), 950 * USD);
+    }
+
+    // --- auto pay-back ---
+
+    /// Makes `debtor` owe `creditor` `amount` through a split that goes over the debtor's limit.
+    function _owe(address debtor, address creditor, uint256 amount, bytes32 id) internal {
+        vm.prank(operator);
+        treasury.lowerLimit(G, debtor, 0);
+        _split(id, creditor, debtor, amount);
+        assertEq(treasury.debts(debtor, creditor), amount);
+        vm.prank(debtor);
+        treasury.setLimit(G, 50 * USD, GroupTreasury.Period.Weekly);
+    }
+
+    /// A one-person split: `from` owes `payee` `amount`, approved and settled.
+    function _split(bytes32 id, address payee, address from, uint256 amount) internal {
+        _proposeOne(id, payee, from, amount);
+        treasury.settle(id);
+    }
+
+    function _proposeOne(bytes32 id, address payee, address from, uint256 amount) internal {
+        address[] memory who = new address[](1);
+        who[0] = from;
+        uint256[] memory shares = new uint256[](1);
+        shares[0] = amount;
+        vm.startPrank(operator);
+        treasury.propose(id, G, payee, who, shares, uint64(block.timestamp + 1 days));
+        treasury.approveFor(id, from);
+        vm.stopPrank();
+    }
+
+    function test_autoPayBack_shareToADebtorPaysTheirCreditorFirst() public {
+        _owe(siya, neena, 20 * USD, keccak256("old"));
+        uint256 neenaBefore = usdc.balanceOf(neena);
+        uint256 siyaBefore = usdc.balanceOf(siya);
+
+        // Tristan owes Siya 30: 20 goes to Neena (Siya's debt), 10 to Siya.
+        _proposeOne(keccak256("pizza"), siya, tristan, 30 * USD);
+        vm.expectEmit(address(treasury));
+        emit GroupTreasury.DebtAutoPaid(keccak256("pizza"), siya, neena, 20 * USD);
+        treasury.settle(keccak256("pizza"));
+
+        assertEq(treasury.debts(siya, neena), 0);
+        assertEq(usdc.balanceOf(neena) - neenaBefore, 20 * USD);
+        assertEq(usdc.balanceOf(siya) - siyaBefore, 10 * USD);
+        assertEq(usdc.balanceOf(address(treasury)), 0);
+        assertEq(treasury.remaining(G, tristan), 20 * USD);
+    }
+
+    function test_autoPayBack_partialWhenShareIsSmallerThanDebt() public {
+        _owe(siya, neena, 40 * USD, keccak256("old"));
+        uint256 siyaBefore = usdc.balanceOf(siya);
+        _split(keccak256("pizza"), siya, tristan, 15 * USD);
+        assertEq(treasury.debts(siya, neena), 25 * USD);
+        assertEq(usdc.balanceOf(siya), siyaBefore);
+    }
+
+    function test_autoPayBack_skipsTheSharesOwnSender() public {
+        // Siya owes Tristan; Tristan paying Siya is not used to pay Tristan back (netting does that).
+        _owe(siya, tristan, 20 * USD, keccak256("old"));
+        uint256 siyaBefore = usdc.balanceOf(siya);
+        _split(keccak256("pizza"), siya, tristan, 30 * USD);
+        assertEq(treasury.debts(siya, tristan), 20 * USD);
+        assertEq(usdc.balanceOf(siya) - siyaBefore, 30 * USD);
+    }
+
+    function test_autoPayBack_failedPullMovesNothing() public {
+        _owe(siya, neena, 20 * USD, keccak256("old"));
+        vm.prank(tristan);
+        usdc.approve(address(treasury), 0);
+        _split(keccak256("pizza"), siya, tristan, 30 * USD);
+        assertEq(treasury.debts(siya, neena), 20 * USD);
+        assertEq(treasury.debts(tristan, siya), 30 * USD);
+    }
+
+    // --- all-or-nothing group buys ---
+
+    bytes32 constant POOL = keccak256("tickets");
+
+    function _openPool(uint32 needed) internal {
+        vm.prank(operator);
+        treasury.openPool(POOL, G, neena, 40 * USD, needed, uint64(block.timestamp + 1 days));
+    }
+
+    function test_pool_paysThePayeeTheMomentItFills() public {
+        _openPool(2);
+        uint256 neenaBefore = usdc.balanceOf(neena);
+        vm.prank(siya);
+        treasury.pledge(POOL);
+        assertEq(usdc.balanceOf(address(treasury)), 40 * USD);
+        assertEq(usdc.balanceOf(neena), neenaBefore);
+
+        vm.expectEmit(address(treasury));
+        emit GroupTreasury.PoolFilled(POOL, neena, 80 * USD);
+        vm.prank(operator);
+        treasury.pledgeFor(POOL, tristan);
+
+        assertEq(usdc.balanceOf(neena) - neenaBefore, 80 * USD);
+        assertEq(usdc.balanceOf(address(treasury)), 0);
+        assertEq(treasury.remaining(G, siya), 10 * USD);
+        (GroupTreasury.Status status,,,,,, address[] memory backers) = treasury.getPool(POOL);
+        assertEq(uint8(status), uint8(GroupTreasury.Status.Settled));
+        assertEq(backers.length, 2);
+
+        vm.prank(operator);
+        vm.expectRevert(GroupTreasury.NotOpen.selector);
+        treasury.pledgeFor(POOL, neena);
+    }
+
+    function test_pool_refundsEveryoneAndTheirLimitAfterTheDeadline() public {
+        _openPool(3);
+        vm.prank(siya);
+        treasury.pledge(POOL);
+        uint256 siyaBefore = usdc.balanceOf(siya);
+
+        vm.expectRevert(GroupTreasury.NotExpired.selector);
+        treasury.refundPool(POOL);
+
+        vm.warp(block.timestamp + 1 days + 1);
+        vm.prank(tristan);
+        vm.expectRevert(GroupTreasury.Expired.selector);
+        treasury.pledge(POOL);
+
+        vm.prank(stranger);
+        treasury.refundPool(POOL);
+        assertEq(usdc.balanceOf(siya) - siyaBefore, 40 * USD);
+        assertEq(treasury.remaining(G, siya), 50 * USD);
+        assertEq(usdc.balanceOf(address(treasury)), 0);
+    }
+
+    function test_pool_operatorCanCallItOffEarly() public {
+        _openPool(3);
+        vm.prank(siya);
+        treasury.pledge(POOL);
+        vm.prank(operator);
+        treasury.refundPool(POOL);
+        assertEq(treasury.remaining(G, siya), 50 * USD);
+        vm.expectRevert(GroupTreasury.NotOpen.selector);
+        treasury.refundPool(POOL);
+    }
+
+    function test_pool_pledgeRevertsOverLimitTwiceOrForNonMembers() public {
+        _openPool(3);
+        vm.prank(operator);
+        treasury.lowerLimit(G, siya, 30 * USD);
+        vm.prank(siya);
+        vm.expectRevert(GroupTreasury.OverLimit.selector);
+        treasury.pledge(POOL);
+
+        vm.prank(tristan);
+        treasury.pledge(POOL);
+        vm.prank(tristan);
+        vm.expectRevert(GroupTreasury.AlreadyPledged.selector);
+        treasury.pledge(POOL);
+
+        vm.prank(stranger);
+        vm.expectRevert(GroupTreasury.NotMember.selector);
+        treasury.pledge(POOL);
+    }
+
+    function test_pool_pledgeRevertsWhenTheTokenRefuses() public {
+        _openPool(3);
+        vm.prank(siya);
+        usdc.approve(address(treasury), 0);
+        vm.prank(siya);
+        vm.expectRevert(GroupTreasury.TransferFailed.selector);
+        treasury.pledge(POOL);
+    }
+
+    function test_pool_onlyOperatorOpensOrPledgesForOthers() public {
+        vm.prank(siya);
+        vm.expectRevert(GroupTreasury.NotOperator.selector);
+        treasury.openPool(POOL, G, neena, 40 * USD, 2, uint64(block.timestamp + 1 days));
+        _openPool(2);
+        vm.prank(siya);
+        vm.expectRevert(GroupTreasury.NotOperator.selector);
+        treasury.pledgeFor(POOL, tristan);
+    }
+
+    function test_pool_openRevertsOnBadInput() public {
+        vm.startPrank(operator);
+        vm.expectRevert(GroupTreasury.BadSplit.selector);
+        treasury.openPool(POOL, G, neena, 0, 2, uint64(block.timestamp + 1 days));
+        vm.expectRevert(GroupTreasury.Expired.selector);
+        treasury.openPool(POOL, G, neena, 1, 2, uint64(block.timestamp));
+        vm.expectRevert(GroupTreasury.NotMember.selector);
+        treasury.openPool(POOL, G, stranger, 1, 2, uint64(block.timestamp + 1 days));
+        treasury.openPool(POOL, G, neena, 1, 2, uint64(block.timestamp + 1 days));
+        vm.expectRevert(GroupTreasury.SpendExists.selector);
+        treasury.openPool(POOL, G, neena, 1, 2, uint64(block.timestamp + 1 days));
+        vm.stopPrank();
     }
 }

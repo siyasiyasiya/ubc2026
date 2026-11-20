@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { Group, MemberId, RequestState, SpendingLimit, Split, SpendFlow } from "@gta/core";
+import type { Group, MemberId, RequestState, SpendingLimit, Split, SpendFlow, Usdc } from "@gta/core";
 
 /** A spend request and where it is in the core state machine. */
 export interface RequestRecord {
@@ -73,6 +73,24 @@ export interface GroupRecord {
   memberPreferences?: Record<MemberId, Record<string, Preference>>;
   /** Recurring splits this chat pays on repeat. */
   subscriptions?: Subscription[];
+  /** All-or-nothing group buys ("concert tickets if 5 of us go"). */
+  groupBuys?: GroupBuy[];
+}
+
+/** An all-or-nothing group buy: each 👍 puts `each` in (held onchain); the pot goes to the payee once `needed` are in, else refunds. */
+export interface GroupBuy {
+  id: string;
+  title: string;
+  each: Usdc;
+  needed: number;
+  payeeMemberId: MemberId;
+  /** Epoch ms. */
+  deadline: number;
+  cardMessageId?: string;
+  backers: MemberId[];
+  status: "open" | "filled" | "refunded";
+  createdBy: MemberId;
+  createdAt: number;
 }
 
 /** Normalize an item name to a stable preference key: lowercase, trimmed, whitespace collapsed. */

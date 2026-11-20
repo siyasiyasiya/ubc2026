@@ -210,4 +210,14 @@ export const groupTreasuryAbi = [
     ],
     outputs: [{ name: "", type: "uint256" }],
   },
+  // Auto pay-back and all-or-nothing group buys (generated with `forge inspect GroupTreasury abi`).
+  {"type": "function", "name": "getPool", "inputs": [{"name": "id", "type": "bytes32"}], "outputs": [{"name": "status", "type": "uint8"}, {"name": "group", "type": "bytes32"}, {"name": "payee", "type": "address"}, {"name": "each", "type": "uint256"}, {"name": "needed", "type": "uint32"}, {"name": "deadline", "type": "uint64"}, {"name": "backers", "type": "address[]"}], "stateMutability": "view"},
+  {"type": "function", "name": "openPool", "inputs": [{"name": "id", "type": "bytes32"}, {"name": "group", "type": "bytes32"}, {"name": "payee", "type": "address"}, {"name": "each", "type": "uint128"}, {"name": "needed", "type": "uint32"}, {"name": "deadline", "type": "uint64"}], "outputs": [], "stateMutability": "nonpayable"},
+  {"type": "function", "name": "pledgeFor", "inputs": [{"name": "id", "type": "bytes32"}, {"name": "member", "type": "address"}], "outputs": [], "stateMutability": "nonpayable"},
+  {"type": "function", "name": "pledged", "inputs": [{"name": "", "type": "bytes32"}, {"name": "", "type": "address"}], "outputs": [{"name": "", "type": "bool"}], "stateMutability": "view"},
+  {"type": "function", "name": "refundPool", "inputs": [{"name": "id", "type": "bytes32"}], "outputs": [], "stateMutability": "nonpayable"},
+  {"type": "event", "name": "DebtAutoPaid", "inputs": [{"name": "id", "type": "bytes32", "indexed": true}, {"name": "debtor", "type": "address", "indexed": true}, {"name": "creditor", "type": "address", "indexed": true}, {"name": "amount", "type": "uint256", "indexed": false}], "anonymous": false},
+  {"type": "event", "name": "Pledged", "inputs": [{"name": "id", "type": "bytes32", "indexed": true}, {"name": "member", "type": "address", "indexed": true}, {"name": "count", "type": "uint32", "indexed": false}], "anonymous": false},
+  {"type": "event", "name": "PoolFilled", "inputs": [{"name": "id", "type": "bytes32", "indexed": true}, {"name": "payee", "type": "address", "indexed": true}, {"name": "total", "type": "uint256", "indexed": false}], "anonymous": false},
+  {"type": "event", "name": "PoolRefunded", "inputs": [{"name": "id", "type": "bytes32", "indexed": true}, {"name": "backers", "type": "uint32", "indexed": false}], "anonymous": false},
 ] as const;

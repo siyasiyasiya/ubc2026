@@ -28,6 +28,8 @@ Arc uses USDC as gas, and the contract moves USDC through its ERC-20 interface a
 | The agent can only reduce exposure | Operator-only `lowerLimit` (can't raise) and `removeMember` (someone left the chat) |
 | No pull beyond the signed limit | `settle` pulls each share to the payee only while it fits what's left of that member's limit in that group (weekly windows from Monday 00:00 UTC; monthly = 30 days) |
 | Over-limit or failed pulls | Recorded in `debts[debtor][creditor]` instead of reverting; `payDebt` clears them |
+| Auto pay-back | In `settle`, money headed to someone who owes others is pulled once and sent to their creditors first (`DebtAutoPaid`), the rest to them; debts clear the next time the debtor is paid for anything. Nothing changes when they owe nobody |
+| All-or-nothing group buys | `openPool` (operator) → `pledge` / `pledgeFor` (the relayed 👍) holds each pledge in the contract, capped by the member's limit. The pledge that reaches `needed` pays the whole pot to the payee in the same transaction (`PoolFilled`); after the deadline anyone can `refundPool`, which returns every pledge and gives the limit back. Held money can only go to that payee or back to whoever pledged it |
 
 The operator (the agent's key) can propose and cancel splits, relay 👍s, lower limits and remove
 members. It cannot add members, raise a limit or send money anywhere but a split's payee, and a

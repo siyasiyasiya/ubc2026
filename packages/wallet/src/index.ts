@@ -13,6 +13,8 @@ import {
   type Member,
   type MemberId,
   type LimitPeriod,
+  type PledgeOutcome,
+  type PoolParams,
   type PullOutcome,
   type PullParams,
   type Usdc,
@@ -90,9 +92,45 @@ export class InMemoryWalletAdapter implements WalletAdapter {
     this.completed.set(params.idempotencyKey, outcome);
     return outcome;
   }
+
+  private readonly pools = new Map<string, PoolParams & { backers: Member[]; status: "open" | "filled" | "refunded" }>();
+
+  async openPool(params: PoolParams): Promise<void> {
+    if (this.pools.has(params.poolId)) throw new Error("pool exists");
+    this.pools.set(params.poolId, { ...params, backers: [], status: "open" });
+  }
+
+  async pledge(poolId: string, member: Member): Promise<PledgeOutcome> {
+    const pool = this.pools.get(poolId);
+    if (!pool || pool.status !== "open") return { status: "failed", reason: "this buy is closed" };
+    if (this.now().getTime() > pool.deadline) return { status: "failed", reason: "too late, the deadline passed" };
+    if (pool.backers.some((b) => b.id === member.id)) return { status: "failed", reason: "already in" };
+    const { ok, remaining } = await this.canPull(member, pool.each);
+    if (!ok) return { status: "failed", reason: `over limit (${formatUsdc(remaining)} left)` };
+    this.addSpent(member, pool.each);
+    pool.backers.push(member);
+    const filled = pool.backers.length === pool.needed;
+    if (filled) pool.status = "filled";
+    return { status: "pledged", count: pool.backers.length, filled, txRef: `mem-pool-${poolId}-${pool.backers.length}` };
+  }
+
+  async refundPool(poolId: string): Promise<void> {
+    const pool = this.pools.get(poolId);
+    if (!pool || pool.status !== "open") return;
+    pool.status = "refunded";
+    for (const b of pool.backers) this.addSpent(b, -pool.each);
+  }
+
+  private addSpent(member: Member, amount: bigint): void {
+    const spent = this.spentThisPeriod(member) + amount;
+    this.spending.set(member.id, {
+      periodStart: periodStart(member.limit.period, this.now()).getTime(),
+      spent: spent > 0n ? spent : 0n,
+    });
+  }
 }
 
-export { ArcWalletAdapter, arcClients, arcWalletAdapters, groupIdForChat, pullSpendId } from "./arc.js";
+export { ArcWalletAdapter, arcClients, arcWalletAdapters, groupIdForChat, poolIdFor, pullSpendId } from "./arc.js";
 export type { ArcClients, ArcEnv, ArcWalletAdapterOptions } from "./arc.js";
 export { groupTreasuryAbi } from "./treasury-abi.js";
 export { inviteLink, inviteTicket, JoinWatcher, sendWelcomeBalance } from "./join.js";

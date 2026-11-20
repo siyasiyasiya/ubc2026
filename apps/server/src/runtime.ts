@@ -40,7 +40,7 @@ import {
 import { NotAReceiptError } from "@gta/agent";
 import type { runTurn as RunTurn, runDmTurn as RunDmTurn, TreasuryActions, DmActions } from "@gta/agent";
 import { groupIdForChat, inviteLink, inviteTicket, type DebtPaidEvent, type JoinEvent, type LimitSetEvent } from "@gta/wallet";
-import { normalizePreferenceKey, type GroupRecord, type RequestRecord, type Store, type Subscription } from "./store.js";
+import { normalizePreferenceKey, type GroupBuy, type GroupRecord, type RequestRecord, type Store, type Subscription } from "./store.js";
 import type { BookingCallRequest, BookingCaller } from "./booking-call.js";
 import { asPng } from "./svg-to-png.js";
 
@@ -899,6 +899,11 @@ export class GroupRuntime {
     const emoji = APPROVE_WORDS.has(reaction.emoji.trim().toLowerCase()) ? APPROVAL_EMOJI : reaction.emoji;
     const record = this.groupFor(reaction.chatId);
     const member = this.memberFor(record, reaction.senderHandle);
+    const buy = record.groupBuys?.find((b) => b.cardMessageId && sameMessage(b.cardMessageId, reaction.targetMessageId));
+    if (buy) {
+      if (emoji === APPROVAL_EMOJI && reaction.added) await this.pledgeToBuy(record, buy, member);
+      return;
+    }
     const request =
       record.requests.find((r) => r.previewMessageId && sameMessage(r.previewMessageId, reaction.targetMessageId)) ??
       // The chat port couldn't learn the card's real id (it fell back to "local:…"), so a 👍 can't
@@ -1106,7 +1111,10 @@ export class GroupRuntime {
             : "waiting on 👍s to start";
         return `- ${s.title}: ${formatUsdc(s.split.total)} ${s.every}, paid back to ${this.name(record, s.split.payeeMemberId)} by ${shares || "nobody"}; ${when}`;
       });
-    return `Plan: ${plan}\n\nSubscriptions (charge automatically each period; "cancel <name>" stops one):\n${subs.join("\n") || "- none"}\n\nMembers:\n${members.join("\n") || "- (none yet)"}\n\nOpen requests:\n${open.join("\n") || "- none"}\n\nOn the tab (settles on "settle up"):\n${tab.join("\n") || "- nothing"}\n\nUsuals (group's saved picks for generic buys; use instead of asking):\n${usuals.join("\n") || "- none set"}\n\nPersonal usuals (the asker gets their own first):\n${personal.join("\n") || "- none set"}\n\nRecent transactions in THIS chat (for history questions):\n${recent.join("\n") || "- none yet"}`;
+    const buys = (record.groupBuys ?? [])
+      .filter((b) => b.status === "open")
+      .map((b) => `- ${b.title}: ${formatUsdc(b.each)} each, ${b.backers.length}/${b.needed} in (${b.backers.map((id) => this.name(record, id)).join(", ") || "nobody yet"}), pot goes to ${this.name(record, b.payeeMemberId)}; 👍 its card to get in`);
+    return `Plan: ${plan}\n\nSubscriptions (charge automatically each period; "cancel <name>" stops one):\n${subs.join("\n") || "- none"}\n\nOpen group buys (all-or-nothing, held onchain):\n${buys.join("\n") || "- none"}\n\nMembers:\n${members.join("\n") || "- (none yet)"}\n\nOpen requests:\n${open.join("\n") || "- none"}\n\nOn the tab (settles on "settle up"):\n${tab.join("\n") || "- nothing"}\n\nUsuals (group's saved picks for generic buys; use instead of asking):\n${usuals.join("\n") || "- none set"}\n\nPersonal usuals (the asker gets their own first):\n${personal.join("\n") || "- none set"}\n\nRecent transactions in THIS chat (for history questions):\n${recent.join("\n") || "- none yet"}`;
   }
 
   // --- what the agent can do --------------------------------------------------
@@ -1225,6 +1233,13 @@ export class GroupRuntime {
         }
       },
       cancelSubscription: async ({ title }) => this.cancelSubscription(record, sender, title),
+      startGroupBuy: async (input) => {
+        try {
+          return await this.startGroupBuy(record, sender, input);
+        } catch (err) {
+          return `Could not set that up: ${(err as Error).message}`;
+        }
+      },
       sendCardLink: async ({ name }) => {
         try {
           return await this.sendCardLink(name ? this.resolve(record, name) : sender, record);
@@ -1311,6 +1326,100 @@ export class GroupRuntime {
   // --- subscriptions (Spotify, rent, a cleaner) ---------------------------------
 
   /** Posts the setup card. Everyone 👍s once; that settle is the first charge, then it repeats. */
+  // --- all-or-nothing group buys ------------------------------------------------
+
+  private async startGroupBuy(
+    record: GroupRecord,
+    sender: Member,
+    input: { title: string; eachUsd: number; needed: number; payer: string; hours: number },
+  ): Promise<string> {
+    const wallet = this.walletFor(record);
+    if (!wallet.openPool || !wallet.pledge) return "Group buys aren't supported by this chat's wallet.";
+    const payee = input.payer ? this.resolve(record, input.payer) : sender;
+    if (!payee.wallet) return `${payee.displayName} needs a Kitty account first (send_join_link), since the pot goes to them.`;
+    const title = input.title.trim();
+    const buys = (record.groupBuys ??= []);
+    const buy: GroupBuy = {
+      id: `${record.group.id}:buy:${buys.length + 1}`,
+      title,
+      each: usdc(input.eachUsd),
+      needed: input.needed,
+      payeeMemberId: payee.id,
+      deadline: this.now() + input.hours * 3_600_000,
+      backers: [],
+      status: "open",
+      createdBy: sender.id,
+      createdAt: this.now(),
+    };
+    await wallet.openPool({ poolId: buy.id, payee, each: buy.each, needed: buy.needed, deadline: buy.deadline });
+    buys.push(buy);
+    const by = new Date(buy.deadline).toLocaleString("en-US", { weekday: "short", hour: "numeric", minute: "2-digit" });
+    buy.cardMessageId = await this.say(
+      record.group.chatId,
+      [
+        `🎟️ ${title}: ${formatUsdc(buy.each)} each, happens if ${buy.needed} of us are in by ${by}`,
+        `👍 this to put your ${formatUsdc(buy.each)} in. It's held onchain and goes to ${payee.displayName} only once ${buy.needed} are in. Not enough by then, everyone gets it back automatically.`,
+      ].join("\n"),
+    );
+    this.deps.store.save();
+    return `Posted the group buy card for ${title}. Don't repeat its details.`;
+  }
+
+  private async pledgeToBuy(record: GroupRecord, buy: GroupBuy, member: Member): Promise<void> {
+    if (buy.status !== "open" || buy.backers.includes(member.id)) return;
+    const outcome = await this.walletFor(record).pledge!(buy.id, member);
+    if (outcome.status === "failed") {
+      await this.say(record.group.chatId, `${member.displayName}, couldn't put you in for ${buy.title}: ${outcome.reason}`);
+      return;
+    }
+    buy.backers.push(member.id);
+    const payee = this.name(record, buy.payeeMemberId);
+    if (outcome.filled) {
+      buy.status = "filled";
+      this.deps.store.save();
+      const total = formatUsdc((buy.each * BigInt(buy.backers.length)) as Usdc);
+      await this.say(
+        record.group.chatId,
+        `🎉 ${buy.title} is on! ${buy.backers.length}/${buy.needed} in, so the ${total} pot just went to ${payee} onchain. go get them`,
+      );
+      return;
+    }
+    this.deps.store.save();
+    const left = buy.needed - buy.backers.length;
+    await this.say(record.group.chatId, `${member.displayName}'s in for ${buy.title} (${buy.backers.length}/${buy.needed}), ${left} more to go`);
+  }
+
+  /** Refunds group buys whose deadline passed without enough people. Runs on the subscriptions tick. */
+  async expireGroupBuys(): Promise<void> {
+    const now = this.now();
+    for (const record of this.deps.store.all()) {
+      for (const buy of record.groupBuys ?? []) {
+        if (buy.status !== "open" || buy.deadline > now) continue;
+        try {
+          await this.walletFor(record).refundPool?.(buy.id);
+        } catch (err) {
+          this.log(`refund for ${buy.title} failed (${(err as Error).message}), retrying next tick`);
+          continue;
+        }
+        buy.status = "refunded";
+        this.deps.store.save();
+        await this.say(
+          record.group.chatId,
+          buy.backers.length
+            ? `${buy.title} didn't get to ${buy.needed} (${buy.backers.length} in), so everyone got their ${formatUsdc(buy.each as Usdc)} back`
+            : `${buy.title} didn't get anyone in, so it's off`,
+        );
+      }
+    }
+  }
+
+  /** A member's name from their wallet address, in this chat or any other. */
+  private nameForWallet(record: GroupRecord, address: string): string {
+    const is = (m: Member) => m.wallet?.address.toLowerCase() === address.toLowerCase();
+    const m = record.group.members.find(is) ?? this.deps.store.all().flatMap((r) => r.group.members).find(is);
+    return m?.displayName ?? `${address.slice(0, 6)}…`;
+  }
+
   private async startSubscription(
     record: GroupRecord,
     sender: Member,
@@ -1781,7 +1890,12 @@ export class GroupRuntime {
         result: { memberId, amount, status: outcome.status, ...(outcome.txRef ? { txRef: outcome.txRef } : {}), ...(outcome.reason ? { reason: outcome.reason } : {}) },
       });
       const who = `${this.name(record, memberId)} → ${this.name(record, split.payeeMemberId)} ${formatUsdc(amount)}`;
-      if (outcome.status === "pulled") lines.push(`${who} ✓`);
+      if (outcome.status === "pulled") {
+        const auto = (outcome.autoPaid ?? []).map(
+          (p) => `${formatUsdc(p.amount)} of it went straight to ${this.nameForWallet(record, p.creditor)}`,
+        );
+        lines.push(auto.length ? `${who} ✓ ♻️ ${auto.join(", ")}, paying back what ${this.name(record, split.payeeMemberId)} owed` : `${who} ✓`);
+      }
       else {
         failed++;
         const reason = plainReason(outcome.reason);

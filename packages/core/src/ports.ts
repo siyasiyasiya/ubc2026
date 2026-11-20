@@ -89,7 +89,26 @@ export interface PullOutcome {
   status: "pulled" | "failed";
   txRef?: string;
   reason?: string;
+  /**
+   * Auto pay-back: parts of this share that went straight to people the payee owed, clearing
+   * those debts, instead of to the payee. `creditor` is a wallet address.
+   */
+  autoPaid?: { creditor: string; amount: Usdc }[];
 }
+
+/** An all-or-nothing group buy: `needed` people each put in `each` for `payee` by `deadline`, or nobody pays. */
+export interface PoolParams {
+  poolId: string;
+  payee: Member;
+  each: Usdc;
+  needed: number;
+  /** Epoch ms. */
+  deadline: number;
+}
+
+export type PledgeOutcome =
+  | { status: "pledged"; count: number; filled: boolean; txRef?: string }
+  | { status: "failed"; reason: string };
 
 /**
  * Moves a member's share from their own wallet to the payer, never exceeding
@@ -121,6 +140,14 @@ export interface WalletAdapter {
    * advisory plan).
    */
   netSettle?(clears: DebtEdge[], adds: DebtEdge[]): Promise<boolean>;
+  /**
+   * Optional: all-or-nothing group buys. Each pledge is held (never beyond the member's limit) and
+   * the pot goes to the payee only when the last needed person pledges; `refundPool` gives
+   * everyone their money (and limit) back.
+   */
+  openPool?(params: PoolParams): Promise<void>;
+  pledge?(poolId: string, member: Member): Promise<PledgeOutcome>;
+  refundPool?(poolId: string): Promise<void>;
 }
 
 /** A single "who owes whom" edge used by settle-up netting. */
