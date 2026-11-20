@@ -514,6 +514,18 @@ export class GroupRuntime {
   }
 
   /**
+   * Post an agent reply as one iMessage, or several when it separates parts with a line of "---"
+   * (used for buy options, so each description and each link lands as its own text). Posts in order.
+   */
+  private async sayReply(chatId: string, reply: string): Promise<void> {
+    const parts = reply
+      .split(/^\s*---\s*$/m)
+      .map((p) => p.trim())
+      .filter(Boolean);
+    for (const part of parts) await this.say(chatId, part);
+  }
+
+  /**
    * Seed every participant of a chat as a member the first time we act in it, so the agent
    * considers the whole group without waiting for each person to speak. Members start unlinked
    * (no wallet); the Face ID join still gates whether money can move for them.
@@ -594,7 +606,7 @@ export class GroupRuntime {
       event,
       actions: this.actionsFor(record, member),
     });
-    if (reply) await this.say(msg.chatId, reply);
+    if (reply) await this.sayReply(msg.chatId, reply);
     this.deps.store.save();
   }
 

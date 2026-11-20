@@ -56,6 +56,7 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
   const fakeTurn: typeof RunTurn = async ({ actions, event, groupSnapshot }) => {
     turnEvents.push(event);
     turnSnapshots.push(groupSnapshot);
+    if (event.includes("options please")) return "1. Cascade pods ~$18\n---\nhttps://store/cascade\n---\nwhich one?";
     if (event.includes("always get")) return actions.setPreference({ item: "dishwasher soap", choice: "Cascade Platinum pods", scope: "group" });
     if (event.includes("i always want")) return actions.setPreference({ item: "coffee", choice: "fragrance-free dark roast", scope: "personal" });
     if (event.includes("join me")) return actions.sendJoinLink({});
@@ -227,6 +228,14 @@ describe("GroupRuntime", () => {
     a.save();
     const b = new Store(file);
     expect(b.get("g")!.preferences!["paper towels"]!.choice).toBe("Bounty");
+  });
+
+  it("splits a reply on --- lines into separate messages (buy options: description then link)", async () => {
+    const t = setup();
+    const before = t.posted.length;
+    await t.say(SIYA, "options please");
+    const sent = t.posted.slice(before).map((p) => p.text);
+    expect(sent).toEqual(["1. Cascade pods ~$18", "https://store/cascade", "which one?"]);
   });
 
   it("ignores 👍 from outside the split and other emoji", async () => {
