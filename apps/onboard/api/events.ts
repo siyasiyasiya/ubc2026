@@ -3,7 +3,7 @@
  * QuickNode Stream, oldest first, up to 1000 at a time. Kitty's bot reads this instead of polling
  * the chain. Needs `Authorization: Bearer <EVENTS_SECRET>`.
  */
-import { db, lastBlock, treasuryLogs } from "./_kitty-db.js";
+import { db, ensureSchema, lastBlock, treasuryLogs } from "./_kitty-db.js";
 
 export async function GET(request: Request): Promise<Response> {
   const secret = process.env.EVENTS_SECRET ?? "";
@@ -13,6 +13,7 @@ export async function GET(request: Request): Promise<Response> {
   const after = /^(\d{1,12}):(\d{1,6})$/.exec(new URL(request.url).searchParams.get("after") ?? "");
   try {
     const sql = db();
+    await ensureSchema(sql);
     const [logs, block] = await Promise.all([
       treasuryLogs(sql, after ? { block: BigInt(after[1]!), logIndex: Number(after[2]) } : { block: 0n, logIndex: -1 }),
       lastBlock(sql),

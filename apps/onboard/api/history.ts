@@ -6,7 +6,7 @@
  * page falls back to the explorer instead of showing a blank history.
  */
 import { isAddress } from "viem";
-import { accountTransfers, db, lastBlock, treasuryLogs } from "./_kitty-db.js";
+import { accountTransfers, db, ensureSchema, lastBlock, treasuryLogs } from "./_kitty-db.js";
 
 export async function GET(request: Request): Promise<Response> {
   const params = new URL(request.url).searchParams;
@@ -20,6 +20,7 @@ export async function GET(request: Request): Promise<Response> {
   }
   try {
     const sql = db();
+    await ensureSchema(sql);
     const [logs, transfers, block] = await Promise.all([treasuryLogs(sql), accountTransfers(sql, account), lastBlock(sql)]);
     if (!logs.length) return Response.json({ error: "no stream data yet" }, { status: 404 });
     return Response.json(
