@@ -422,6 +422,7 @@ function setupPayBack(): void {
   }
 
   let session: Awaited<ReturnType<typeof connect>> | undefined;
+  let previewed = false;
   pay.addEventListener("click", async () => {
     pay.disabled = true;
     try {
@@ -440,10 +441,23 @@ function setupPayBack(): void {
       }
       owedText.textContent = `$${formatUnits(owed, 6)}`;
       // USDC is native on Arc (18 decimals); the debt is in 6-decimal USDC units.
-      if ((await balance(session.account.address)) < owed * 10n ** 12n) {
-        void showFunding(session.account.address);
+      const owedWei = owed * 10n ** 12n;
+      const bal = await balance(session.account.address);
+      // First tap shows the money picture (balance, your caps, add money) so paying back isn't
+      // blind; the actual payment waits for a second, deliberate tap.
+      if (!previewed) {
+        previewed = true;
+        await showFunding(session.account.address);
+        if (bal < owedWei) {
+          pay.textContent = "I added money · Pay with Face ID";
+          return show(`You owe $${formatUnits(owed, 6)} and your balance is ${dollars(bal)}. Add the difference below, then tap to pay.`, "error");
+        }
+        pay.textContent = `Pay ${creditorName} back · Face ID`;
+        return show(`You owe $${formatUnits(owed, 6)}, your balance is ${dollars(bal)}. Tap to pay ${creditorName} back.`);
+      }
+      if (bal < owedWei) {
         pay.textContent = "I added money · Pay with Face ID";
-        return show("Your balance is short. Add money below, then tap again.", "error");
+        return show(`Still short: you have ${dollars(bal)}, need $${formatUnits(owed, 6)}. Add a bit more, then tap again.`, "error");
       }
       show("Waiting for Face ID…");
       const hash = await session.bundler.sendUserOperation({
