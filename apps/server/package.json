@@ -14,7 +14,8 @@
     "invite": "tsx --env-file-if-exists=.env src/invite.ts",
     "fund": "tsx --env-file-if-exists=.env src/fund.ts",
     "crossmint": "tsx --env-file-if-exists=.env src/crossmint.ts",
-    "diag": "tsx --env-file-if-exists=.env src/diag.ts"
+    "diag": "tsx --env-file-if-exists=.env src/diag.ts",
+    "vibe": "tsx --env-file-if-exists=.env src/vibe.ts"
   },
   "dependencies": {
     "@gta/agent": "workspace:*",
