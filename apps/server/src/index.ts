@@ -66,6 +66,7 @@ const runtime = new GroupRuntime({
   ...(subscriptionEveryMs() ? { subscriptionEveryMs: subscriptionEveryMs() } : {}),
   ...autoTopUp(),
   ...memberCards(),
+  ...shortLinks(),
 });
 runtime.attach();
 startJoinWatcher();
@@ -177,6 +178,31 @@ function isChatDbAccessError(err: unknown): boolean {
   const e = err as { code?: string; message?: string; cause?: { code?: string } };
   const text = `${e?.code ?? ""} ${e?.message ?? ""} ${e?.cause?.code ?? ""}`;
   return /DATABASE|SQLITE_CANTOPEN|unable to open database/i.test(text);
+}
+
+/**
+ * Short links with their own iMessage card (the page's /api/link), when ONBOARD_URL and EVENTS_SECRET
+ * are set. Times out fast: a slow shortener must never hold up a Face ID link.
+ */
+function shortLinks(): { shortLink?: (url: string, card: { title: string; sub: string }) => Promise<string> } {
+  const base = process.env.ONBOARD_URL?.trim().replace(/\/$/, "");
+  const secret = process.env.EVENTS_SECRET?.trim();
+  if (!base || !secret) {
+    console.log("short links: off (set ONBOARD_URL and EVENTS_SECRET)");
+    return {};
+  }
+  return {
+    shortLink: async (url, card) => {
+      const res = await fetch(`${base}/api/link`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" },
+        body: JSON.stringify({ url, ...card }),
+        signal: AbortSignal.timeout(4000),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return ((await res.json()) as { url: string }).url;
+    },
+  };
 }
 
 /** Kitty's QuickNode Stream feed (the page's /api/events), when KITTY_EVENTS_URL and EVENTS_SECRET are set. */

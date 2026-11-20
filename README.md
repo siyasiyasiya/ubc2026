@@ -169,6 +169,10 @@ The chat picks its plan once ("this is a trip, $200 each"), each person confirms
 3. `settle` pulls the share straight from the member's account to whoever paid, never more than what's left of the limit the member signed for that chat. A share it can't pull becomes an onchain debt; the member gets a one-tap link to add money and pay it back (`payDebt`), and the chat sees "✅ Joey paid Siya back".
 4. Limits change from the chat: lowering applies right away (operator `lowerLimit`); raising texts the member a one-tap Face ID link (`setLimit`), because only they can raise it.
 
+### Links that read like an iMessage card
+
+Every link Kitty texts (join, raise a limit, add money, pay back, save a card, see all your kitties) is a short `kittyagent.vercel.app/k/<code>` link instead of a long URL with the ticket in it. The bot registers it with `POST /api/link` (`apps/onboard/api/link.ts`, `Bearer EVENTS_SECRET`, stored in Neon), and iMessage's preview fetcher gets a slim card that says what the link does, e.g. **Join Tahoe trip · $200.00 each** / *Tap to confirm*, with a small Kitty icon instead of a full-width banner. People tapping it are redirected to the real page. If shortening fails, the long link goes out instead, so a link is never lost.
+
 ### The web dashboard
 
 Members ask Kitty privately to see their kitties and get a link to the dashboard (`apps/onboard`, `?v=1`). It unlocks with the passkey this phone already has, with no extra Face ID tap, and shows:

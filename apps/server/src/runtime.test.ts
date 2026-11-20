@@ -15,7 +15,7 @@ const OUTSIDER = "+1999";
 const CHAT = "group";
 
 /** A runtime whose "agent" proposes a $90 dinner paid by Neena, split three ways. */
-function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapter; wallets?: Record<string, string>; invites?: { baseUrl: string; secret: string }; chats?: string[]; participants?: string[]; chatName?: string; receiptItems?: { name: string; amount: ReturnType<typeof usdc> }[]; receiptError?: Error; purchase?: PurchaseAdapter; calls?: RestaurantCaller; now?: () => number; subscriptionEveryMs?: number; autoTopUp?: ConstructorParameters<typeof GroupRuntime>[0]["autoTopUp"]; cards?: ConstructorParameters<typeof GroupRuntime>[0]["cards"]; testMoney?: { send: (address: string, amount: bigint) => Promise<string>; maxUsd: number; dailyUsd: number } } = {}) {
+function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapter; wallets?: Record<string, string>; invites?: { baseUrl: string; secret: string }; chats?: string[]; participants?: string[]; chatName?: string; receiptItems?: { name: string; amount: ReturnType<typeof usdc> }[]; receiptError?: Error; purchase?: PurchaseAdapter; calls?: RestaurantCaller; now?: () => number; subscriptionEveryMs?: number; autoTopUp?: ConstructorParameters<typeof GroupRuntime>[0]["autoTopUp"]; cards?: ConstructorParameters<typeof GroupRuntime>[0]["cards"]; shortLink?: ConstructorParameters<typeof GroupRuntime>[0]["shortLink"]; testMoney?: { send: (address: string, amount: bigint) => Promise<string>; maxUsd: number; dailyUsd: number } } = {}) {
   const posted: { id: string; text: string }[] = [];
   const failing = { posts: 0, dms: 0 };
   const dms: { handle: string; text: string }[] = [];
@@ -120,6 +120,7 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
     ...(opts.subscriptionEveryMs ? { subscriptionEveryMs: opts.subscriptionEveryMs } : {}),
     ...(opts.autoTopUp ? { autoTopUp: opts.autoTopUp } : {}),
     ...(opts.cards ? { cards: opts.cards } : {}),
+    ...(opts.shortLink ? { shortLink: opts.shortLink } : {}),
     receipts: {
       read: async (): Promise<Receipt> => {
         if (opts.receiptError) throw opts.receiptError;
@@ -603,6 +604,30 @@ describe("GroupRuntime", () => {
     t.failing.dms = 1;
     await t.say(TRISTAN, "join me");
     expect(t.posted.some((p) => p.text.startsWith("Tristan:") && p.text.includes("kitty"))).toBe(true);
+  });
+
+  it("texts a short link whose iMessage card says what it's for, or the long one if shortening fails", async () => {
+    const invites = { baseUrl: "https://kittyagent.vercel.app", secret: "s3cret" };
+    const cards: { url: string; title: string; sub: string }[] = [];
+    let down = false;
+    const t = setup(200, {
+      invites,
+      shortLink: async (url, card) => {
+        if (down) throw new Error("HTTP 503");
+        cards.push({ url, ...card });
+        return `https://kittyagent.vercel.app/k/code${cards.length}`;
+      },
+    });
+    await t.say(NEENA, "trip plan please");
+    await t.say(SIYA, "join me");
+    expect(t.dms[0]!.text).toMatch(/one tap and you're set up: https:\/\/kittyagent\.vercel\.app\/k\/code1$/);
+    expect(cards[0]!.title).toMatch(/^Join .+ · \$200\.00 each$/);
+    expect(cards[0]!.sub).toBe("Tap to confirm");
+    expect(new URL(cards[0]!.url).searchParams.get("t")).toBe(inviteTicket(invites.secret, CHAT, SIYA));
+
+    down = true;
+    await t.say(TRISTAN, "join me");
+    expect(new URL(t.dms.at(-1)!.text.split(" ").at(-1)!).searchParams.get("t")).toBe(inviteTicket(invites.secret, CHAT, TRISTAN));
   });
 
   it("lowers a limit onchain right away but sends a Face ID link to raise it", async () => {
@@ -1169,7 +1194,7 @@ describe("GroupRuntime", () => {
       await t.say(NEENA, "trip plan"); // join links need the chat's plan
       await t.say(NEENA, "split spotify with everyone");
       const to = (h: string) => t.dms.filter((d) => d.handle === h).map((d) => d.text);
-      expect(to(TRISTAN).some((x) => x.includes("Face ID"))).toBe(true);
+      expect(to(TRISTAN).some((x) => x.includes("one tap and you're set up"))).toBe(true);
       expect(to(SIYA).some((x) => x.startsWith("save the card you'd pay with") && x.includes(`jwt-${SIYA}`))).toBe(true);
       expect(to(SIYA).some((x) => x.startsWith("your Spotify share is $6.00 a month and you have $1.00"))).toBe(true);
       expect(to(NEENA).some((x) => x.startsWith("save the card"))).toBe(false); // already saved

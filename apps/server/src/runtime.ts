@@ -86,6 +86,11 @@ export interface RuntimeDeps {
     linkFor(handle: string, name: string): string;
     purchaseFor?(card: { userId: string; paymentMethodId: string }): PurchaseAdapter;
   };
+  /**
+   * Turns a long page link into a short one whose iMessage card says what it's for ("Join Tahoe
+   * trip · $200 each" / "Tap to confirm") instead of one big generic banner. Unset: links go out long.
+   */
+  shortLink?: (url: string, card: { title: string; sub: string }) => Promise<string>;
   /** Demo only (SUBSCRIPTION_EVERY_MIN): charge subscriptions this often instead of weekly/monthly. */
   subscriptionEveryMs?: number;
   now?: () => number;
@@ -348,8 +353,11 @@ export class GroupRuntime {
       );
       return "Texted them privately asking for their name; their Face ID link goes out as soon as they answer. Don't ask for it in the group.";
     }
-    const link = this.withChats(new URL(this.inviteLinkFor(record.group.chatId, member.id)), member.id);
-    const where = await this.dm(record, member, `you're invited to ${record.group.name}'s kitty 🎉 one Face ID tap and you're set up: ${link}`);
+    const link = await this.cardLink(
+      this.withChats(new URL(this.inviteLinkFor(record.group.chatId, member.id)), member.id),
+      `Join ${record.group.name} · ${formatUsdc(record.plan.amount)} ${record.plan.period === "once" ? "each" : perPeriod(record.plan.period)}`,
+    );
+    const where = await this.dm(record, member, `you're invited to ${record.group.name}'s kitty 🎉 one tap and you're set up: ${link}`);
     return where === "dm"
       ? `Texted ${member.displayName} a private Face ID link.`
       : `Couldn't text ${member.displayName} privately, so the link went in the group.`;
@@ -376,9 +384,23 @@ export class GroupRuntime {
     const where = await this.dm(
       record,
       member,
-      `tap to confirm your new ${record.group.name} limit, ${formatUsdc(limit.amount)} ${perPeriod(limit.period)}, with Face ID: ${this.pageLink(record, member, { l: formatUsdc(limit.amount).replace("$", ""), p: limit.period })}`,
+      `tap to confirm your new ${record.group.name} limit: ${await this.cardLink(
+        this.pageLink(record, member, { l: formatUsdc(limit.amount).replace("$", ""), p: limit.period }),
+        `Raise your ${record.group.name} limit to ${formatUsdc(limit.amount)} ${perPeriod(limit.period)}`,
+      )}`,
     );
     return `Raising needs ${member.displayName}'s Face ID, so I ${where === "dm" ? "texted them" : "posted"} a link to confirm.`;
+  }
+
+  /** A short link with its own iMessage card, or the long one if shortening is off or fails (a link must always go out). */
+  private async cardLink(url: string, title: string, sub = "Tap to confirm"): Promise<string> {
+    if (!this.deps.shortLink) return url;
+    try {
+      return await this.deps.shortLink(url, { title, sub });
+    } catch (err) {
+      this.log(`short link failed (${(err as Error).message}), sending the long one`);
+      return url;
+    }
   }
 
   /** Sends `text` to `member` privately, or posts it in the group if a DM fails. */
@@ -776,7 +798,7 @@ export class GroupRuntime {
   /** Texts a member their private save-card link. */
   private async sendCardLink(member: Member, record?: GroupRecord): Promise<string> {
     if (!this.deps.cards) return "Saving cards isn't set up on this bot.";
-    const link = this.deps.cards.linkFor(member.id, member.displayName);
+    const link = await this.cardLink(this.deps.cards.linkFor(member.id, member.displayName), "Save your card for group buys", "Only charged after everyone 👍s");
     const text = `save the card you'd pay with when Kitty buys stuff for the group. it's only charged after everyone 👍s, and card details go straight to Crossmint, never Kitty (link works for an hour): ${link}`;
     if (record) await this.dm(record, member, text);
     else await this.sendDm(member.id, `dm:${member.id}`, member.displayName, text);
@@ -850,7 +872,8 @@ export class GroupRuntime {
         if (!memberships.some((m) => m.member.wallet)) return "They haven't joined any Kitty yet, so there's nothing to show.";
         const url = new URL(base);
         url.searchParams.set("v", "1");
-        await this.sendDm(handle, dmKey, name, `all your kitties in one place: ${this.withChats(url, handle)}`);
+        const link = await this.cardLink(this.withChats(url, handle), "All your kitties", "Limits, what's left, and resets");
+        await this.sendDm(handle, dmKey, name, `all your kitties in one place: ${link}`);
         return "Sent them the link to see all their group chats.";
       },
       sendTopUpLink: async () => {
@@ -860,7 +883,8 @@ export class GroupRuntime {
         if (!base) return "The add-money page isn't configured, so no link to send.";
         const url = new URL(base);
         url.searchParams.set("a", linked.member.wallet!.address);
-        await this.sendDm(handle, dmKey, name, `add money to your Kitty account here (Apple Pay or debit): ${this.withChats(url, handle)}`);
+        const link = await this.cardLink(this.withChats(url, handle), "Add money to Kitty", "Apple Pay or debit");
+        await this.sendDm(handle, dmKey, name, `add money to your Kitty account here: ${link}`);
         return "Sent them the add-money link.";
       },
     };
@@ -1247,7 +1271,7 @@ export class GroupRuntime {
             member.id,
             `dm:${member.id}`,
             member.displayName,
-            `your kitties can take up to ${formatUsdc(need.target)} right now and you have ${formatUsdc(need.balance)}. add ${formatUsdc(short)} so your shares go through (Apple Pay): ${this.withChats(url, member.id)}`,
+            `your kitties can take up to ${formatUsdc(need.target)} right now and you have ${formatUsdc(need.balance)}. add ${formatUsdc(short)} so your shares go through: ${await this.cardLink(this.withChats(url, member.id), `Add ${formatUsdc(short)} to Kitty`, "Apple Pay or debit")}`,
           );
         }
       } catch (err) {
@@ -1333,7 +1357,7 @@ export class GroupRuntime {
         await this.dm(
           record,
           member,
-          `your ${sub.title} share is ${formatUsdc(share)} a ${sub.every === "weekly" ? "week" : "month"} and you have ${formatUsdc(balance)}. add money so it goes through: ${this.withChats(url, member.id)}`,
+          `your ${sub.title} share is ${formatUsdc(share)} a ${sub.every === "weekly" ? "week" : "month"} and you have ${formatUsdc(balance)}. add money so it goes through: ${await this.cardLink(this.withChats(url, member.id), `Add money for ${sub.title}`, "Apple Pay or debit")}`,
         );
         short.push(member.displayName);
       } catch (err) {
@@ -1741,7 +1765,7 @@ export class GroupRuntime {
       await this.dm(
         record,
         member,
-        `heads up: your ${formatUsdc(amount)} share of ${request.title} didn't go through (${reason.replace("their", "your")}), so it's owed to ${payee.displayName} for now. add money and pay it back with Face ID: ${link}`,
+        `heads up: your ${formatUsdc(amount)} share of ${request.title} didn't go through (${reason.replace("their", "your")}), so it's owed to ${payee.displayName} for now. add money and pay it back: ${await this.cardLink(link, `Pay ${payee.displayName} back ${formatUsdc(amount)}`)}`,
       );
     }
   }
