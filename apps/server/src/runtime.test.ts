@@ -15,7 +15,7 @@ const OUTSIDER = "+1999";
 const CHAT = "group";
 
 /** A runtime whose "agent" proposes a $90 dinner paid by Neena, split three ways. */
-function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapter; wallets?: Record<string, string>; invites?: { baseUrl: string; secret: string }; chats?: string[]; participants?: string[]; chatName?: string; receiptItems?: { name: string; amount: ReturnType<typeof usdc> }[]; receiptError?: Error; purchase?: PurchaseAdapter; calls?: RestaurantCaller; now?: () => number; subscriptionEveryMs?: number; autoTopUp?: ConstructorParameters<typeof GroupRuntime>[0]["autoTopUp"]; testMoney?: { send: (address: string, amount: bigint) => Promise<string>; maxUsd: number; dailyUsd: number } } = {}) {
+function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapter; wallets?: Record<string, string>; invites?: { baseUrl: string; secret: string }; chats?: string[]; participants?: string[]; chatName?: string; receiptItems?: { name: string; amount: ReturnType<typeof usdc> }[]; receiptError?: Error; purchase?: PurchaseAdapter; calls?: RestaurantCaller; now?: () => number; subscriptionEveryMs?: number; autoTopUp?: ConstructorParameters<typeof GroupRuntime>[0]["autoTopUp"]; cards?: ConstructorParameters<typeof GroupRuntime>[0]["cards"]; testMoney?: { send: (address: string, amount: bigint) => Promise<string>; maxUsd: number; dailyUsd: number } } = {}) {
   const posted: { id: string; text: string }[] = [];
   const failing = { posts: 0, dms: 0 };
   const dms: { handle: string; text: string }[] = [];
@@ -119,6 +119,7 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
     ...(opts.now ? { now: opts.now } : {}),
     ...(opts.subscriptionEveryMs ? { subscriptionEveryMs: opts.subscriptionEveryMs } : {}),
     ...(opts.autoTopUp ? { autoTopUp: opts.autoTopUp } : {}),
+    ...(opts.cards ? { cards: opts.cards } : {}),
     receipts: {
       read: async (): Promise<Receipt> => {
         if (opts.receiptError) throw opts.receiptError;
@@ -1059,6 +1060,73 @@ describe("GroupRuntime", () => {
       expect(texts).toHaveLength(1);
       expect(texts[0]!.text).toContain("up to $50.00 right now and you have $3.00. add $47.00");
       expect(new URL(texts[0]!.text.split(" ").at(-1)!).searchParams.get("a")).toBe(SIYA_WALLET);
+    });
+  });
+
+  describe("members' own cards", () => {
+    const wallets = {
+      [NEENA]: "0x00000000000000000000000000000000000000aa",
+      [SIYA]: "0x00000000000000000000000000000000000000bb",
+    };
+    const cardsDep = (made: { userId: string; paymentMethodId: string }[] = []) => ({
+      userIdFor: (handle: string) => `kitty-${handle}`,
+      linkFor: (handle: string, name: string) => `https://kittyagent.vercel.app/card.html#t=jwt-${handle}&n=${name}`,
+      purchaseFor: (card: { userId: string; paymentMethodId: string }) => {
+        made.push(card);
+        return new SimulatedPurchaseAdapter({ render: async () => ({ uri: "/tmp/checkout.svg" }) });
+      },
+    });
+
+    it("saves the card the save page texts back, as that member's own Crossmint user", async () => {
+      const t = setup(200, { wallets, cards: cardsDep() });
+      await t.say(SIYA, "hi");
+      // The exact text apps/onboard/src/card.tsx prefills.
+      await t.dm(SIYA, "my kitty card: pm_9f2c81aa (visa ending 4242)");
+      expect(t.store.card(SIYA)).toMatchObject({ userId: `kitty-${SIYA}`, paymentMethodId: "pm_9f2c81aa", label: "visa ending 4242" });
+      expect(t.dms.at(-1)!.text).toMatch(/^saved your visa ending 4242 ✓/);
+      expect(t.dmSummaries).toHaveLength(0); // handled before the agent
+    });
+
+    it("leaves the text to the agent when member cards are off", async () => {
+      const t = setup(200, { wallets });
+      await t.say(SIYA, "hi");
+      await t.dm(SIYA, "my kitty card: pm_9f2c81aa (visa ending 4242)");
+      expect(t.store.card(SIYA)).toBeUndefined();
+      expect(t.dmSummaries).toHaveLength(1);
+    });
+
+    it("puts a buy on the payer's own card when they saved one", async () => {
+      const made: { userId: string; paymentMethodId: string }[] = [];
+      const t = setup(200, { wallets: { ...wallets, [TRISTAN]: "0x00000000000000000000000000000000000000cc" }, cards: cardsDep(made), purchase: new SimulatedPurchaseAdapter() });
+      for (const who of [SIYA, TRISTAN]) await t.say(who, "hi");
+      await t.dm(NEENA, "my kitty card: pm_neena01 (amex ending 1001)");
+      await t.say(NEENA, "buy towels please");
+      await t.runtime.idle();
+      expect(t.request().buy?.card).toEqual({ userId: `kitty-${NEENA}`, paymentMethodId: "pm_neena01" });
+      expect(made).toEqual([{ userId: `kitty-${NEENA}`, paymentMethodId: "pm_neena01" }]);
+      expect(t.request().state.name).toBe("awaiting_approval");
+    });
+
+    it("sets everyone up when a subscription starts: Face ID, card, and money", async () => {
+      const invites = { baseUrl: "https://kittyagent.vercel.app", secret: "s3cret" };
+      const inner = new InMemoryWalletAdapter();
+      const wallet: WalletAdapter = {
+        id: "with-balance",
+        getLimitStatus: (m) => inner.getLimitStatus(m),
+        canPull: (m, a) => inner.canPull(m, a),
+        pull: (p) => inner.pull(p),
+        balance: async () => usdc(1), // Siya has $1, her share is $6
+      };
+      const t = setup(200, { wallet, wallets, invites, cards: cardsDep() });
+      for (const who of [SIYA, TRISTAN]) await t.say(who, "hi"); // Tristan has no Kitty account
+      await t.dm(NEENA, "my kitty card: pm_neena01 (amex ending 1001)");
+      await t.say(NEENA, "trip plan"); // join links need the chat's plan
+      await t.say(NEENA, "split spotify with everyone");
+      const to = (h: string) => t.dms.filter((d) => d.handle === h).map((d) => d.text);
+      expect(to(TRISTAN).some((x) => x.includes("Face ID"))).toBe(true);
+      expect(to(SIYA).some((x) => x.startsWith("save the card you'd pay with") && x.includes(`jwt-${SIYA}`))).toBe(true);
+      expect(to(SIYA).some((x) => x.startsWith("your Spotify share is $6.00 a month and you have $1.00"))).toBe(true);
+      expect(to(NEENA).some((x) => x.startsWith("save the card"))).toBe(false); // already saved
     });
   });
 

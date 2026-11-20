@@ -18,7 +18,7 @@ export interface RequestRecord {
   /** Approved but held on the group's tab until someone says "settle up" (e.g. end of a trip). */
   onTab?: boolean;
   /** Pay-before: who's in the split and whose card pays the store (they get paid back). */
-  buy?: { participants: MemberId[]; payer: MemberId };
+  buy?: { participants: MemberId[]; payer: MemberId; card?: { userId: string; paymentMethodId: string } };
   /** Part of a subscription: its setup card (approved once by everyone) or one of its charges. */
   subscriptionId?: string;
   /** A scheduled subscription charge: already approved when the group started it, so no card. */
@@ -80,8 +80,20 @@ export function normalizePreferenceKey(item: string): string {
   return item.toLowerCase().trim().replace(/\s+/g, " ");
 }
 
+/** A member's own saved card (Crossmint), so when Kitty buys something they're paying for, it's their card. */
+export interface SavedCard {
+  /** Their Crossmint user (the card belongs to it; checkout and charge must use the same one). */
+  userId: string;
+  paymentMethodId: string;
+  /** "visa ending 4242", as the save page reported it. */
+  label?: string;
+  at: number;
+}
+
 interface StoreFile {
   groups: Record<string, GroupRecord>;
+  /** Saved cards by member handle (cards are per person, across all their chats). */
+  cards?: Record<string, SavedCard>;
   /** Next Arc block the Face ID join watcher should scan. */
   joinCursor?: bigint;
   /** Accounts already sent a testnet welcome balance, so a replayed join never pays twice. */
@@ -132,6 +144,14 @@ export class Store {
     if (welcomed) set.add(account.toLowerCase());
     else set.delete(account.toLowerCase());
     this.data.welcomed = [...set];
+  }
+
+  card(handle: string): SavedCard | undefined {
+    return this.data.cards?.[handle];
+  }
+
+  saveCard(handle: string, card: SavedCard): void {
+    (this.data.cards ??= {})[handle] = card;
   }
 
   put(record: GroupRecord): void {

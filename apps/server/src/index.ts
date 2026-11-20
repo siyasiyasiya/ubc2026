@@ -12,11 +12,12 @@
  *   purchase not wired yet (pay-before flow)
  */
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { ClaudeReceiptReader, runTurn, runDmTurn } from "@gta/agent";
 import { PhotonChatPort } from "@gta/imessage";
-import { createCrossmintPurchaseAdapterFromEnv } from "@gta/purchase";
+import { createCrossmintPurchaseAdapterFromEnv, crossmintJwtSignerFromEnv } from "@gta/purchase";
 import { SimulatedPurchaseAdapter } from "./simulated-purchase.js";
 import { elevenLabsFromEnv } from "./restaurant-call.js";
 import { usdc, type Usdc } from "@gta/core";
@@ -59,6 +60,7 @@ const runtime = new GroupRuntime({
   chats: config.allowedChatIds,
   ...(subscriptionEveryMs() ? { subscriptionEveryMs: subscriptionEveryMs() } : {}),
   ...autoTopUp(),
+  ...memberCards(),
 });
 runtime.attach();
 startJoinWatcher();
@@ -100,6 +102,35 @@ function startSubscriptions(): void {
     });
   tick();
   setInterval(tick, checkMs).unref?.();
+}
+
+/**
+ * Each member's own card for store buys. Needs the Crossmint client key + JWT key (to open the
+ * save-card form as that member), ONBOARD_URL, and BOT_IMESSAGE_ADDRESS (the save page texts the
+ * card id back to Kitty there). With CROSSMINT_API_KEY too, buys go on the payer's own card.
+ */
+function memberCards() {
+  const clientKey = process.env.CROSSMINT_CLIENT_API_KEY;
+  const bot = process.env.BOT_IMESSAGE_ADDRESS?.trim();
+  const base = process.env.ONBOARD_URL?.replace(/\/$/, "");
+  if (!clientKey || !process.env.CROSSMINT_JWT_PRIVATE_KEY || !bot || !base) {
+    console.log("member cards: off (set CROSSMINT_CLIENT_API_KEY, CROSSMINT_JWT_PRIVATE_KEY, ONBOARD_URL, BOT_IMESSAGE_ADDRESS)");
+    return {};
+  }
+  const signer = crossmintJwtSignerFromEnv();
+  // A stable Crossmint user per member that doesn't put their phone number in Crossmint.
+  const userIdFor = (handle: string) => `kitty-${createHash("sha256").update(`kitty-card:${handle}`).digest("hex").slice(0, 24)}`;
+  const realStore = Boolean(process.env.CROSSMINT_API_KEY || process.env.CROSSMINT_SERVER_API_KEY);
+  console.log(`member cards: on${realStore ? ", buys charge the payer's own card" : " (saving only; buys use the simulated store)"}`);
+  return {
+    cards: {
+      userIdFor,
+      // In the hash, so neither the key nor the token reaches Vercel's logs.
+      linkFor: (handle: string, name: string) =>
+        `${base}/card.html#${new URLSearchParams({ k: clientKey, t: signer.tokenFor(userIdFor(handle)), b: bot, n: name })}`,
+      ...(realStore ? { purchaseFor: (card: { userId: string; paymentMethodId: string }) => createCrossmintPurchaseAdapterFromEnv(process.env, {}, card) } : {}),
+    },
+  };
 }
 
 /** AUTO_TOPUP=off turns it off. On testnet Kitty sends the money (AUTO_TOPUP_DAILY_USD per account, default 300). */

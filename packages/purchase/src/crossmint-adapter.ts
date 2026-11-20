@@ -548,6 +548,8 @@ export function crossmintJwtSignerFromEnv(env: NodeJS.ProcessEnv = process.env):
 export function createCrossmintPurchaseAdapterFromEnv(
   env: NodeJS.ProcessEnv = process.env,
   overrides: Partial<CrossmintPurchaseAdapterConfig> = {},
+  /** A member's own saved card: checkout and charge both run as that member's Crossmint user. */
+  card?: { userId: string; paymentMethodId: string },
 ): CrossmintPurchaseAdapter {
   const signer = crossmintJwtSignerFromEnv(env);
   const client = new CrossmintHttpClient({
@@ -555,12 +557,12 @@ export function createCrossmintPurchaseAdapterFromEnv(
     clientApiKey: requireEnv(env, "CROSSMINT_CLIENT_API_KEY"),
     userToken: (userId) => signer.tokenFor(userId),
     clientOrigin: env.ONBOARD_URL,
-    userId: requireEnv(env, "CROSSMINT_USER_ID"),
+    userId: card?.userId ?? requireEnv(env, "CROSSMINT_USER_ID"),
     baseUrl: env.CROSSMINT_BASE_URL,
   });
   return new CrossmintPurchaseAdapter({
     client,
-    paymentMethodId: requireEnv(env, "CROSSMINT_PAYMENT_METHOD_ID"),
+    paymentMethodId: card?.paymentMethodId ?? requireEnv(env, "CROSSMINT_PAYMENT_METHOD_ID"),
     buyerProfileId: env.CROSSMINT_BUYER_PROFILE_ID,
     buyer: {
       email: env.CROSSMINT_BUYER_EMAIL,

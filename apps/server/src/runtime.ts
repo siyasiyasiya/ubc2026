@@ -76,6 +76,16 @@ export interface RuntimeDeps {
    * a day. "remind": real money, which only the member can add, so Kitty texts a one-tap top-up link.
    */
   autoTopUp?: { mode: "send"; send: (address: string, amount: Usdc) => Promise<string>; dailyUsd: number } | { mode: "remind" };
+  /**
+   * Members' own cards for store buys (Crossmint). `linkFor` makes a private save-card link (valid
+   * an hour); the page hands the card id back by a prefilled text to Kitty. `purchaseFor` is a store
+   * adapter that checks out and charges as that member, so a buy goes on the payer's own card.
+   */
+  cards?: {
+    userIdFor(handle: string): string;
+    linkFor(handle: string, name: string): string;
+    purchaseFor?(card: { userId: string; paymentMethodId: string }): PurchaseAdapter;
+  };
   /** Demo only (SUBSCRIPTION_EVERY_MIN): charge subscriptions this often instead of weekly/monthly. */
   subscriptionEveryMs?: number;
   now?: () => number;
@@ -199,6 +209,8 @@ export class GroupRuntime {
   /** Auto top-ups sent today per account, and the days a top-up reminder already went out. */
   private readonly autoTopUpSent = new Map<string, { day: string; amount: Usdc }>();
   private readonly topUpReminded = new Set<string>();
+  /** Store adapters for buys on a member's own card, by request id. */
+  private readonly purchases = new Map<string, PurchaseAdapter>();
   private queue: Promise<void> = Promise.resolve();
   private readonly now: () => number;
   private readonly log: (line: string) => void;
@@ -543,6 +555,9 @@ export class GroupRuntime {
       member.wallet = { address: event.account };
       member.limit = { ...event.limit };
       this.deps.store.save();
+      // Joined for a subscription: the card step is next in their setup.
+      const inSub = this.subscriptions(record).some((s) => s.status !== "cancelled" && handle in s.split.shares);
+      if (!already && inSub && !this.deps.store.card(handle) && this.deps.cards) await this.sendCardLink(member, record);
       return { chatId, handle };
     }
     this.log(`join with unknown ticket ${event.ticket.slice(0, 10)}… from ${event.account}`);
@@ -714,6 +729,7 @@ export class GroupRuntime {
 
   private async handleDirectMessage(msg: IncomingMessage): Promise<void> {
     if (await this.takeName(msg)) return;
+    if (await this.takeCard(msg)) return;
     const handle = msg.senderHandle;
     const memberships = this.membershipsOf(handle);
     const name = memberships[0]?.member.displayName ?? this.deps.names[handle] ?? `…${handle.slice(-4)}`;
@@ -740,6 +756,33 @@ export class GroupRuntime {
    * The reply to "what should I call you?": save the name everywhere this person is a member, then
    * send each waiting group's Face ID link. Returns false when no name question is pending.
    */
+  /**
+   * "my kitty card: pm_… (visa ending 4242)": the save-card page's prefilled text. The id alone can't
+   * charge anything (charges need this member's own signed token), so taking it from their own
+   * thread is safe.
+   */
+  private async takeCard(msg: IncomingMessage): Promise<boolean> {
+    const match = /my kitty card:\s*([A-Za-z0-9_.:-]{6,100})(?:\s*\(([^)]{1,60})\))?/i.exec(msg.text);
+    if (!match || !this.deps.cards) return false;
+    const handle = msg.senderHandle;
+    const label = match[2]?.trim();
+    this.deps.store.saveCard(handle, { userId: this.deps.cards.userIdFor(handle), paymentMethodId: match[1]!, ...(label ? { label } : {}), at: this.now() });
+    this.deps.store.save();
+    const name = this.membershipsOf(handle)[0]?.member.displayName ?? this.deps.names[handle] ?? "";
+    await this.sendDm(handle, `dm:${handle}`, name, `saved${label ? ` your ${label}` : " your card"} ✓ when Kitty buys something and you're the one paying, it goes on this card, only after everyone 👍s.`);
+    return true;
+  }
+
+  /** Texts a member their private save-card link. */
+  private async sendCardLink(member: Member, record?: GroupRecord): Promise<string> {
+    if (!this.deps.cards) return "Saving cards isn't set up on this bot.";
+    const link = this.deps.cards.linkFor(member.id, member.displayName);
+    const text = `save the card you'd pay with when Kitty buys stuff for the group. it's only charged after everyone 👍s, and card details go straight to Crossmint, never Kitty (link works for an hour): ${link}`;
+    if (record) await this.dm(record, member, text);
+    else await this.sendDm(member.id, `dm:${member.id}`, member.displayName, text);
+    return `Texted ${member.displayName} a private link to save their card.`;
+  }
+
   private async takeName(msg: IncomingMessage): Promise<boolean> {
     const handle = msg.senderHandle;
     const waiting = this.deps.store.all().filter((r) => r.awaitingName?.includes(handle));
@@ -797,6 +840,10 @@ export class GroupRuntime {
     const testMoney = this.deps.testMoney;
     return {
       ...(testMoney ? { addTestMoney: ({ usd }: { usd: number }) => this.addTestMoney(memberships, usd) } : {}),
+      sendCardLink: async () => {
+        const first = memberships[0];
+        return first ? this.sendCardLink(first.member) : "They aren't in any Kitty yet.";
+      },
       sendStatusLink: async () => {
         const base = this.deps.invites?.baseUrl;
         if (!base) return "The Kitty page isn't configured, so no link to send.";
@@ -967,7 +1014,8 @@ export class GroupRuntime {
         const limit = status.limit.amount > 0n ? status.limit : m.limit;
         const when = limit.period === "once" ? "in total (one time, never refills)" : `this ${limit.period === "weekly" ? "week" : "month"}`;
         const money = balance === undefined ? "" : `balance ${formatUsdc(balance)} (money in their account); `;
-        return `- ${m.displayName} (${m.id}): ${money}this chat can still take ${formatUsdc(status.remaining)} of their ${formatUsdc(limit.amount)} limit ${when}`;
+        const card = this.deps.cards ? (this.deps.store.card(m.id) ? "; card saved for buys" : "; no card saved") : "";
+        return `- ${m.displayName} (${m.id}): ${money}this chat can still take ${formatUsdc(status.remaining)} of their ${formatUsdc(limit.amount)} limit ${when}${card}`;
       }),
     );
     const open = record.requests
@@ -1119,6 +1167,13 @@ export class GroupRuntime {
         }
       },
       cancelSubscription: async ({ title }) => this.cancelSubscription(record, sender, title),
+      sendCardLink: async ({ name }) => {
+        try {
+          return await this.sendCardLink(name ? this.resolve(record, name) : sender, record);
+        } catch (err) {
+          return `Could not send that: ${(err as Error).message}`;
+        }
+      },
     };
   }
 
@@ -1223,7 +1278,58 @@ export class GroupRuntime {
     const request = await this.startReimbursement(record, sender, title, split, false, sub.id);
     sub.setupRequestId = request.id;
     this.deps.store.save();
-    return `Posted subscription card #${request.number}: ${this.cardText(record, request)}`;
+    const setup = await this.setUpFor(record, sub);
+    return `Posted subscription card #${request.number}: ${this.cardText(record, request)}${setup ? `\n${setup}` : ""}`;
+  }
+
+  /**
+   * Everyone in a new subscription gets set up for it privately: a Face ID link for anyone without
+   * a Kitty account, a save-card link for anyone without a card, and an add-money link for anyone
+   * whose balance can't cover their first share. Returns a line for the agent ("" when all set).
+   */
+  private async setUpFor(record: GroupRecord, sub: Subscription): Promise<string> {
+    const joining: string[] = [];
+    const cards: string[] = [];
+    const short: string[] = [];
+    const notes = new Set<string>();
+    for (const [memberId, share] of Object.entries(sub.split.shares)) {
+      const member = record.group.members.find((m) => m.id === memberId);
+      if (!member) continue;
+      try {
+        if (!member.wallet) {
+          const sent = await this.sendJoinLink(record, member);
+          if (sent.startsWith("No link sent")) notes.add(sent);
+          else joining.push(member.displayName);
+          continue;
+        }
+        if (this.deps.cards && !this.deps.store.card(member.id)) {
+          await this.sendCardLink(member, record);
+          cards.push(member.displayName);
+        }
+        if (memberId === sub.split.payeeMemberId || !this.deps.invites) continue;
+        const balance = await this.walletFor(record).balance?.(member);
+        if (balance === undefined || balance >= share) continue;
+        const url = new URL(this.deps.invites.baseUrl);
+        url.searchParams.set("a", member.wallet.address);
+        url.searchParams.set("c", this.chatLabel(record, member.id));
+        await this.dm(
+          record,
+          member,
+          `your ${sub.title} share is ${formatUsdc(share)} a ${sub.every === "weekly" ? "week" : "month"} and you have ${formatUsdc(balance)}. add money so it goes through: ${this.withChats(url, member.id)}`,
+        );
+        short.push(member.displayName);
+      } catch (err) {
+        this.log(`setup for ${sub.title}, ${member.displayName}: ${(err as Error).message}`);
+      }
+    }
+    return [
+      joining.length ? `Texted a Face ID setup link to ${joining.join(", ")} (they need a Kitty account before it can start).` : "",
+      cards.length ? `Texted a save-card link to ${cards.join(", ")}.` : "",
+      short.length ? `Texted an add-money link to ${short.join(", ")} (balance below their share).` : "",
+      ...notes,
+    ]
+      .filter(Boolean)
+      .join(" ");
   }
 
   private async cancelSubscription(record: GroupRecord, sender: Member, title: string): Promise<string> {
@@ -1399,10 +1505,11 @@ export class GroupRuntime {
     sender: Member,
     input: Parameters<TreasuryActions["buyForGroup"]>[0],
   ): Promise<string> {
-    const purchase = this.deps.purchase;
-    if (!purchase) return "Buying isn't set up on this bot yet.";
+    if (!this.deps.purchase) return "Buying isn't set up on this bot yet.";
     const payer = this.resolve(record, input.payer);
     if (!payer.wallet) return `${payer.displayName} needs a Kitty account first (send_join_link), so they can be paid back.`;
+    const saved = this.deps.store.card(payer.id);
+    const card = saved && this.deps.cards?.purchaseFor ? { userId: saved.userId, paymentMethodId: saved.paymentMethodId } : undefined;
     const participants = [...new Set(input.participants.map((p) => this.resolve(record, p).id))];
     const number = record.requests.reduce((max, r) => Math.max(max, r.number), 0) + 1;
     const request: RequestRecord = {
@@ -1413,10 +1520,11 @@ export class GroupRuntime {
       requesterId: sender.id,
       state: initialState("pay_before"),
       createdAt: this.now(),
-      buy: { participants, payer: payer.id },
+      buy: { participants, payer: payer.id, ...(card ? { card } : {}) },
     };
     record.requests.push(request);
     this.deps.store.save();
+    const purchase = this.purchaseFor(request)!;
 
     this.inBackground(async () => {
       try {
@@ -1433,12 +1541,23 @@ export class GroupRuntime {
         await this.run(() => this.purchaseFailed(record, request, `couldn't build the cart: ${(err as Error).message}`));
       }
     });
-    return `Shopping for #${number} ${input.title} at ${purchase.store} now. The checkout will come back for 👍s; nothing is ordered until everyone approves.`;
+    const onCard = card ? ` It goes on ${payer.displayName}'s own card${saved?.label ? ` (${saved.label})` : ""}.` : "";
+    return `Shopping for #${number} ${input.title} at ${purchase.store} now. The checkout will come back for 👍s; nothing is ordered until everyone approves.${onCard}`;
+  }
+
+  /** The store adapter for a buy: the payer's own saved card when they have one, else the bot's default. */
+  private purchaseFor(request: RequestRecord): PurchaseAdapter | undefined {
+    const card = request.buy?.card;
+    const make = this.deps.cards?.purchaseFor;
+    if (!card || !make) return this.deps.purchase;
+    let adapter = this.purchases.get(request.id);
+    if (!adapter) this.purchases.set(request.id, (adapter = make(card)));
+    return adapter;
   }
 
   /** The cart is priced: split it, flag anyone whose limit is short, and post the checkout for 👍s. */
   private async previewCart(record: GroupRecord, request: RequestRecord, built: Cart): Promise<void> {
-    const purchase = this.deps.purchase;
+    const purchase = this.purchaseFor(request);
     if (!purchase || !request.buy) return this.purchaseFailed(record, request, "buying isn't set up");
     const { screenshot, total, cart } = await purchase.preview(built);
     const split = evenSplit({ total, participantIds: request.buy.participants, payeeMemberId: request.buy.payer });
@@ -1466,7 +1585,7 @@ export class GroupRuntime {
   }
 
   private async placeOrder(record: GroupRecord, request: RequestRecord, cart: Cart): Promise<void> {
-    const purchase = this.deps.purchase;
+    const purchase = this.purchaseFor(request);
     if (!purchase) return this.run(() => this.purchaseFailed(record, request, "buying isn't set up"));
     try {
       const receipt = await purchase.placeOrder({ cart });

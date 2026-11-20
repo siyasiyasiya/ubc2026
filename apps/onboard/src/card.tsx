@@ -1,8 +1,12 @@
 /**
- * Save the card Kitty pays stores with (Crossmint). Opened from a link the server prints
- * (`pnpm --filter @gta/server crossmint card`): the hash carries Crossmint's client key and a
- * short-lived user JWT Kitty signed. Card details go straight into Crossmint's iframe; this page
- * only ever sees the resulting paymentMethodId, which goes into CROSSMINT_PAYMENT_METHOD_ID.
+ * Save a card Kitty pays stores with (Crossmint). Two ways in, both with Crossmint's client key and
+ * a short-lived user JWT Kitty signed in the hash:
+ *   - a member's private link from Kitty (`b` = Kitty's iMessage address, `n` = their name): their
+ *     own card. The page has no backend, so "Send to Kitty" opens Messages with the card id typed
+ *     out; Kitty saves it from their thread (the id alone can't charge anything).
+ *   - the operator's link (`pnpm --filter @gta/server crossmint card`): the bot's default card, which
+ *     goes into CROSSMINT_PAYMENT_METHOD_ID.
+ * Card details go straight into Crossmint's iframe; this page only ever sees the paymentMethodId.
  */
 import {
   CrossmintPaymentMethodManagement,
@@ -15,6 +19,14 @@ import { createRoot } from "react-dom/client";
 const params = new URLSearchParams(location.hash.slice(1));
 const apiKey = params.get("k") ?? "";
 const jwt = params.get("t") ?? "";
+/** Kitty's iMessage address: set on a member's own link. */
+const bot = params.get("b") ?? "";
+const name = params.get("n") ?? "";
+
+/** iOS takes `&body=` after the address; the text is what Kitty's server looks for. */
+export function sendToKittyHref(address: string, id: string, label: string): string {
+  return `sms:${address}&body=${encodeURIComponent(`my kitty card: ${id} (${label})`)}`;
+}
 
 type Saved = { id: string; label: string };
 
@@ -39,6 +51,19 @@ function CardForm() {
     }
   }
 
+  if (saved && bot) {
+    return (
+      <>
+        <h1>Card saved</h1>
+        <p className="ok">{saved.label}</p>
+        <p>One more tap: send it to Kitty so your buys go on this card.</p>
+        <a className="send" href={sendToKittyHref(bot, saved.id, saved.label)}>
+          Send to Kitty
+        </a>
+      </>
+    );
+  }
+
   if (saved) {
     return (
       <>
@@ -54,8 +79,12 @@ function CardForm() {
 
   return (
     <>
-      <h1>Kitty's card</h1>
-      <p>The card Kitty pays stores with once the group 👍s an order. Card details go straight to Crossmint.</p>
+      <h1>{bot ? `${name ? `${name}, your` : "Your"} card` : "Kitty's card"}</h1>
+      <p>
+        {bot
+          ? "When Kitty buys something for your group and you're the one paying, it goes on this card, only after everyone 👍s. Card details go straight to Crossmint, never Kitty."
+          : "The card Kitty pays stores with once the group 👍s an order. Card details go straight to Crossmint."}
+      </p>
       <div className="form">
         <CrossmintPaymentMethodManagement ref={ref} jwt={jwt} allowedModes={["new", "existing"]} />
       </div>

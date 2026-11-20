@@ -27,7 +27,7 @@ What you can do:
 - Members can set their own spending limit.
 - Each group chat has a plan: a trip has a one-time limit per person (it never refills), roommates or friends have a weekly or monthly limit that refills up to the limit. Money stays in each person's own account until something is split.
 - Splits settle right away, or go on the group's tab and settle together when someone says "settle up" (handy at the end of a trip). The person proposing picks; if a trip and they don't say, ask.
-- Kitty can buy things for the group (paper towels, tickets, a place to stay). Confirm what to get, who's splitting it, and whose card pays the store, then call buy_for_group. It posts the checkout for 👍s; the order is only placed once everyone in the split approves. Give an estimated price per item when you know one.
+- Kitty can buy things for the group (paper towels, tickets, a place to stay). Confirm what to get, who's splitting it, and whose card pays the store, then call buy_for_group. Each person can save their own card (send_card_link); the member list says who has one. It posts the checkout for 👍s; the order is only placed once everyone in the split approves. Give an estimated price per item when you know one.
 - When someone asks for something generic without naming a brand or product ("we need dishwasher soap", "get paper towels"), don't just pick one. Use web_search to find 2 or 3 real current products, then send them as SEPARATE texts like a friend firing off a few links, not a catalog: to split one reply into several texts, put a line that is only "---" between the parts. Open with a quick casual line ("ok few options"). Then for each product, two texts: a human one-liner (brand, rough price, a quick take, like "cascade platinum, ~$18, solid all-rounder" or "finish quantum, ~$13, cheaper and still good"), then its direct https:// product link on its own as the next text. No "1. 2. 3." numbering and no store-listing voice, just talk. End with a casual nudge ("which one?"). They can reply to the one they want or just name it ("the cascade one"). Each link MUST be the direct product page for that one item (the page with an add-to-cart button), NOT a category, search, browse, "best of" or review/roundup page. Direct product pages look like walmart.com/ip/..., amazon.com/dp/... (or /gp/product/...), target.com/p/...; those are examples, every store has its own product-page shape, so for any other retailer use that store's single-item page the same way (one item, add-to-cart), not a listing. If a search result is a list or review page, search again (try the product name plus the store, or "site:walmart.com/ip <product>") until you land on the item page. If you still can't find a direct product link for an option, drop that option. Never make up a url. Only then call buy_for_group with their pick, passing that product's link in the request so the store buys that exact one. Skip the search and go straight to buy_for_group when: they named a specific brand or product, they say "whatever's cheapest" or "you pick", or there's a saved usual for this item. Only search for a buy like this, not for normal chat.
 - Saved usuals are in the snapshot: a "Usuals" section (the whole chat's) and per-person usuals listed by name. The person asking gets their own personal usual first; if they don't have one, use the group usual; if neither, offer options. Only a personal usual belongs to the person who set it, so don't use Siya's personal pick when Neena asks.
 - When someone settles on a usual, call set_preference and confirm. scope "group" for the chat's usual ("always get Cascade", "make Bounty our paper towels"); scope "personal" for their own ("I always want the fragrance-free one").
@@ -127,6 +127,8 @@ export interface TreasuryActions {
   }): Promise<string>;
   /** Stop a subscription by name. */
   cancelSubscription(input: { title: string }): Promise<string>;
+  /** Text a member (the sender by default) a private link to save their own card, used when Kitty buys something they're paying for. */
+  sendCardLink(input: { name?: string }): Promise<string>;
 }
 
 export interface TurnInput {
@@ -344,6 +346,13 @@ export async function runTurn(input: TurnInput): Promise<string | null> {
       run: (a) => actions.cancelSubscription({ title: a.title }),
     }),
     betaZodTool({
+      name: "send_card_link",
+      description:
+        "Text someone (the sender by default) a private link to save their own card. When Kitty buys something and they're paying, it goes on their card after everyone 👍s. Use when someone wants to pay with their card, save or change their card, or is the payer on a buy and has no card saved (the member list says).",
+      inputSchema: z.object({ name: z.string().optional().describe("Member's name; omit for the sender") }),
+      run: (a) => actions.sendCardLink(a.name ? { name: a.name } : {}),
+    }),
+    betaZodTool({
       name: "cancel_request",
       description: "Cancel an open request by its number, if the sender is in it.",
       inputSchema: z.object({ number: z.number().int() }),
@@ -402,6 +411,8 @@ export interface DmActions {
   sendStatusLink(): Promise<string>;
   /** Testnet only: put test dollars straight into their Kitty account. Absent in production. */
   addTestMoney?(input: { usd: number }): Promise<string>;
+  /** Text them a private link to save their own card for when Kitty buys something they're paying for. */
+  sendCardLink(): Promise<string>;
 }
 
 export interface DmTurnInput {
@@ -425,6 +436,13 @@ export async function runDmTurn(input: DmTurnInput): Promise<string | null> {
         "Text the person their private add-money link (Apple Pay / debit). Use when they want to add money, top up, or say their balance is low. No money moves; it just sends the link.",
       inputSchema: z.object({}),
       run: () => actions.sendTopUpLink(),
+    }),
+    betaZodTool({
+      name: "send_card_link",
+      description:
+        "Text the person a private link to save their own card (or change it). When Kitty buys something for a group and they're the one paying, it goes on this card, only after everyone 👍s. Use when they want to save, add, or change their card.",
+      inputSchema: z.object({}),
+      run: () => actions.sendCardLink(),
     }),
     betaZodTool({
       name: "send_status_link",

@@ -54,6 +54,7 @@ As of Nov 19, 2026, run live in a real iMessage group on Arc testnet unless note
 | Restaurant calls (ElevenLabs) | 🟡 voice agent live: a real voice conversation started from Kitty's link, found and read back by the server code ("📞 booked Uchi for 4 … ✅"); from the group chat: live run pending a bot restart. Phone-line calls need a paid Twilio number |
 | Subscriptions (Spotify, rent): the group 👍s once, then Kitty charges the same split every week or month; "cancel Spotify" stops it | 🟡 built and tested, run end to end with the real agent in the simulator; live run pending |
 | Balance = what your kitties can take: each period Kitty tops a member's balance up to the sum of what's left of their caps (testnet: sends it; real money: a one-tap Apple Pay text) | 🟡 built and tested; live run pending |
+| Each person saves their own card; a buy goes on the payer's own card. Starting a subscription sets everyone in it up privately (Face ID, card, add money) | 🟡 built and tested; live run pending (needs `BOT_IMESSAGE_ADDRESS` and a deploy of the card page) |
 | Web dashboard ("your kitties"): balance and add money, every kitty with its cap, each kitty's purchases, change a cap, your own activity | 🟡 built and tested against live Arc data, phone run pending |
 | Using members' existing store accounts, Link one-time cards, connecting an existing wallet | ⬜ not built |
 
@@ -74,6 +75,8 @@ For things like paper towels, tickets or an Airbnb.
 
 If a store blocks the agent, the request ends with "nothing was charged".
 
+**Whose card:** each member can save their own card from a private link Kitty texts them (when they join a subscription, or when they ask). The link opens the same Crossmint form as that member's own Crossmint user (a hashed id, so their phone number never reaches Crossmint). The page has no backend, so after saving, a **Send to Kitty** button opens Messages with "my kitty card: pm_… (visa ending 4242)" typed out; Kitty saves it from their own thread. The id alone can't charge anything: a charge also needs that member's token, which only Kitty can sign. When someone pays for a buy, Kitty checks out and charges as them, on their card. Without a saved card it falls back to the bot's default card.
+
 **How the card is charged:** Crossmint only authorizes a card charge (an "order intent") with a client key plus a signed-in user token. Kitty has no separate login service, so it signs short-lived user tokens itself (RS256, Crossmint's "Custom tokens" option) and publishes the public key at `kittyagent.vercel.app/api/jwks`. The card is saved once on `kittyagent.vercel.app/card.html` inside Crossmint's own form, so card numbers never touch Kitty; Kitty only keeps the card's id. On first use Kitty registers the card for order intents. At checkout the store's questions (email for the receipt, name, ZIP, country) are answered from the buyer details in `.env`, only the fields asked; Kitty always checks out as a guest, and stops without charging if a store needs something it doesn't have.
 
 ### 2. A member already paid (pay after)
@@ -89,7 +92,7 @@ For things like dinner, a bar tab or a ride, where the real amount isn't known u
 
 For things like Spotify, rent or a cleaner.
 
-1. Someone says "let's split Spotify every month, $18, I pay it". The agent posts a 🔁 card with the amount, how often, and each share.
+1. Someone says "let's split Spotify every month, $18, I pay it". The agent posts a 🔁 card with the amount, how often, and each share, and privately sets up everyone in it: a Face ID link for anyone without a Kitty account, a save-card link for anyone without a card, and an add-money link for anyone whose balance can't cover their share.
 2. Everyone in the split 👍s it once. That settle is the first charge.
 3. After that, the server charges the same split every week or month on its own (`chargeSubscriptions`, run on a timer). Each charge goes through the same `propose` → `approveFor` → `settle` path on the contract as any split, so it still can't go past anyone's limit, and a share that can't be pulled becomes a debt with a pay-back link.
 4. Anyone in the split can say "cancel Spotify", and nothing more is charged. If the bot was off for a while, it charges once, not once per missed period.
