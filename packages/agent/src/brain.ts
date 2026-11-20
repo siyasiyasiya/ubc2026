@@ -231,7 +231,7 @@ export async function runTurn(input: TurnInput): Promise<string | null> {
     betaZodTool({
       name: "net_debts",
       description:
-        "Settle up outstanding debts the simplest way: 'who owes what', 'settle our debts', 'net us out', 'who owes who'. Works out the fewest pay-backs and collapses the debts down to that onchain when the contract supports it. Post what it returns as-is. It does not send any link, so never claim you texted a pay-back link.",
+        "Settle up outstanding debts the simplest way: 'who owes what', 'settle our debts', 'net us out', 'who owes who'. Works out the fewest pay-backs and collapses the debts down to that onchain when the contract supports it. Post what it returns as-is. When the netting is committed onchain it privately texts each person who owes a fresh pay-back link and its reply says so; only mention a link if the reply does.",
       inputSchema: z.object({}),
       run: () => actions.netDebts(),
     }),

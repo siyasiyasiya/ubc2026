@@ -356,7 +356,9 @@ describe("GroupRuntime", () => {
       }
     }
     const wallet = new NettingWallet();
-    const t = setup(200, { wallet: () => wallet });
+    const SIYA_ACCOUNT = "0x00000000000000000000000000000000000051a1";
+    const invites = { baseUrl: "https://kittyagent.vercel.app", secret: "s3cret" };
+    const t = setup(200, { wallet: () => wallet, invites, wallets: { [SIYA]: SIYA_ACCOUNT } });
     for (const w of [NEENA, SIYA, TRISTAN]) await t.say(w, "hi"); // seed members
 
     // Chain: Neena owes Tristan $12, Tristan owes Siya $12 → nets to Neena → Siya $12.
@@ -387,6 +389,11 @@ describe("GroupRuntime", () => {
     const msg = t.posted.at(-1)!.text;
     expect(msg).toContain("netted everyone down");
     expect(msg).toContain("Neena → Siya $12.00");
+    // The old pay-back link was for Tristan; Neena gets a fresh one for the netted debt to Siya.
+    expect(msg).toContain("texted Neena a link to pay it back");
+    const payBack = t.dms.filter((d) => d.handle === NEENA).at(-1)!;
+    expect(payBack.text).toContain("you owe Siya $12.00 in total");
+    expect(payBack.text).toContain(`r=${SIYA_ACCOUNT}`);
   });
 
   it("gives a spending summary with per-person totals and the biggest spender", async () => {

@@ -999,7 +999,18 @@ export class GroupRuntime {
     const lines = net.map((t) => `${this.name(record, t.from)} → ${this.name(record, t.to)} ${formatUsdc(t.amount)}`);
     const note = debts.length > net.length ? `\n(${net.length} transfer${net.length === 1 ? "" : "s"} instead of ${debts.length})` : "";
     const header = executed ? "netted everyone down, it's just:" : "simplest way to settle up:";
-    return `${header}\n${lines.join("\n")}${note}`;
+    // Once netted onchain the old pay-back links show the new amount but still say the old one, so
+    // send fresh ones. Not when advisory: the onchain debts are still the original pairs.
+    const texted: string[] = [];
+    if (executed) {
+      for (const t of net) {
+        const debtor = memberOf(t.from);
+        const creditor = memberOf(t.to);
+        if (debtor && creditor && (await this.sendPayBackLink(record, debtor, creditor, t.amount, `after netting, you owe ${creditor.displayName} ${formatUsdc(t.amount)} in total.`))) texted.push(debtor.displayName);
+      }
+    }
+    const sent = texted.length ? `\ntexted ${texted.join(" and ")} a link to pay it back 🔗` : "";
+    return `${header}\n${lines.join("\n")}${note}${sent}`;
   }
 
   /**
@@ -1791,18 +1802,31 @@ export class GroupRuntime {
     const head = failed === 0 ? `✅ Settled #${request.number} ${request.title}` : `⚠️ Partly settled #${request.number} ${request.title}`;
     await this.say(record.group.chatId, `${lead}${head} (${formatUsdc(split.total)})\n${lines.join("\n")}`);
     for (const { member, amount, reason } of short) {
-      if (!payee?.wallet || !this.deps.invites) continue;
-      const link = this.pageLink(record, member, {
-        r: payee.wallet.address,
-        o: payee.displayName,
-        m: formatUsdc(amount).slice(1),
-      });
-      await this.dm(
+      if (!payee) continue;
+      await this.sendPayBackLink(
         record,
         member,
-        `heads up: your ${formatUsdc(amount)} share of ${request.title} didn't go through (${reason.replace("their", "your")}), so it's owed to ${payee.displayName} for now. add money and pay it back: ${await this.cardLink(link, `Pay ${payee.displayName} back ${formatUsdc(amount)}`)}`,
+        payee,
+        amount,
+        `heads up: your ${formatUsdc(amount)} share of ${request.title} didn't go through (${reason.replace("their", "your")}), so it's owed to ${payee.displayName} for now.`,
       );
     }
+  }
+
+  /** Privately text a debtor their Face ID pay-back link, after `why`. False when there's no page or creditor account. */
+  private async sendPayBackLink(record: GroupRecord, debtor: Member, creditor: Member, amount: Usdc, why: string): Promise<boolean> {
+    if (!creditor.wallet || !this.deps.invites) return false;
+    const link = this.pageLink(record, debtor, {
+      r: creditor.wallet.address,
+      o: creditor.displayName,
+      m: formatUsdc(amount).slice(1),
+    });
+    await this.dm(
+      record,
+      debtor,
+      `${why} add money and pay it back: ${await this.cardLink(link, `Pay ${creditor.displayName} back ${formatUsdc(amount)}`)}`,
+    );
+    return true;
   }
 
   cardText(record: GroupRecord, request: RequestRecord): string {
