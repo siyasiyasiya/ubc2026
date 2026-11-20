@@ -36,9 +36,12 @@ Be brief, warm and polite. Ask for the table at that time. If it isn't available
 time they can offer is, but do not accept a different time yourself: say you'll check with the group
 and call back. If they need a phone number or deposit, say the group will follow up and end politely.
 Confirm the details back once before ending the call. If you reach voicemail, leave no message and hang up.
+Staff often pause or say "um" while they check the book: wait quietly. Don't fill silences or ask if they're still there.
 ```
 
 The `{{…}}` names are dynamic variables. The server fills them for each call (`conversation_initiation_client_data.dynamic_variables`). Also add a `call_ref` placeholder (any value): link calls carry it so the server can find their conversation.
+
+**Turn taking** (Advanced): eagerness **Patient**, speculative turn **off**, turn timeout **15 s**. With the defaults Kitty jumped in on every "um" and asked "are you still there?" after a short pause.
 
 **Analysis → Data collection** (exact names; the server reads these)
 

@@ -21,6 +21,7 @@ import type { ChatPort, IncomingMessage, IncomingReaction } from "@gta/core";
 import { createCrossmintPurchaseAdapterFromEnv } from "@gta/purchase";
 import { InMemoryWalletAdapter } from "@gta/wallet";
 import { config, warnIfNoClaudeAuth } from "./config.js";
+import { elevenLabsFromEnv } from "./restaurant-call.js";
 import { GroupRuntime } from "./runtime.js";
 import { SimulatedPurchaseAdapter } from "./simulated-purchase.js";
 import { Store } from "./store.js";
@@ -65,6 +66,9 @@ console.log(realStore ? `purchase: REAL Crossmint orders (${purchase.store})` : 
 const store = new Store(process.env.SIM_STATE_FILE);
 /** `/later <days>` moves this pretend clock forward, so a monthly subscription's next charge can be seen. */
 let clockOffsetMs = 0;
+const calls = elevenLabsFromEnv();
+console.log(calls ? "calls: ElevenLabs voice agent" : "calls: off (set ELEVENLABS_API_KEY and ELEVENLABS_AGENT_ID)");
+
 const runtime = new GroupRuntime({
   chat,
   wallet: new InMemoryWalletAdapter(),
@@ -81,6 +85,8 @@ const runtime = new GroupRuntime({
     "+15550000003": "0x0000000000000000000000000000000000000003",
   },
   purchase,
+  // Real ElevenLabs calls when its keys are in .env; the restaurant's link text prints as a DM below.
+  ...(calls ? { calls } : {}),
   now: () => Date.now() + clockOffsetMs,
   log: (line) => console.log(`  (${line})`),
 });
