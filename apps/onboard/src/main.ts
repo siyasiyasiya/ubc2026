@@ -463,6 +463,8 @@ async function showFunding(address: Hex): Promise<void> {
   // `arc` is typed for the Arc chain; the snapshot only needs readContract, so the generic chain type is dropped.
   showSnapshot(arc as unknown as Parameters<typeof showSnapshot>[0], treasury, address, chatsFromLink(params), start / 10n ** 12n).catch((err) => console.error("snapshot", err));
 
+  void offerTestMoney(address, balanceText, add);
+
   try {
     const res = await fetch("/api/onramp-session", {
       method: "POST",
@@ -497,6 +499,45 @@ async function showFunding(address: Hex): Promise<void> {
     }, 5000);
     setTimeout(() => clearInterval(timer), 15 * 60 * 1000);
   }, { once: true });
+}
+
+/**
+ * Testnet: "Add $20 test money" sends real test USDC on Arc from the team's faucet wallet
+ * (/api/test-money), so the add-money step works end to end before Onramp is live. When it's on,
+ * it's the main button and Apple Pay steps back.
+ */
+async function offerTestMoney(address: Hex, balanceText: HTMLElement, add: HTMLAnchorElement): Promise<void> {
+  const test = $<HTMLAnchorElement>("test");
+  try {
+    const res = await fetch("/api/test-money");
+    if (!res.ok || !((await res.json()) as { on?: boolean }).on) return;
+  } catch {
+    return;
+  }
+  test.hidden = false;
+  add.classList.add("soft");
+  test.addEventListener("click", async (e) => {
+    e.preventDefault();
+    test.setAttribute("aria-disabled", "true");
+    test.textContent = "Adding test money…";
+    try {
+      const res = await fetch("/api/test-money", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ address }),
+      });
+      const body = (await res.json()) as { added?: number; balance?: number; error?: string };
+      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+      balanceText.textContent = `Added $${body.added} of test money. Balance: $${body.balance?.toFixed(2)}`;
+      balanceText.dataset.kind = "done";
+      test.hidden = true;
+    } catch (err) {
+      balanceText.textContent = (err as Error).message;
+      delete balanceText.dataset.kind;
+      test.textContent = "Add $20 test money";
+      test.removeAttribute("aria-disabled");
+    }
+  });
 }
 
 setup();
