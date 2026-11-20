@@ -56,7 +56,7 @@ As of Nov 19, 2026, run live in a real iMessage group on Arc testnet unless note
 | Balance = what your kitties can take: each period Kitty tops a member's balance up to the sum of what's left of their caps (testnet: sends it; real money: a one-tap Apple Pay text) | 🟡 built and tested; live run pending |
 | Each person saves their own card; a buy goes on the payer's own card. Starting a subscription sets everyone in it up privately (Face ID, card, add money) | 🟡 built and tested; live run pending (needs `BOT_IMESSAGE_ADDRESS` and a deploy of the card page) |
 | Web dashboard ("your kitties"): balance and add money, every kitty with its cap, each kitty's purchases, change a cap, your own activity | 🟡 built and tested against live Arc data, phone run pending |
-| Real-time onchain data from a QuickNode Stream (Arc Testnet): dashboard history and the bot's join / cap / pay-back alerts read it instead of polling the chain | 🟡 built and tested (filter, signed webhook, Postgres, feed); live Stream pending |
+| Real-time onchain data from a QuickNode Stream (Arc Testnet): dashboard history and the bot's join / cap / pay-back alerts read it instead of polling the chain | ✅ live: a real Face ID join (block 73163328) was delivered by the Stream with a valid QuickNode signature, stored in Neon, served by `/api/history`, and dispatched by the bot's watcher from the feed |
 | Using members' existing store accounts, Link one-time cards, connecting an existing wallet | ⬜ not built |
 
 ## How spending works
@@ -247,7 +247,7 @@ flowchart LR
 | Dataset | `block_with_receipts` | Receipts carry every log of a transaction, so the filter can keep the USDC transfers that happened alongside a treasury event; the block header carries the timestamp the history shows |
 | Range | From block 73141404 (the contract's deploy block) to the live tip | The backfill rebuilds the full history; after that it stays live. `fix_block_reorgs` on |
 | Filter | [`apps/onboard/streams/filter.js`](apps/onboard/streams/filter.js) | Keeps (a) every log emitted by `GroupTreasury` (`Joined`, `LimitSet`, `SpendProposed`, `SpendApproved`, `SharePulled`, `PullFailed`, `SpendSettled`, `DebtPaid`, …) and (b) the USDC `Transfer` logs in those same transactions. Rewrites them into the rows the Arc explorer API returns, so the page's existing decoder reads Stream rows and explorer rows the same way. Blocks with nothing of Kitty's return `null` and are never delivered |
-| Destination | Webhook → `https://kittyagent.vercel.app/api/stream`, batch size 1, no compression | Authenticates each delivery with the stream's security token: QuickNode's HMAC headers (`X-QN-Nonce` + `X-QN-Timestamp` + body) or a custom `X-Kitty-Secret` header set on the destination (QuickNode's "Check connection" sends no signature, so the header is what it passes with). Then upserts into Postgres keyed on `(tx_hash, log_index)`, so a redelivered batch is a no-op |
+| Destination | Webhook → `https://kittyagent.vercel.app/api/stream`, batch size 1, no compression | Authenticates each delivery with the stream's security token: QuickNode's HMAC headers (`X-QN-Nonce` + `X-QN-Timestamp` + body), which real deliveries carry, or a custom `X-Kitty-Secret` header set on the destination (QuickNode's "Check connection" sends no signature, so the header is what it passes with). Then upserts into Postgres keyed on `(tx_hash, log_index)`, so a redelivered batch is a no-op |
 
 **What reads it:**
 
