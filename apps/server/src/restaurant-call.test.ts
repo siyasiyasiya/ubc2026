@@ -53,13 +53,13 @@ describe("ElevenLabsRestaurantCaller", () => {
     await expect(caller.start(request)).rejects.toThrow("ElevenLabs 401: invalid api key");
   });
 
-  it("without a phone number, makes a talk-to link and finds the conversation it started", async () => {
+  it("without a phone number, makes a call-page link and finds the conversation it started", async () => {
     const { fetchFn, calls } = fakeFetch([]);
     const caller = new ElevenLabsRestaurantCaller({ apiKey: "k", agentId: "agent_1", fetch: fetchFn });
     const { callId, link } = await caller.start(request);
     expect(calls).toHaveLength(0);
     const url = new URL(link!);
-    expect(url.origin + url.pathname).toBe("https://elevenlabs.io/app/talk-to");
+    expect(url.origin + url.pathname).toBe("https://kittyagent.vercel.app/call.html");
     expect(url.searchParams.get("agent_id")).toBe("agent_1");
     expect(url.searchParams.get("var_restaurant")).toBe("Uchi");
     expect(url.searchParams.get("var_party_size")).toBe("4");

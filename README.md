@@ -131,11 +131,11 @@ Some plans need a phone call, not a checkout. In the chat: "kitty, book Uchi for
 
 1. The agent's `call_restaurant` tool starts an **ElevenLabs voice agent** call. The restaurant, party size, time and reservation name go in as dynamic variables, so one agent handles every booking.
    - **With a phone line:** an outbound phone call (`POST /v1/convai/twilio/outbound-call`) from a Twilio number connected to ElevenLabs.
-   - **Without one** (what our demo runs, since a Twilio trial can't get a number): Kitty texts the restaurant's number an iMessage with a link to ElevenLabs' talk-to page, carrying the same details as `var_…` parameters plus a one-off `call_ref`. Tapping it starts the same voice call on their phone.
+   - **Without one** (what our demo runs, since a Twilio trial can't get a number): Kitty texts the restaurant's number an iMessage link to its own incoming-call screen (`kittyagent.vercel.app/call.html`, from `apps/onboard`), carrying the same details as `var_…` parameters plus a one-off `call_ref`. It rings like a phone call; tapping Accept starts the same voice agent in their browser through the ElevenLabs client SDK (`@elevenlabs/client`, WebRTC), with live captions.
 2. The voice agent says it's an AI assistant calling for the group, asks for the table, and asks for the closest time if that one's taken. It never accepts a different time on its own.
 3. When the call ends, the server reads ElevenLabs' call analysis (`GET /v1/convai/conversations/{id}`; a link call is found first by its `call_ref` among the agent's new conversations): the data collection fields `reservation_confirmed`, `confirmed_time` and `alternative_offered`, the summary, and whether anyone picked up. It posts one line in the chat: "📞 booked Uchi for 4, 7:45pm, under Neena ✅", or the time they offered instead, or that it went to voicemail.
 
-Code: `apps/server/src/restaurant-call.ts`. Agent setup (prompt, data collection fields, phone number): [`docs/elevenlabs-agent.md`](docs/elevenlabs-agent.md). Calling is off until `ELEVENLABS_API_KEY` and `ELEVENLABS_AGENT_ID` are set; `ELEVENLABS_PHONE_NUMBER_ID` switches it from links to phone calls.
+Code: `apps/server/src/restaurant-call.ts`. Agent setup (prompt, data collection fields, phone number): [`docs/elevenlabs-agent.md`](docs/elevenlabs-agent.md). Calling is off until `ELEVENLABS_API_KEY` and `ELEVENLABS_AGENT_ID` are set; `ELEVENLABS_PHONE_NUMBER_ID` switches it from links to phone calls; `KITTY_CALL_PAGE_URL` overrides the call page.
 
 ## How Arc and Circle are used
 

@@ -8,9 +8,10 @@
  *           analysis.data_collection_results.{reservation_confirmed, confirmed_time, alternative_offered}
  *           analysis.transcript_summary, metadata.phone_call.call_result (answered | voicemail | busy | no_answer | failed)
  *
- * Without a phone number (no paid Twilio account), Kitty texts the restaurant's phone a link to ElevenLabs'
- * public talk-to page instead, with the same details as `var_…` parameters plus a `call_ref`. When they tap
- * it they talk to the same agent in the browser; the server finds that conversation by its `call_ref`
+ * Without a phone number (no paid Twilio account), Kitty texts the restaurant's phone a link to its own
+ * incoming-call page (apps/onboard/call.html) instead, with the same details as `var_…` parameters plus a
+ * `call_ref`. They tap Accept and talk to the same agent in the browser (ElevenLabs client SDK over WebRTC);
+ * the server finds that conversation by its `call_ref`
  * (GET /v1/convai/conversations?agent_id&call_start_after_unix) and reads it the same way.
  *
  * The agent itself (voice, the prompt that says it's an AI calling for a group, and the data
@@ -54,6 +55,8 @@ export interface ElevenLabsConfig {
   agentId: string;
   /** The phone_number_id ElevenLabs returned when the Twilio number was connected. Without it, calls go by link. */
   phoneNumberId?: string;
+  /** The page a link call opens: Kitty's incoming-call screen. It reads `agent_id` and `var_…` like ElevenLabs' talk-to page. */
+  callPageUrl?: string;
   baseUrl?: string;
   fetch?: typeof fetch;
 }
@@ -61,6 +64,7 @@ export interface ElevenLabsConfig {
 type Json = Record<string, unknown>;
 
 const LINK_PREFIX = "link:";
+export const DEFAULT_CALL_PAGE = "https://kittyagent.vercel.app/call.html";
 
 function dynamicVariables(request: RestaurantCallRequest): Record<string, string | number> {
   return {
@@ -102,7 +106,7 @@ export class ElevenLabsRestaurantCaller implements RestaurantCaller {
   private startByLink(request: RestaurantCallRequest): { callId: string; link: string } {
     const ref = crypto.randomUUID().slice(0, 8);
     const since = Math.floor(Date.now() / 1000) - 5;
-    const url = new URL("https://elevenlabs.io/app/talk-to");
+    const url = new URL(this.config.callPageUrl ?? DEFAULT_CALL_PAGE);
     url.searchParams.set("agent_id", this.config.agentId);
     for (const [key, value] of Object.entries({ ...dynamicVariables(request), call_ref: ref })) url.searchParams.set(`var_${key}`, String(value));
     return { callId: `${LINK_PREFIX}${ref}:${since}`, link: url.toString() };
@@ -187,6 +191,7 @@ export function elevenLabsFromEnv(env: NodeJS.ProcessEnv = process.env): ElevenL
   const apiKey = env.ELEVENLABS_API_KEY;
   const agentId = env.ELEVENLABS_AGENT_ID;
   const phoneNumberId = env.ELEVENLABS_PHONE_NUMBER_ID;
+  const callPageUrl = env.KITTY_CALL_PAGE_URL;
   if (!apiKey || !agentId) return undefined;
-  return new ElevenLabsRestaurantCaller({ apiKey, agentId, ...(phoneNumberId ? { phoneNumberId } : {}) });
+  return new ElevenLabsRestaurantCaller({ apiKey, agentId, ...(phoneNumberId ? { phoneNumberId } : {}), ...(callPageUrl ? { callPageUrl } : {}) });
 }

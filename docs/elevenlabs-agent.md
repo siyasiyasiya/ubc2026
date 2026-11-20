@@ -8,7 +8,7 @@ ElevenLabs places the call through a phone number connected to it. The documente
 
 A Twilio trial account can only call numbers you have verified in Twilio. Newer trial accounts can't claim a number at all until upgraded.
 
-**No phone number?** Leave `ELEVENLABS_PHONE_NUMBER_ID` empty. Kitty then texts the restaurant's number an iMessage link to the agent's public talk-to page (`https://elevenlabs.io/app/talk-to?agent_id=…&var_restaurant=…&var_call_ref=…`), and tapping it starts the same conversation in their browser. This needs the agent's authentication off (Advanced tab; the default for new agents).
+**No phone number?** Leave `ELEVENLABS_PHONE_NUMBER_ID` empty. Kitty then texts the restaurant's number an iMessage link to Kitty's incoming-call page (`https://kittyagent.vercel.app/call.html?agent_id=…&var_restaurant=…&var_call_ref=…`, in `apps/onboard`). Tapping Accept starts the same conversation in their browser with `@elevenlabs/client`. ElevenLabs' own talk-to page reads the same params, so `KITTY_CALL_PAGE_URL=https://elevenlabs.io/app/talk-to` is a fallback. This needs the agent's authentication off (Advanced tab; the default for new agents).
 
 ## 2. Agent
 
