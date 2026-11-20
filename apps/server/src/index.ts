@@ -125,9 +125,10 @@ function memberCards() {
   return {
     cards: {
       userIdFor,
-      // In the hash, so neither the key nor the token reaches Vercel's logs.
+      // In the hash, so neither the key nor the token reaches Vercel's logs. Short params first, so a
+      // link cut off in transit still shows the right "didn't come through whole" page.
       linkFor: (handle: string, name: string) =>
-        `${base}/card.html#${new URLSearchParams({ k: clientKey, t: signer.tokenFor(userIdFor(handle)), b: bot, n: name })}`,
+        `${base}/card.html#${new URLSearchParams({ b: bot, n: name, k: clientKey, t: signer.tokenFor(userIdFor(handle)) })}`,
       ...(realStore ? { purchaseFor: (card: { userId: string; paymentMethodId: string }) => createCrossmintPurchaseAdapterFromEnv(process.env, {}, card) } : {}),
     },
   };

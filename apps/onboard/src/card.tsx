@@ -28,6 +28,16 @@ export function sendToKittyHref(address: string, id: string, label: string): str
   return `sms:${address}&body=${encodeURIComponent(`my kitty card: ${id} (${label})`)}`;
 }
 
+/** Seconds until the user token runs out, or undefined when it can't be read. */
+function tokenSecondsLeft(token: string): number | undefined {
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1]!.replace(/-/g, "+").replace(/_/g, "/"))) as { exp?: number };
+    return payload.exp === undefined ? undefined : payload.exp - Date.now() / 1000;
+  } catch {
+    return undefined;
+  }
+}
+
 type Saved = { id: string; label: string };
 
 function CardForm() {
@@ -115,6 +125,24 @@ class Boundary extends Component<{ children: ReactNode }, { error?: string }> {
 }
 
 function App() {
+  const left = jwt ? tokenSecondsLeft(jwt) : undefined;
+  // A cut-off link (long links break when copied across lines) is not the same as an old one.
+  if ((bot || apiKey) && (!apiKey || !jwt || left === undefined)) {
+    return (
+      <>
+        <h1>This link didn't come through whole</h1>
+        <p>It got cut off on the way. Ask Kitty to "send my card link" again and tap it straight from Messages.</p>
+      </>
+    );
+  }
+  if (bot && left !== undefined && left <= 0) {
+    return (
+      <>
+        <h1>Link expired</h1>
+        <p>Card links work for an hour. Ask Kitty to "send my card link" again.</p>
+      </>
+    );
+  }
   if (!apiKey || !jwt) {
     return (
       <>
