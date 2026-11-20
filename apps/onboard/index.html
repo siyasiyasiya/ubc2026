@@ -224,6 +224,56 @@
       #kitty-note { margin-top: 12px; font-size: 14px; color: var(--bad); }
       #kitty-note:empty { display: none; }
 
+      /* Dashboard (?v=1). */
+      main.wide { max-width: 560px; }
+      #all { display: block; text-align: center; font-size: 15px; font-weight: 600; color: var(--accent); text-decoration: none; padding: 6px; }
+      #dash-home #fund { margin: 0 0 18px; padding: 18px; border: 0; background: var(--field); border-radius: 20px; }
+      #dash-home #balance { font-size: 22px; letter-spacing: -0.01em; }
+      #dash-home #fund a.button { padding: 13px; font-size: 16px; }
+      #dash-home #fund a.button.soft { background: var(--card); }
+      #dash-owe { display: grid; gap: 8px; margin-bottom: 16px; }
+      #dash-owe p { color: var(--bad); background: var(--bad-soft); padding: 12px 14px; border-radius: 14px; font-size: 15px; }
+      #dash-owe a { color: inherit; font-weight: 700; }
+      #dash-tabs { margin-bottom: 14px; }
+      #dash-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; font-size: 14px; color: var(--bad); }
+      #dash-error button { width: auto; padding: 6px 14px; font-size: 14px; border-radius: 10px; background: var(--bad-soft); color: var(--bad); }
+      .list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+      .list a.kitty { display: grid; gap: 6px; padding: 14px 36px 14px 14px; background: var(--field); border-radius: 16px; color: inherit; text-decoration: none; position: relative; transition: transform 0.1s; }
+      .list a.kitty::after { content: "›"; position: absolute; right: 14px; top: 50%; transform: translateY(-50%); font-size: 24px; color: var(--muted); }
+      .list a.kitty:active { transform: scale(0.98); }
+      .list a.kitty.off { opacity: 0.6; }
+      .list .top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+      .list .top strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .list .count { font-size: 13px; color: var(--muted); white-space: nowrap; }
+      .list span { font-size: 14px; color: var(--muted); }
+      .bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+      .bar i { display: block; height: 100%; border-radius: 3px; background: var(--accent); transition: width 0.6s ease-out; }
+      .feed { list-style: none; margin: 0; padding: 0; }
+      .feed li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 2px; border-bottom: 1px solid var(--line); }
+      .feed li:last-child { border-bottom: 0; }
+      .feed li div { display: grid; gap: 2px; min-width: 0; }
+      .feed li strong { font-size: 15px; font-weight: 600; }
+      .feed li span { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+      .feed .amt { font-size: 15px; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
+      .feed .amt[data-tone="in"] { color: var(--ok); }
+      .feed .amt[data-tone="owe"] { color: var(--bad); }
+      .list li.empty, .feed li.empty { display: block; padding: 18px 4px; color: var(--muted); font-size: 15px; text-align: center; border: 0; }
+      #k-back { display: inline-block; color: var(--accent); text-decoration: none; font-size: 16px; font-weight: 500; margin: -4px 0 10px; padding: 4px 0; }
+      #k-name { font-size: 26px; line-height: 1.15; margin: 0 0 14px; letter-spacing: -0.02em; overflow-wrap: anywhere; }
+      #k-cap { display: grid; gap: 6px; padding: 18px; background: var(--field); border-radius: 20px; margin-bottom: 14px; }
+      #k-cap small { font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+      #k-cap .big { font-size: 38px; font-weight: 700; letter-spacing: -0.03em; line-height: 1.1; }
+      #k-cap .per { font-size: 18px; font-weight: 600; color: var(--muted); letter-spacing: -0.01em; }
+      #k-cap .muted, .muted { color: var(--muted); font-size: 14px; }
+      #k-cap a.button { margin-top: 10px; background: var(--accent); color: #fff; }
+      #k-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 18px; }
+      #k-stats div { display: grid; gap: 2px; padding: 10px 6px; text-align: center; background: var(--field); border-radius: 14px; }
+      #k-stats b { font-size: 17px; overflow: hidden; text-overflow: ellipsis; }
+      #k-stats span { font-size: 12px; color: var(--muted); }
+      @media (max-width: 380px) { #k-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+      #dash h3 { font-size: 13px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin: 0 0 4px; }
+      #k-mine-box { margin-top: 18px; }
+
       footer {
         margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--line);
         display: grid; grid-template-columns: 18px 1fr; gap: 10px;
@@ -296,11 +346,36 @@
         <ul id="kitty-list"></ul>
         <p id="kitty-note"></p>
       </div>
+      <div id="dash" hidden>
+        <div id="dash-home">
+          <div id="dash-owe" hidden></div>
+          <div class="seg" id="dash-tabs" role="tablist">
+            <button type="button" data-tab="kitties">Kitties</button>
+            <button type="button" data-tab="activity">Your activity</button>
+          </div>
+          <p id="dash-error" hidden>Couldn't load your history. <button id="dash-retry" type="button">Try again</button></p>
+          <div id="tab-kitties"><ul id="dash-kitties" class="list"></ul></div>
+          <div id="tab-activity" hidden><ul id="dash-activity" class="feed"></ul></div>
+        </div>
+        <div id="dash-kitty" hidden>
+          <a id="k-back" href="#">‹ All kitties</a>
+          <h2 id="k-name"></h2>
+          <div id="k-cap"></div>
+          <div id="k-stats" hidden></div>
+          <h3>Purchases</h3>
+          <ul id="k-purchases" class="feed"></ul>
+          <div id="k-mine-box" hidden>
+            <h3>Your cap history</h3>
+            <ul id="k-mine" class="feed"></ul>
+          </div>
+        </div>
+      </div>
       <div id="fund" hidden>
         <p id="balance" role="status">Balance: …</p>
         <a id="test" class="button" href="#" role="button" hidden>Add $20 test money</a>
         <a id="add" class="button" href="#" target="_blank" rel="noopener" aria-disabled="true">Add money with Apple Pay</a>
         <p class="hint">Apple Pay or debit card. The money goes straight to your Kitty balance.</p>
+        <a id="all" href="#" hidden>See all your kitties and activity ›</a>
       </div>
       <footer>Your money stays yours until something is actually bought. You only pay for things you 👍, and never past your spending cap.</footer>
     </main>

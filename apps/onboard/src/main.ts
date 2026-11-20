@@ -19,11 +19,12 @@ import {
   ContractAddress,
   type WebAuthnCredential,
 } from "@circle-fin/modular-wallets-core";
-import { createPublicClient, encodeFunctionData, formatUnits, http, isAddress, isHex, maxUint256, parseUnits, type Hex } from "viem";
+import { createPublicClient, encodeFunctionData, formatUnits, http, isAddress, isHex, maxUint256, parseUnits, type Hex, type PublicClient } from "viem";
 import { createBundlerClient, toWebAuthnAccount } from "viem/account-abstraction";
 import { arcTestnet } from "viem/chains";
 import { erc20Abi, treasuryAbi } from "./abi";
-import { chatsFromLink, showSnapshot } from "./snapshot";
+import { Dashboard } from "./dashboard";
+import { chatsFromLink, rememberChats, showSnapshot } from "./snapshot";
 
 const clientKey = import.meta.env.VITE_CLIENT_KEY as string;
 const clientUrl = (import.meta.env.VITE_CLIENT_URL as string) || "https://modular-sdk.circle.com/v1/rpc/w3s/buidl";
@@ -42,6 +43,10 @@ const topUpAccount = params.get("a") ?? "";
 /** Pay-back link: who the member owes (their account) and their name. */
 const creditor = params.get("r") ?? "";
 const creditorName = params.get("o") ?? "them";
+/** Opened from the dashboard (to change a cap): type the amount, and come back to the dashboard after. */
+const fromDashboard = params.get("from") === "v1";
+/** Every chat this phone has seen a link for, newest names first. */
+const chats = rememberChats(chatsFromLink(params));
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const form = $<HTMLFormElement>("form");
@@ -116,10 +121,14 @@ function setup(): void {
   }
   $("title").textContent = joining ? `Join ${chatName}` : `Spending cap for ${chatName}`;
   // One tap: the amount was decided in the chat and came in the link, so there's nothing to type.
-  oneTap = Boolean(prefill && /^\d+(\.\d{1,2})?$/.test(prefill));
+  oneTap = Boolean(prefill && /^\d+(\.\d{1,2})?$/.test(prefill)) && !fromDashboard;
   $("lede").textContent = joining
     ? `${name ? `Hi ${name}! ` : ""}Kitty only uses your money when the group 👍s something, and never more than this. Only you can raise it.`
     : `The most Kitty can ever take from you for ${chatName}. Only you can raise it.`;
+  if (fromDashboard) {
+    $("back").textContent = "Back to your kitties";
+    ($("back") as HTMLAnchorElement).href = dashboardLink(`#kitty/${group}`);
+  }
   if (oneTap) {
     $("summary").hidden = false;
     $("fields").hidden = true;
@@ -323,23 +332,36 @@ async function submit(event: Event, returning = false): Promise<void> {
   }
 }
 
+/** The dashboard, with every chat this phone knows (the contract only knows chats as hashes). */
+function dashboardLink(hash = ""): string {
+  const url = new URL(location.href);
+  url.search = "";
+  url.hash = hash;
+  url.searchParams.set("v", "1");
+  for (const c of chats) url.searchParams.append("k", `${c.group}:${c.name}`);
+  return url.toString();
+}
+
 /**
- * "Your kitties" link (?v=1&k=<group>:<name>…): every chat at a glance. A phone that used Kitty
+ * "Your kitties" link (?v=1&k=<group>:<name>…): the dashboard. A phone that used Kitty
  * before remembers the passkey, so it opens with no prompt; otherwise one Face ID tap to sign in.
  */
 function setupStatus(): void {
   $("title").textContent = "Your kitties";
-  $("lede").textContent = "Every group chat you're in, at a glance.";
+  $("lede").textContent = "Your balance, every group chat you're in, and everything you've paid.";
   form.hidden = true;
   const see = $<HTMLButtonElement>("see");
   const open = async () => {
     see.disabled = true;
     try {
       show(readCredential() ? "Loading…" : "Waiting for Face ID…");
-      const { account } = await connect(true);
+      const { account, client } = await connect(true);
       see.hidden = true;
       show("");
-      await showFunding(account.address);
+      $("lede").hidden = true;
+      void showFunding(account.address, false);
+      // `client` is typed for the Arc chain; the dashboard only needs reads, so the generic chain type is dropped.
+      await new Dashboard({ client: client as unknown as PublicClient, treasury, account: account.address, chats, params }).start();
     } catch (err) {
       console.error(err);
       show("Couldn't sign in. Tap to try again.", "error");
@@ -349,6 +371,15 @@ function setupStatus(): void {
     }
   };
   see.addEventListener("click", () => void open());
+  // Local preview only (`pnpm dev`, ?v=1&as=<address>): renders any account's public chain data without
+  // Face ID. Vite drops this branch from production builds.
+  const previewAs = import.meta.env.DEV ? params.get("as") : null;
+  if (previewAs && isAddress(previewAs)) {
+    $("lede").hidden = true;
+    void showFunding(previewAs as Hex, false);
+    void new Dashboard({ client: arc as unknown as PublicClient, treasury, account: previewAs as Hex, chats, params }).start();
+    return;
+  }
   if (readCredential()) void open();
   else see.hidden = false;
 }
@@ -446,7 +477,7 @@ function dollars(wei: bigint): string {
  * button can be a plain link: opening a window after an await gets blocked on iOS. The money goes
  * from Apple Pay / debit card straight to the member's own account; Kitty never holds it.
  */
-async function showFunding(address: Hex): Promise<void> {
+async function showFunding(address: Hex, snapshot = true): Promise<void> {
   const fund = $("fund");
   const balanceText = $("balance");
   const add = $<HTMLAnchorElement>("add");
@@ -461,7 +492,13 @@ async function showFunding(address: Hex): Promise<void> {
   }
   // Every chat the link lists, signed-in or not ("?a=" top-up links know the account too).
   // `arc` is typed for the Arc chain; the snapshot only needs readContract, so the generic chain type is dropped.
-  showSnapshot(arc as unknown as Parameters<typeof showSnapshot>[0], treasury, address, chatsFromLink(params), start / 10n ** 12n).catch((err) => console.error("snapshot", err));
+  if (snapshot) {
+    showSnapshot(arc as unknown as Parameters<typeof showSnapshot>[0], treasury, address, chatsFromLink(params), start / 10n ** 12n).catch((err) => console.error("snapshot", err));
+    // Everything else (history, other kitties, caps) is one tap away.
+    const all = $<HTMLAnchorElement>("all");
+    all.href = dashboardLink();
+    all.hidden = false;
+  }
 
   void offerTestMoney(address, balanceText, add);
 

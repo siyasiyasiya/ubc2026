@@ -29,7 +29,32 @@ export function chatsFromLink(params: URLSearchParams): ChatRef[] {
   return [...out.values()];
 }
 
-interface ChatStatus {
+const NAMES_KEY = "kitty.chats.v1";
+
+/**
+ * Chat names seen in earlier links, so the dashboard can name a kitty whose link isn't the one
+ * open now (the contract only knows each chat as a hash). Names aren't secret.
+ */
+export function rememberChats(chats: ChatRef[]): ChatRef[] {
+  const known = new Map<string, ChatRef>();
+  try {
+    const saved = JSON.parse(localStorage.getItem(NAMES_KEY) ?? "[]") as ChatRef[];
+    for (const c of saved) if (isHex(c.group) && typeof c.name === "string") known.set(c.group.toLowerCase(), c);
+  } catch {
+    // Storage blocked or garbled: the link's own chats still work.
+  }
+  // The link is newer than what's saved: a renamed chat shows its new name.
+  for (const c of chats) if (c.name !== "a group chat" || !known.has(c.group.toLowerCase())) known.set(c.group.toLowerCase(), c);
+  const all = [...known.values()];
+  try {
+    localStorage.setItem(NAMES_KEY, JSON.stringify(all));
+  } catch {
+    // Private browsing: names last for this visit only.
+  }
+  return all;
+}
+
+export interface ChatStatus {
   chat: ChatRef;
   active: boolean;
   period: number;
@@ -54,14 +79,9 @@ export function resetText(period: number, resetsAt: bigint, now = Date.now()): s
   return `resets in ${hours} hour${hours === 1 ? "" : "s"}`;
 }
 
-/** Fills `#kitties` with one row per chat. `balance` is in 6-decimal USDC units. */
-export async function showSnapshot(client: PublicClient, treasury: Hex, account: Hex, chats: ChatRef[], balance?: bigint): Promise<void> {
-  const box = document.getElementById("kitties");
-  const list = document.getElementById("kitty-list");
-  const note = document.getElementById("kitty-note");
-  if (!box || !list || !note || chats.length === 0) return;
-
-  const statuses = await Promise.all(
+/** Each chat's limit, what's left this period, and when it resets, read from the contract. */
+export function readStatuses(client: PublicClient, treasury: Hex, account: Hex, chats: ChatRef[]): Promise<ChatStatus[]> {
+  return Promise.all(
     chats.map(async (chat): Promise<ChatStatus> => {
       const [member, left, resetsAt] = await Promise.all([
         client.readContract({ address: treasury, abi: treasuryAbi, functionName: "members", args: [chat.group, account] }),
@@ -71,6 +91,19 @@ export async function showSnapshot(client: PublicClient, treasury: Hex, account:
       return { chat, active: member[0], period: member[1], limit: member[2], left, resetsAt };
     }),
   );
+}
+
+/** "a week", "a month", or "one time". */
+export const perText = (period: number) => (period === 0 ? "a week" : period === 1 ? "a month" : "one time");
+
+/** Fills `#kitties` with one row per chat. `balance` is in 6-decimal USDC units. */
+export async function showSnapshot(client: PublicClient, treasury: Hex, account: Hex, chats: ChatRef[], balance?: bigint): Promise<void> {
+  const box = document.getElementById("kitties");
+  const list = document.getElementById("kitty-list");
+  const note = document.getElementById("kitty-note");
+  if (!box || !list || !note || chats.length === 0) return;
+
+  const statuses = await readStatuses(client, treasury, account, chats);
 
   list.replaceChildren(
     ...statuses.map((s) => {
@@ -80,8 +113,7 @@ export async function showSnapshot(client: PublicClient, treasury: Hex, account:
       const detail = document.createElement("span");
       if (!s.active) detail.textContent = "not in this one";
       else {
-        const per = s.period === 0 ? "a week" : s.period === 1 ? "a month" : "one time";
-        detail.textContent = `${usd(s.left)} left of ${usd(s.limit)} ${per} · ${resetText(s.period, s.resetsAt)}`;
+        detail.textContent = `${usd(s.left)} left of ${usd(s.limit)} ${perText(s.period)} · ${resetText(s.period, s.resetsAt)}`;
       }
       const bar = document.createElement("div");
       bar.className = "bar";

@@ -52,6 +52,7 @@ As of Nov 19, 2026, run live in a real iMessage group on Arc testnet unless note
 | Raise a limit (one-tap Face ID link), leave a chat's Kitty, private balance questions by text | 🟡 built and tested, live run pending |
 | Kitty buys it (pay before): checkout card, 👍s, order, shares paid back to the card | 🟡 real Crossmint order placed from the terminal (a $1 Gumroad item, $1.07 charged); from the chat: live run pending |
 | Restaurant calls (ElevenLabs) | 🟡 voice agent live: a real voice conversation started from Kitty's link, found and read back by the server code ("📞 booked Uchi for 4 … ✅"); from the group chat: live run pending a bot restart. Phone-line calls need a paid Twilio number |
+| Web dashboard ("your kitties"): balance and add money, every kitty with its cap, each kitty's purchases, change a cap, your own activity | 🟡 built and tested against live Arc data, phone run pending |
 | Using members' existing store accounts, Link one-time cards, connecting an existing wallet | ⬜ not built |
 
 ## How spending works
@@ -151,6 +152,16 @@ The chat picks its plan once ("this is a trip, $200 each"), each person confirms
 2. `ArcWalletAdapter` (`packages/wallet/src/arc.ts`) turns each share into `propose` → `approveFor` (the relayed 👍) → `settle` on `GroupTreasury`.
 3. `settle` pulls the share straight from the member's account to whoever paid, never more than what's left of the limit the member signed for that chat. A share it can't pull becomes an onchain debt; the member gets a one-tap link to add money and pay it back (`payDebt`), and the chat sees "✅ Joey paid Siya back".
 4. Limits change from the chat: lowering applies right away (operator `lowerLimit`); raising texts the member a one-tap Face ID link (`setLimit`), because only they can raise it.
+
+### The web dashboard
+
+Members ask Kitty privately to see their kitties and get a link to the dashboard (`apps/onboard`, `?v=1`). It unlocks with the passkey this phone already has, with no extra Face ID tap, and shows:
+
+- **Balance and add money** (Apple Pay through Arc Onramp, or test money on testnet).
+- **Every kitty** with what's left of the cap and when it resets, read live from `GroupTreasury` (`members`, `remaining`, `resetsAt`). Tap one for its **purchases** (total, your share, paid / waiting / cancelled / missed), group stats, your cap history, and **Change spending cap**, which opens the one-tap Face ID `setLimit` page and returns to the dashboard.
+- **Your activity**: every dollar in or out of your account (top-ups, shares, pay-backs, money paid to you), plus joins, cap changes, and missed shares, with a pay-back link for anything still owed.
+
+There's no database behind it. History is the contract's own events plus the account's USDC transfers, read from the Arc explorer's Etherscan-style API (`src/history.ts`) through a small edge-cached proxy (`api/explorer.ts`) so a room of phones doesn't hit the explorer's per-IP limit. The contract only knows each chat as a hash, so chat names come from Kitty's links and are remembered on the phone. Purchase names live only in the chat.
 
 ### What the contract guarantees
 
