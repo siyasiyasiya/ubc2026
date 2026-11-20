@@ -47,7 +47,7 @@ As of Nov 19, 2026, run live in a real iMessage group on Arc testnet unless note
 | Itemized split: "i had the pasta and a sake", tax and tip shared proportionally | 🟡 built and tested, live run pending |
 | Settle-up netting: the fewest who-pays-whom transfers (advisory; payback still runs pairwise) | 🟡 built and tested, live run pending |
 | Kitty wrapped: spending summary (total, per person, top spender) in the chat or a DM | 🟡 built and tested, live run pending |
-| Options for a vague buy ("dishwasher soap"), and a saved group usual so it stops asking | 🟡 built and tested, live run pending |
+| Vague buy ("dishwasher soap"): Kitty web-searches real products for options, saves a group or personal usual so it stops asking | 🟡 built and tested, live run pending |
 | Proactive nudges for stale approval cards and unpaid debts (off by default, `NUDGES=on`) | 🟡 built and tested, off for demos |
 | Raise a limit (one-tap Face ID link), leave a chat's Kitty, private balance questions by text | 🟡 built and tested, live run pending |
 | Kitty buys it (pay before): checkout card, 👍s, order, shares paid back to the card | 🟡 real Crossmint order placed from the terminal (a $1 Gumroad item, $1.07 charged); from the chat: live run pending |
