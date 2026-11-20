@@ -29,6 +29,9 @@ importers:
       '@crossmint/client-sdk-react-ui':
         specifier: 5.3.1
         version: 5.3.1(@dynamic-labs-wallet/primitives@1.1.33)(@solana/web3.js@1.98.4(bufferutil@4.2.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(@types/react@18.3.12)(bufferutil@4.2.0)(fastestsmallesttextencoderdecoder@1.0.22)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3)(utf-8-validate@6.0.6)
+      '@neondatabase/serverless':
+        specifier: 1.2.0
+        version: 1.2.0
       '@solana/web3.js':
         specifier: 1.98.4
         version: 1.98.4(bufferutil@4.2.0)(typescript@5.9.3)(utf-8-validate@6.0.6)
@@ -1349,6 +1352,10 @@ packages:
     peerDependencies:
       '@emnapi/core': ^1.7.1 || 2.0.0-beta.2
       '@emnapi/runtime': ^1.7.1 || 2.0.0-beta.2
+
+  '@neondatabase/serverless@1.2.0':
+    resolution: {integrity: sha512-tnaqgixUengZQNd9ZrS3ytQfamJzLKY8QxgqWQTNHHtB+KrFQWk77JTbbpg4RD+J3qE4eO2lVytvGDX5Kj6FdQ==}
+    engines: {node: '>=19.0.0'}
 
   '@noble/ciphers@0.4.1':
     resolution: {integrity: sha512-QCOA9cgf3Rc33owG0AYBB9wszz+Ul2kramWN8tXG44Gyciud/tbkEqvxRF/IpqQaBpRBNi9f4jdNxqB2CQCIXg==}
@@ -6724,6 +6731,8 @@ snapshots:
       '@emnapi/runtime': 2.0.0-beta.2
       '@tybys/wasm-util': 0.10.5
     optional: true
+
+  '@neondatabase/serverless@1.2.0': {}
 
   '@noble/ciphers@0.4.1': {}
 

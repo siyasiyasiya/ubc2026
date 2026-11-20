@@ -56,6 +56,8 @@ export interface Purchase {
   mine?: { amount: bigint; ok: boolean; reason?: string };
   /** This member was paid back by the group for it. */
   toMe: bigint;
+  /** The transaction that moved the money (settle), or that proposed it until then. */
+  tx?: Hex;
 }
 
 export interface Kitty {
@@ -168,7 +170,7 @@ export function buildHistory(logs: ExplorerLog[], transfers: ExplorerTransfer[],
         }
         break;
       case "SpendProposed": {
-        const p: Purchase = { id: e.args.id, group: e.args.group, payee: e.args.payee, total: e.args.total, at: e.at, status: "waiting", approvals: 0, pulled: 0n, owed: 0n, toMe: 0n };
+        const p: Purchase = { id: e.args.id, group: e.args.group, payee: e.args.payee, total: e.args.total, at: e.at, status: "waiting", approvals: 0, pulled: 0n, owed: 0n, toMe: 0n, tx: e.tx };
         purchases.set(lower(e.args.id), p);
         kitty(e.args.group).purchases.push(p);
         break;
@@ -207,6 +209,7 @@ export function buildHistory(logs: ExplorerLog[], transfers: ExplorerTransfer[],
         const p = purchases.get(lower(e.args.id));
         if (p) {
           p.status = "paid";
+          p.tx = e.tx;
           p.pulled = e.args.pulled;
           p.owed = e.args.owed;
           kitty(p.group).spent += e.args.pulled;
@@ -325,17 +328,43 @@ export function cachedHistory(treasury: Hex, account: Hex): History | undefined 
   }
 }
 
+/**
+ * api/history.ts: rows the QuickNode Stream delivered (scripts/create-stream.mjs). Undefined when
+ * there's no store yet (local dev, empty table, other contract), so the caller asks the explorer.
+ */
+async function fromStream(treasury: Hex, account: Hex, { fetcher = fetch }: LoadOptions): Promise<{ logs: ExplorerLog[]; transfers: ExplorerTransfer[] } | undefined> {
+  try {
+    const res = await fetcher(`/api/history?${new URLSearchParams({ account, treasury })}`);
+    if (!res.ok) return undefined;
+    const body = (await res.json().catch(() => undefined)) as { logs?: unknown; transfers?: unknown } | undefined;
+    if (!body || !Array.isArray(body.logs) || !body.logs.length || !Array.isArray(body.transfers)) return undefined;
+    return { logs: body.logs as ExplorerLog[], transfers: body.transfers as ExplorerTransfer[] };
+  } catch {
+    return undefined;
+  }
+}
+
+/** One list of the account's transfers when both sources saw the same one. */
+function mergeTransfers(a: ExplorerTransfer[], b: ExplorerTransfer[]): ExplorerTransfer[] {
+  const key = (t: ExplorerTransfer) => `${lower(t.hash)}:${lower(t.from)}>${lower(t.to)}:${t.value}`;
+  const seen = new Set(a.map(key));
+  return [...a, ...b.filter((t) => !seen.has(key(t)))];
+}
+
 /** Fetches everything the history views need for one account. */
 export async function loadHistory(treasury: Hex, account: Hex, options: LoadOptions = {}): Promise<History> {
   // The log list is the one that matters (purchases, shares, caps); top-ups alone may fail.
-  const [logs, transfers] = await Promise.all([
-    explorerList<ExplorerLog>({ module: "logs", action: "getLogs", address: treasury, fromBlock: "0", toBlock: "latest" }, options),
+  // Logs come from our QuickNode Stream store when it's there (no explorer rate limit), else the explorer.
+  const [stream, explorerTransfers] = await Promise.all([
+    fromStream(treasury, account, options),
     explorerList<ExplorerTransfer>({ module: "account", action: "tokentx", address: account, contractaddress: USDC_ERC20, sort: "desc" }, options).catch((err: unknown) => {
       console.error("transfers", err);
       return undefined;
     }),
   ]);
-  if (!transfers) return { ...buildHistory(logs, [], account), partial: true };
+  const logs = stream?.logs ?? (await explorerList<ExplorerLog>({ module: "logs", action: "getLogs", address: treasury, fromBlock: "0", toBlock: "latest" }, options));
+  const transfers = explorerTransfers ? mergeTransfers(explorerTransfers, stream?.transfers ?? []) : undefined;
+  if (!transfers) return { ...buildHistory(logs, stream?.transfers ?? [], account), partial: true };
   try {
     localStorage.setItem(cacheKey(treasury, account), JSON.stringify({ logs, transfers }));
   } catch {

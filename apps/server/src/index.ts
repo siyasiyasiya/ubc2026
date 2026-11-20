@@ -179,6 +179,13 @@ function isChatDbAccessError(err: unknown): boolean {
   return /DATABASE|SQLITE_CANTOPEN|unable to open database/i.test(text);
 }
 
+/** Kitty's QuickNode Stream feed (the page's /api/events), when KITTY_EVENTS_URL and EVENTS_SECRET are set. */
+function eventsFeed(): { url: string; secret: string } | undefined {
+  const url = process.env.KITTY_EVENTS_URL?.trim();
+  const secret = process.env.EVENTS_SECRET?.trim();
+  return url && secret ? { url, secret } : undefined;
+}
+
 /**
  * Watches GroupTreasury for Face ID joins (links each member's Kitty account to their handle and,
  * testnet only, sends a welcome balance), limit changes, and debts paid back. Needs the Arc settings and INVITE_SECRET.
@@ -210,8 +217,9 @@ function startJoinWatcher(): void {
         },
         onLimitSet: (event) => runtime.run(() => runtime.handleLimitSet(event)),
         onDebtPaid: (event) => runtime.run(() => runtime.handleDebtPaid(event)),
+        feed: eventsFeed(),
       });
-      console.log(`join watcher: scanning from block ${fromBlock}`);
+      console.log(`join watcher: ${watcher.source === "stream" ? "QuickNode Stream feed" : "RPC"}, from block ${fromBlock}`);
       watcher.start();
     } catch (err) {
       console.log(`join watcher: couldn't start (${(err as Error).message?.split("\n")[0]}), retrying in 10s`);

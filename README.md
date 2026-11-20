@@ -56,6 +56,7 @@ As of Nov 19, 2026, run live in a real iMessage group on Arc testnet unless note
 | Balance = what your kitties can take: each period Kitty tops a member's balance up to the sum of what's left of their caps (testnet: sends it; real money: a one-tap Apple Pay text) | 🟡 built and tested; live run pending |
 | Each person saves their own card; a buy goes on the payer's own card. Starting a subscription sets everyone in it up privately (Face ID, card, add money) | 🟡 built and tested; live run pending (needs `BOT_IMESSAGE_ADDRESS` and a deploy of the card page) |
 | Web dashboard ("your kitties"): balance and add money, every kitty with its cap, each kitty's purchases, change a cap, your own activity | 🟡 built and tested against live Arc data, phone run pending |
+| Real-time onchain data from a QuickNode Stream (Arc Testnet): dashboard history and the bot's join / cap / pay-back alerts read it instead of polling the chain | 🟡 built and tested (filter, signed webhook, Postgres, feed); live Stream pending |
 | Using members' existing store accounts, Link one-time cards, connecting an existing wallet | ⬜ not built |
 
 ## How spending works
@@ -121,6 +122,7 @@ The pieces the system needs, and what each one is built on.
 | Group contract | Records approvals and pulls each member's share to whoever paid | [`GroupTreasury`](contracts/README.md), driven by `ArcWalletAdapter` in `packages/wallet` |
 | Chain | Where the contract runs and USDC moves | Arc (USDC is gas) |
 | Checkout wallet | Issues one-time cards so the agent can pay real merchants | [Link agent wallet](https://docs.stripe.com/agentic-commerce/agents/link-agent-wallet) (planned, not built) |
+| Onchain data | Pushes every treasury event to Kitty as it's mined (and backfills history) for the dashboard and the bot | [QuickNode Streams](https://www.quicknode.com/streams) → signed webhook → Neon Postgres |
 | Phone calls | Kitty phones restaurants to book a table and reports back in the chat | [ElevenLabs](https://elevenlabs.io) voice agent, outbound through a Twilio number |
 
 ## How ElevenLabs is used
@@ -176,7 +178,7 @@ Members ask Kitty privately to see their kitties and get a link to the dashboard
 - **Subscriptions**: each one you're in, your share, the total, who gets paid, and the next charge, plus about what your shares cost a month. Each charge in the history is labeled with its subscription's name.
 - **Your activity**: every dollar in or out of your account (top-ups, shares, pay-backs, money paid to you), plus joins, cap changes, and missed shares, with a pay-back link for anything still owed.
 
-There's no database behind it. History is the contract's own events plus the account's USDC transfers, read from the Arc explorer's Etherscan-style API (`src/history.ts`) through a small edge-cached proxy (`api/explorer.ts`) so a room of phones doesn't hit the explorer's per-IP limit. The contract only knows each chat as a hash, so chat names come from Kitty's links and are remembered on the phone. An unnamed group text is labeled with the other people in it, like Messages does ("Joey & Siya"). Subscriptions live on Kitty's server, so its links carry them too (`s=` params, replaced in full on each new link so a cancelled one disappears). Purchase names live only in the chat.
+History is the contract's own events plus the account's USDC transfers. They come from Kitty's **QuickNode Stream** (see [Real-time onchain data](#real-time-onchain-data-quicknode-streams)) through `api/history.ts`, with no rate limit. When the Stream store is empty or down, the page reads the same rows from the Arc explorer's Etherscan-style API (`src/history.ts`) through a small edge-cached proxy (`api/explorer.ts`) so a room of phones doesn't hit the explorer's per-IP limit. Every money row links to its transaction on the Arc explorer ("Receipt"). The contract only knows each chat as a hash, so chat names come from Kitty's links and are remembered on the phone. An unnamed group text is labeled with the other people in it, like Messages does ("Joey & Siya"). Subscriptions live on Kitty's server, so its links carry them too (`s=` params, replaced in full on each new link so a cancelled one disappears). Purchase names live only in the chat.
 
 ### Keeping balances topped up
 
@@ -223,6 +225,36 @@ pnpm --filter @gta/server crossmint buy "<item or URL>"  # real test order, asks
 The bot runs on a Mac signed into Messages with **its own Apple ID**, and the terminal needs Full Disk Access (it reads `~/Library/Messages/chat.db`). Add that Apple ID to a group chat and it serves it; with `ALLOWED_CHAT_IDS` empty it serves every group it's in, so never leave it empty on a personal Apple ID. Only one bot can run per Mac (a lock file stops a second one).
 
 **Known limit:** an invite ticket isn't bound to an account, so whoever submits it first (say, from a forwarded link) is linked to that member. The fix is for the server to sign each join for the joining account.
+
+## Real-time onchain data: QuickNode Streams
+
+Kitty reacts to things that happen onchain: someone joins with Face ID, changes their cap, pays back a debt, or a split settles. Before, the bot polled `eth_getLogs` every few seconds and the dashboard paged through the Arc explorer API, which allows 10 requests per IP per window. Now one **QuickNode Stream** pushes exactly Kitty's events, in order, as they're mined, and both read from it.
+
+```mermaid
+flowchart LR
+  A[Arc Testnet blocks] --> S[QuickNode Stream<br/>block_with_receipts + filter]
+  S -->|signed webhook| W[/api/stream on Vercel/]
+  W --> P[(Neon Postgres<br/>kitty_logs, kitty_transfers)]
+  P --> H[/api/history/] --> D[Web dashboard]
+  P --> E[/api/events/] --> B[Kitty bot: ✅ joined, cap changed, paid back]
+```
+
+**How the Stream is configured** (`apps/onboard/scripts/create-stream.mjs`, so the config lives in the repo):
+
+| Setting | Value | Why |
+| --- | --- | --- |
+| Network | Arc Testnet (`arc-testnet`) | Where `GroupTreasury` runs |
+| Dataset | `block_with_receipts` | Receipts carry every log of a transaction, so the filter can keep the USDC transfers that happened alongside a treasury event; the block header carries the timestamp the history shows |
+| Range | From block 73141404 (the contract's deploy block) to the live tip | The backfill rebuilds the full history; after that it stays live. `fix_block_reorgs` on |
+| Filter | [`apps/onboard/streams/filter.js`](apps/onboard/streams/filter.js) | Keeps (a) every log emitted by `GroupTreasury` (`Joined`, `LimitSet`, `SpendProposed`, `SpendApproved`, `SharePulled`, `PullFailed`, `SpendSettled`, `DebtPaid`, …) and (b) the USDC `Transfer` logs in those same transactions. Rewrites them into the rows the Arc explorer API returns, so the page's existing decoder reads Stream rows and explorer rows the same way. Blocks with nothing of Kitty's return `null` and are never delivered |
+| Destination | Webhook → `https://kittyagent.vercel.app/api/stream` | Checks QuickNode's HMAC signature (`X-QN-Nonce` + `X-QN-Timestamp` + body, with the stream's security token), then upserts into Postgres keyed on `(tx_hash, log_index)`, so a redelivered batch is a no-op |
+
+**What reads it:**
+
+- **Dashboard:** `api/history.ts` returns all treasury logs plus the member's transfers from Postgres. The explorer is asked only for top-ups from outside Kitty, and is the full fallback if the store is empty or down.
+- **Bot:** with `KITTY_EVENTS_URL` set, `JoinWatcher` (`packages/wallet/src/join.ts`) reads `api/events.ts` instead of the chain. It welcomes new members, posts cap changes and "✅ paid back" from the Stream's events, moving its cursor block by block. After three failed reads in a row it goes back to RPC polling on its own.
+
+Set up: add Neon Postgres to the Vercel project (`DATABASE_URL`), set `QN_STREAM_SECRET` and `EVENTS_SECRET` in Vercel, then run `node apps/onboard/scripts/create-stream.mjs` with `QUICKNODE_API_KEY` in `apps/server/.env` (`--dry-run` prints the request, `--list` shows existing streams). The tables create themselves on the first delivery (`scripts/schema.sql` has the same schema).
 
 ## Design choice: individual wallets vs a shared multisig
 

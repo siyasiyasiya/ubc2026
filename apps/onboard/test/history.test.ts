@@ -153,7 +153,7 @@ suite("loadHistory", () => {
       return new Response(JSON.stringify({ status: "0", message: "Too many requests", result: null }), { status: 429 });
     }) as unknown as typeof fetch;
     await expect(loadHistory(KITTY, ME, { fetcher, wait: async (ms) => void waits.push(ms) })).rejects.toThrow(/429/);
-    expect(calls).toBe(12); // two endpoints, proxy then explorer, three tries each
+    expect(calls).toBe(13); // the Stream store once, then two endpoints, proxy then explorer, three tries each
     expect(waits).toHaveLength(8);
   });
 
@@ -181,6 +181,45 @@ suite("loadHistory", () => {
       return new Response(JSON.stringify({ status: "0", message: "No records found", result: [] }));
     }) as typeof fetch;
     await expect(loadHistory(KITTY, ME, { fetcher, wait: async () => {} })).resolves.toMatchObject({ joined: [] });
+  });
+
+  it("takes the treasury logs from the QuickNode Stream store and skips the explorer's log list", async () => {
+    const urls: string[] = [];
+    const settle = tx(80);
+    const fetcher = (async (url: string) => {
+      urls.push(url);
+      if (url.startsWith("/api/history")) {
+        return Response.json({
+          logs: [
+            log("SpendProposed", { id: id(9), group: SKI, payee: PAYER, total: $(10), deadline: 9_999n }, tx(79)),
+            log("SharePulled", { id: id(9), from: ME, to: PAYER, amount: $(5) }, settle),
+          ],
+          transfers: [{ ...transfer(settle, ME, PAYER, $(5)), logIndex: "0" }],
+          lastBlock: "200",
+        });
+      }
+      // The explorer's copy of the same transfer, plus a top-up only it knows about.
+      return Response.json({ status: "1", message: "OK", result: [transfer(settle, ME, PAYER, $(5)), transfer(tx(81), FAUCET, ME, $(20))] });
+    }) as typeof fetch;
+    const h = await loadHistory(KITTY, ME, { fetcher });
+    expect(urls[0]).toBe(`/api/history?account=${ME}&treasury=${KITTY}`);
+    expect(urls.some((u) => u.includes("getLogs"))).toBe(false);
+    expect(h.activity.filter((e) => e.kind === "share")).toHaveLength(1);
+    expect(h.activity.filter((e) => e.kind === "added")).toHaveLength(1);
+    expect(h.activity.some((e) => e.kind === "sent")).toBe(false);
+  });
+
+  it("falls back to the explorer when the Stream store is empty or down", async () => {
+    for (const reply of [Response.json({ error: "no stream data yet" }, { status: 404 }), new Response("<!doctype html>")]) {
+      const urls: string[] = [];
+      const fetcher = (async (url: string) => {
+        urls.push(url);
+        if (url.startsWith("/api/history")) return reply.clone();
+        return Response.json({ status: "0", message: "No records found", result: [] });
+      }) as typeof fetch;
+      await loadHistory(KITTY, ME, { fetcher });
+      expect(urls.some((u) => u.includes("getLogs"))).toBe(true);
+    }
   });
 
   it("asks the cached proxy first and falls back to the explorer when there is no proxy", async () => {

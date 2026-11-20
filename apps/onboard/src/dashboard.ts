@@ -140,11 +140,22 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, t
   return node;
 }
 
+const ARC_TX = "https://explorer.testnet.arc.io/tx/";
+
 /** One row of a feed: title and detail on the left, amount on the right. */
-function row(item: { title: string; detail: string; amount: string; tone: string }, time: number): HTMLLIElement {
+function row(item: { title: string; detail: string; amount: string; tone: string }, time: number, tx?: string): HTMLLIElement {
   const li = el("li");
   const text = el("div");
-  text.append(el("strong", undefined, item.title), el("span", undefined, [item.detail, time ? when(time) : ""].filter(Boolean).join(" · ")));
+  const meta = el("span", undefined, [item.detail, time ? when(time) : ""].filter(Boolean).join(" · "));
+  // Every money row links to its transaction on Arc, so anyone can check it happened.
+  if (tx) {
+    const proof = el("a", "proof", "Receipt");
+    proof.href = `${ARC_TX}${tx}`;
+    proof.target = "_blank";
+    proof.rel = "noopener";
+    meta.append(" · ", proof);
+  }
+  text.append(el("strong", undefined, item.title), meta);
   li.append(text);
   if (item.amount) {
     const amount = el("b", "amt", item.amount);
@@ -350,7 +361,7 @@ export class Dashboard {
     const list = $("dash-activity");
     if (!this.history) return empty(list, this.failed ? "Couldn't load your activity." : "Loading your activity…");
     if (this.history.activity.length === 0) return empty(list, "Nothing yet. Money you add and shares you pay show up here.");
-    list.replaceChildren(...this.history.activity.map((e) => row(describe(e, this.name, this.titleOf(e.purchase)), e.at)));
+    list.replaceChildren(...this.history.activity.map((e) => row(describe(e, this.name, this.titleOf(e.purchase)), e.at, e.tx)));
     if (this.history.partial) list.prepend(el("li", "empty", "Money you added couldn't load right now. Shares and caps are all here."));
   }
 
@@ -393,7 +404,7 @@ export class Dashboard {
     const list = $("k-purchases");
     if (!this.history) empty(list, this.failed ? "Couldn't load purchases." : "Loading purchases…");
     else if (!k || k.purchases.length === 0) empty(list, "No purchases yet. Ask Kitty in the chat to buy something.");
-    else list.replaceChildren(...k.purchases.map((p) => row(describePurchase(p, this.deps.account, subscriptionFor(p, this.deps.subscriptions)?.title), p.at)));
+    else list.replaceChildren(...k.purchases.map((p) => row(describePurchase(p, this.deps.account, subscriptionFor(p, this.deps.subscriptions)?.title), p.at, p.tx)));
 
     // Subscriptions in this kitty.
     const subs = this.deps.subscriptions.filter((s) => s.group.toLowerCase() === group.toLowerCase());
@@ -403,7 +414,7 @@ export class Dashboard {
     // This member's own history here: joining and cap changes.
     const mineList = $("k-mine");
     const mine = this.history?.activity.filter((e) => e.group?.toLowerCase() === group.toLowerCase() && ["joined", "limit", "left"].includes(e.kind)) ?? [];
-    mineList.replaceChildren(...mine.map((e) => row(describe(e, this.name), e.at)));
+    mineList.replaceChildren(...mine.map((e) => row(describe(e, this.name), e.at, e.tx)));
     $("k-mine-box").hidden = mine.length === 0;
   }
 
