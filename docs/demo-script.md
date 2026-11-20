@@ -11,7 +11,7 @@ About 4 minutes. Three phones in one iMessage group: **Neena**, **Siya**, **Joey
 - [ ] Each member has a few test dollars: text Kitty privately "add $20" (or `pnpm --filter @gta/server fund <phone> 20`), then "how much money do i have".
 - [ ] Bot started with ELEVENLABS_API_KEY and ELEVENLABS_AGENT_ID (log: `calls: ElevenLabs voice agent, texts the restaurant a link`). The "restaurant" teammate's phone has iMessage, sound on, and has tapped one test link (mic allowed).
 - [ ] Crossmint keys set for a real order, or the store reads "(simulated)": say so out loud.
-- [ ] Explorer tab open: https://testnet.arcscan.app/address/0x1E383fe0098f3dE2530b42f1c8172CA2BC547320
+- [ ] Explorer tab open: https://testnet.arcscan.app/address/0xAF2b75eda3c50358Ce754b93c60F76F0871bE235
 - [ ] Phones: Do Not Disturb off, Messages open on the group, screen mirroring tested.
 
 ## 1. The problem (20s)

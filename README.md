@@ -139,7 +139,7 @@ Code: `apps/server/src/restaurant-call.ts`. Agent setup (prompt, data collection
 
 Members only see iMessage, one web page and Face ID. Underneath, every rule about money is enforced by a contract on **Arc testnet** that the agent can't change.
 
-**Deployed:** `GroupTreasury` at [`0x1E383fe0098f3dE2530b42f1c8172CA2BC547320`](https://testnet.arcscan.app/address/0x1E383fe0098f3dE2530b42f1c8172CA2BC547320) (Arc testnet, chain 5042002). Details in [`contracts/README.md`](contracts/README.md).
+**Deployed:** `GroupTreasury` at [`0xAF2b75eda3c50358Ce754b93c60F76F0871bE235`](https://testnet.arcscan.app/address/0xAF2b75eda3c50358Ce754b93c60F76F0871bE235) (Arc testnet, chain 5042002). Details in [`contracts/README.md`](contracts/README.md).
 
 ### Each group chat has its own limit
 

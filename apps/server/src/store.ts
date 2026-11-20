@@ -92,6 +92,8 @@ export interface SavedCard {
 
 interface StoreFile {
   groups: Record<string, GroupRecord>;
+  /** The GroupTreasury the account links below belong to (see useTreasury). */
+  treasury?: string;
   /** Saved cards by member handle (cards are per person, across all their chats). */
   cards?: Record<string, SavedCard>;
   /** Next Arc block the Face ID join watcher should scan. */
@@ -144,6 +146,28 @@ export class Store {
     if (welcomed) set.add(account.toLowerCase());
     else set.delete(account.toLowerCase());
     this.data.welcomed = [...set];
+  }
+
+  /**
+   * Points the store at `address`. After a contract redeploy nobody is a member of the new one,
+   * so every member's account link is cleared (they rejoin with Face ID, which links it again) and
+   * the join watcher starts over at the new contract's deploy block. Chat history, plans,
+   * subscriptions and saved cards stay. Returns how many links were cleared (0 when unchanged).
+   */
+  useTreasury(address: string): number {
+    if (this.data.treasury?.toLowerCase() === address.toLowerCase()) return 0;
+    let cleared = 0;
+    for (const record of Object.values(this.data.groups)) {
+      for (const member of record.group.members) {
+        if (member.wallet) {
+          delete member.wallet;
+          cleared++;
+        }
+      }
+    }
+    delete this.data.joinCursor;
+    this.data.treasury = address;
+    return cleared;
   }
 
   card(handle: string): SavedCard | undefined {

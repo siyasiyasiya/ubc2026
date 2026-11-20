@@ -43,6 +43,11 @@ console.log(
 
 const chat = startChat();
 const store = new Store(config.stateFile);
+if (config.arc) {
+  const cleared = store.useTreasury(config.arc.treasury);
+  if (cleared) console.log(`new GroupTreasury ${config.arc.treasury}: cleared ${cleared} account link(s); members rejoin with Face ID`);
+  store.save();
+}
 const runtime = new GroupRuntime({
   chat,
   wallet,

@@ -50,4 +50,6 @@ Get testnet USDC (gas + balances) from the [Circle faucet](https://faucet.circle
 
 | Network | Address |
 | --- | --- |
-| Arc testnet | [`0x1E383fe0098f3dE2530b42f1c8172CA2BC547320`](https://testnet.arcscan.app/address/0x1E383fe0098f3dE2530b42f1c8172CA2BC547320) (operator `0xDEbAA02AAB62BDc01dddd5830D3a0D613C80842f`) |
+| Arc testnet | [`0xAF2b75eda3c50358Ce754b93c60F76F0871bE235`](https://testnet.arcscan.app/address/0xAF2b75eda3c50358Ce754b93c60F76F0871bE235) (operator `0xDEbAA02AAB62BDc01dddd5830D3a0D613C80842f`) |
+
+Redeployed Nov 19, 2026 (block 73141404) to add `netSettle` (onchain settle-up netting). The previous deployment, `0x1E383fe0098f3dE2530b42f1c8172CA2BC547320` (block 72966618), keeps its history but is no longer used; members rejoined with Face ID.
