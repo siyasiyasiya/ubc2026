@@ -169,9 +169,10 @@ Members ask Kitty privately to see their kitties and get a link to the dashboard
 
 - **Balance and add money** (Apple Pay through Arc Onramp, or test money on testnet).
 - **Every kitty** with what's left of the cap and when it resets, read live from `GroupTreasury` (`members`, `remaining`, `resetsAt`). Tap one for its **purchases** (total, your share, paid / waiting / cancelled / missed), group stats, your cap history, and **Change spending cap**, which opens the one-tap Face ID `setLimit` page and returns to the dashboard.
+- **Subscriptions**: each one you're in, your share, the total, who gets paid, and the next charge, plus about what your shares cost a month. Each charge in the history is labeled with its subscription's name.
 - **Your activity**: every dollar in or out of your account (top-ups, shares, pay-backs, money paid to you), plus joins, cap changes, and missed shares, with a pay-back link for anything still owed.
 
-There's no database behind it. History is the contract's own events plus the account's USDC transfers, read from the Arc explorer's Etherscan-style API (`src/history.ts`) through a small edge-cached proxy (`api/explorer.ts`) so a room of phones doesn't hit the explorer's per-IP limit. The contract only knows each chat as a hash, so chat names come from Kitty's links and are remembered on the phone. An unnamed group text is labeled with the other people in it, like Messages does ("Joey & Siya"). Purchase names live only in the chat.
+There's no database behind it. History is the contract's own events plus the account's USDC transfers, read from the Arc explorer's Etherscan-style API (`src/history.ts`) through a small edge-cached proxy (`api/explorer.ts`) so a room of phones doesn't hit the explorer's per-IP limit. The contract only knows each chat as a hash, so chat names come from Kitty's links and are remembered on the phone. An unnamed group text is labeled with the other people in it, like Messages does ("Joey & Siya"). Subscriptions live on Kitty's server, so its links carry them too (`s=` params, replaced in full on each new link so a cancelled one disappears). Purchase names live only in the chat.
 
 ### What the contract guarantees
 

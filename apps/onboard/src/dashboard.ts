@@ -10,6 +10,7 @@ import type { Hex, PublicClient } from "viem";
 import { treasuryAbi } from "./abi";
 import { cachedHistory, loadHistory, type Entry, type History, type Kitty, type Purchase } from "./history";
 import { perText, readStatuses, resetText, type ChatRef, type ChatStatus } from "./snapshot";
+import { perMonth, type SubscriptionRef } from "./subscriptions";
 
 export interface DashboardDeps {
   client: PublicClient;
@@ -19,6 +20,26 @@ export interface DashboardDeps {
   chats: ChatRef[];
   /** The page's own URL params, carried into the links this view makes. */
   params: URLSearchParams;
+  /** Subscriptions from Kitty's link (or remembered on this phone). */
+  subscriptions: SubscriptionRef[];
+}
+
+/** The subscription a purchase was a charge of: same kitty, same person paid back, same amount. */
+export function subscriptionFor(p: Purchase, subs: SubscriptionRef[]): SubscriptionRef | undefined {
+  return subs.find((s) => s.group.toLowerCase() === p.group.toLowerCase() && s.payee?.toLowerCase() === p.payee.toLowerCase() && s.total === p.total);
+}
+
+/** One subscription row: what it is, where, when it next charges, and this member's part. */
+export function describeSubscription(sub: SubscriptionRef, chat: string): { title: string; detail: string; amount: string; tone: "in" | "out" | "owe" | "" } {
+  const unit = sub.every === "weekly" ? "wk" : "mo";
+  const next = sub.pending
+    ? "waiting on 👍s to start"
+    : sub.nextAt
+      ? `next ${new Date(sub.nextAt * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
+      : "";
+  const paidTo = sub.mine === 0n ? "paid to you" : sub.payeeName ? `paid to ${sub.payeeName}` : "";
+  const detail = [chat, next, `${money(sub.total, true)} total`, paidTo].filter(Boolean).join(" · ");
+  return { title: `🔁 ${sub.title}`, detail, amount: sub.mine === 0n ? "" : `${money(sub.mine)}/${unit}`, tone: "" };
 }
 
 /** Whole cents from 6-decimal USDC, rounded half up, as "$1,234.50" (or "$12" when `short` and whole). */
@@ -55,7 +76,7 @@ function missedWhy(reason?: string): string {
 }
 
 /** The title, detail line, and amount for one activity entry. `name` turns a group id into its chat name. */
-export function describe(e: Entry, name: (group?: Hex) => string): { title: string; detail: string; amount: string; tone: "in" | "out" | "owe" | "" } {
+export function describe(e: Entry, name: (group?: Hex) => string, purchaseTitle?: string): { title: string; detail: string; amount: string; tone: "in" | "out" | "owe" | "" } {
   const chat = e.group ? name(e.group) : "";
   const amount = e.amount === undefined ? "" : `${e.amount > 0n ? "+" : ""}${money(e.amount)}`;
   switch (e.kind) {
@@ -64,13 +85,13 @@ export function describe(e: Entry, name: (group?: Hex) => string): { title: stri
     case "sent":
       return { title: "Sent", detail: "From your Kitty balance", amount, tone: "out" };
     case "share":
-      return { title: "Your share", detail: chat, amount, tone: "out" };
+      return purchaseTitle ? { title: purchaseTitle, detail: [chat, "your share"].filter(Boolean).join(" · "), amount, tone: "out" } : { title: "Your share", detail: chat, amount, tone: "out" };
     case "got":
-      return { title: "Paid to you", detail: chat || "A member paid you back", amount, tone: "in" };
+      return { title: purchaseTitle ? `${purchaseTitle} · paid to you` : "Paid to you", detail: chat || "A member paid you back", amount, tone: "in" };
     case "repaid":
       return { title: "Paid back a missed share", detail: "From your Kitty balance", amount, tone: "out" };
     case "owe":
-      return { title: "Missed share", detail: `${chat ? `${chat} · ` : ""}${missedWhy(e.reason)}`, amount: `${money(e.amount ?? 0n)} owed`, tone: "owe" };
+      return { title: purchaseTitle ? `Missed share · ${purchaseTitle}` : "Missed share", detail: `${chat ? `${chat} · ` : ""}${missedWhy(e.reason)}`, amount: `${money(e.amount ?? 0n)} owed`, tone: "owe" };
     case "joined":
       return { title: `Joined ${chat}`, detail: `Cap ${money(e.limit ?? 0n, true)} ${per(e.period)}`, amount: "", tone: "" };
     case "limit":
@@ -86,7 +107,7 @@ export function describe(e: Entry, name: (group?: Hex) => string): { title: stri
 }
 
 /** One purchase in a kitty: what happened, and this member's part of it. */
-export function describePurchase(p: Purchase, account: string): { title: string; detail: string; amount: string; tone: "in" | "out" | "owe" | "" } {
+export function describePurchase(p: Purchase, account: string, title = "Purchase"): { title: string; detail: string; amount: string; tone: "in" | "out" | "owe" | "" } {
   const status =
     p.status === "cancelled"
       ? "Cancelled"
@@ -99,10 +120,10 @@ export function describePurchase(p: Purchase, account: string): { title: string;
           : "Paid";
   const payee = p.payee.toLowerCase() === account.toLowerCase() ? " · paid to you" : "";
   const detail = `${money(p.total)} total · ${status}${payee}`;
-  if (p.mine && !p.mine.ok) return { title: "Purchase", detail, amount: `${money(p.mine.amount)} owed`, tone: "owe" };
-  if (p.mine) return { title: "Purchase", detail, amount: `-${money(p.mine.amount)}`, tone: "out" };
-  if (p.toMe > 0n) return { title: "Purchase", detail, amount: `+${money(p.toMe)}`, tone: "in" };
-  return { title: "Purchase", detail, amount: "", tone: "" };
+  if (p.mine && !p.mine.ok) return { title, detail, amount: `${money(p.mine.amount)} owed`, tone: "owe" };
+  if (p.mine) return { title, detail, amount: `-${money(p.mine.amount)}`, tone: "out" };
+  if (p.toMe > 0n) return { title, detail, amount: `+${money(p.toMe)}`, tone: "in" };
+  return { title, detail, amount: "", tone: "" };
 }
 
 /** Names that only mean "a chat we couldn't name" (older links and pages used these). */
@@ -123,7 +144,7 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, t
 function row(item: { title: string; detail: string; amount: string; tone: string }, time: number): HTMLLIElement {
   const li = el("li");
   const text = el("div");
-  text.append(el("strong", undefined, item.title), el("span", undefined, [item.detail, when(time)].filter(Boolean).join(" · ")));
+  text.append(el("strong", undefined, item.title), el("span", undefined, [item.detail, time ? when(time) : ""].filter(Boolean).join(" · ")));
   li.append(text);
   if (item.amount) {
     const amount = el("b", "amt", item.amount);
@@ -157,7 +178,7 @@ export class Dashboard {
     $("dash-home").prepend($("fund"));
     for (const tab of document.querySelectorAll<HTMLButtonElement>("#dash-tabs button")) {
       tab.addEventListener("click", () => {
-        location.hash = tab.dataset.tab === "activity" ? "activity" : "";
+        location.hash = tab.dataset.tab === "kitties" ? "" : (tab.dataset.tab ?? "");
       });
     }
     $("k-back").addEventListener("click", (e) => {
@@ -234,7 +255,7 @@ export class Dashboard {
   private render(): void {
     const route = location.hash.replace(/^#/, "");
     const kittyId = route.startsWith("kitty/") ? route.slice(6) : "";
-    const tab = route === "activity" ? "activity" : "kitties";
+    const tab = route === "activity" || route === "subs" ? route : "kitties";
     $("dash-home").hidden = Boolean(kittyId);
     // The kitty view has its own heading and back link.
     $("title").hidden = Boolean(kittyId);
@@ -243,9 +264,11 @@ export class Dashboard {
     for (const t of document.querySelectorAll<HTMLButtonElement>("#dash-tabs button")) t.setAttribute("aria-pressed", String(t.dataset.tab === tab));
     $("tab-kitties").hidden = tab !== "kitties";
     $("tab-activity").hidden = tab !== "activity";
+    $("tab-subs").hidden = tab !== "subs";
     this.renderDebts();
     if (kittyId) this.renderKitty(kittyId as Hex);
     else if (tab === "activity") this.renderActivity();
+    else if (tab === "subs") this.renderSubs();
     else this.renderKitties();
   }
 
@@ -301,11 +324,33 @@ export class Dashboard {
     return bar;
   }
 
+  /** A purchase's name when it was a subscription charge, else undefined. */
+  private titleOf(purchaseId?: Hex): string | undefined {
+    if (!purchaseId || !this.history) return undefined;
+    for (const k of this.history.kitties.values()) {
+      const p = k.purchases.find((x) => x.id.toLowerCase() === purchaseId.toLowerCase());
+      if (p) return subscriptionFor(p, this.deps.subscriptions)?.title;
+    }
+    return undefined;
+  }
+
+  private renderSubs(): void {
+    const list = $("dash-subs");
+    const subs = this.deps.subscriptions;
+    if (subs.length === 0) {
+      return empty(list, "No subscriptions. Ask Kitty in a group chat, like \"split spotify every month\".");
+    }
+    list.replaceChildren(...subs.map((s) => row(describeSubscription(s, this.name(s.group)), 0)));
+    const monthly = subs.filter((s) => !s.pending).reduce((sum, s) => sum + perMonth(s), 0n);
+    const note = el("li", "empty", `About ${money(monthly)} a month for your shares. Say "cancel <name>" in the chat to stop one.`);
+    list.append(note);
+  }
+
   private renderActivity(): void {
     const list = $("dash-activity");
     if (!this.history) return empty(list, this.failed ? "Couldn't load your activity." : "Loading your activity…");
     if (this.history.activity.length === 0) return empty(list, "Nothing yet. Money you add and shares you pay show up here.");
-    list.replaceChildren(...this.history.activity.map((e) => row(describe(e, this.name), e.at)));
+    list.replaceChildren(...this.history.activity.map((e) => row(describe(e, this.name, this.titleOf(e.purchase)), e.at)));
     if (this.history.partial) list.prepend(el("li", "empty", "Money you added couldn't load right now. Shares and caps are all here."));
   }
 
@@ -348,7 +393,12 @@ export class Dashboard {
     const list = $("k-purchases");
     if (!this.history) empty(list, this.failed ? "Couldn't load purchases." : "Loading purchases…");
     else if (!k || k.purchases.length === 0) empty(list, "No purchases yet. Ask Kitty in the chat to buy something.");
-    else list.replaceChildren(...k.purchases.map((p) => row(describePurchase(p, this.deps.account), p.at)));
+    else list.replaceChildren(...k.purchases.map((p) => row(describePurchase(p, this.deps.account, subscriptionFor(p, this.deps.subscriptions)?.title), p.at)));
+
+    // Subscriptions in this kitty.
+    const subs = this.deps.subscriptions.filter((s) => s.group.toLowerCase() === group.toLowerCase());
+    $("k-subs").replaceChildren(...subs.map((s) => row(describeSubscription(s, ""), 0)));
+    $("k-subs-box").hidden = subs.length === 0;
 
     // This member's own history here: joining and cap changes.
     const mineList = $("k-mine");

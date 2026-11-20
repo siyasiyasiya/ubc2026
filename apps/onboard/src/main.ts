@@ -25,6 +25,7 @@ import { arcTestnet } from "viem/chains";
 import { erc20Abi, treasuryAbi } from "./abi";
 import { Dashboard } from "./dashboard";
 import { chatsFromLink, rememberChats, showSnapshot } from "./snapshot";
+import { subscriptionsFromLink } from "./subscriptions";
 
 const clientKey = import.meta.env.VITE_CLIENT_KEY as string;
 const clientUrl = (import.meta.env.VITE_CLIENT_URL as string) || "https://modular-sdk.circle.com/v1/rpc/w3s/buidl";
@@ -47,6 +48,8 @@ const creditorName = params.get("o") ?? "them";
 const fromDashboard = params.get("from") === "v1";
 /** Every chat this phone has seen a link for, newest names first. */
 const chats = rememberChats(chatsFromLink(params));
+/** Subscriptions from Kitty's link, or the last list this phone saw. */
+const subscriptions = subscriptionsFromLink(params);
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const form = $<HTMLFormElement>("form");
@@ -361,7 +364,7 @@ function setupStatus(): void {
       $("lede").hidden = true;
       void showFunding(account.address, false);
       // `client` is typed for the Arc chain; the dashboard only needs reads, so the generic chain type is dropped.
-      await new Dashboard({ client: client as unknown as PublicClient, treasury, account: account.address, chats, params }).start();
+      await new Dashboard({ client: client as unknown as PublicClient, treasury, account: account.address, chats, params, subscriptions }).start();
     } catch (err) {
       console.error(err);
       show("Couldn't sign in. Tap to try again.", "error");
@@ -377,7 +380,7 @@ function setupStatus(): void {
   if (previewAs && isAddress(previewAs)) {
     $("lede").hidden = true;
     void showFunding(previewAs as Hex, false);
-    void new Dashboard({ client: arc as unknown as PublicClient, treasury, account: previewAs as Hex, chats, params }).start();
+    void new Dashboard({ client: arc as unknown as PublicClient, treasury, account: previewAs as Hex, chats, params, subscriptions }).start();
     return;
   }
   if (readCredential()) void open();

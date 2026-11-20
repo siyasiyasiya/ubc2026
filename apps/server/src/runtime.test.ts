@@ -929,6 +929,22 @@ describe("GroupRuntime", () => {
       expect(t.turnSnapshots.at(-1)).toContain("- Spotify: $18.00 monthly, paid back to Neena by Siya $6.00, Tristan $6.00; next charge Dec 19, charged 1 time");
     });
 
+    it("lists the member's subscriptions in their dashboard link", async () => {
+      const invites = { baseUrl: "https://kittyagent.vercel.app", secret: "s3cret" };
+      const wallets = { [NEENA]: "0x00000000000000000000000000000000000000aa", [SIYA]: "0x00000000000000000000000000000000000000bb" };
+      const t = setup(200, { now: () => start, invites, wallets });
+      for (const who of [SIYA, TRISTAN]) await t.say(who, "hi");
+      await t.say(NEENA, "split spotify with everyone");
+      const card = t.request().previewMessageId!;
+      await t.react(SIYA, card);
+      await t.react(TRISTAN, card);
+      await t.dm(SIYA, "show me all my kitties");
+      const link = new URL(t.dms.find((d) => d.text.startsWith("all your kitties"))!.text.split(" ").at(-1)!);
+      const next = Math.floor(t.store.get(CHAT)!.subscriptions![0]!.nextAt! / 1000);
+      expect(link.searchParams.get("sv")).toBe("1");
+      expect(link.searchParams.getAll("s")).toEqual([`${groupIdForChat(CHAT)}~monthly~a~18000000~6000000~${next}~${wallets[NEENA]}~Neena~Spotify`]);
+    });
+
     it("moves monthly charges to the same day next month, clamping short months", () => {
       const jan31 = new Date(2027, 0, 31, 9).getTime();
       expect(new Date(nextCharge(jan31, "monthly")).getDate()).toBe(28);

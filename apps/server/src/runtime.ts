@@ -76,6 +76,19 @@ export interface RuntimeDeps {
   log?: (line: string) => void;
 }
 
+/**
+ * One subscription for the web page's dashboard, as a link param (the page has no backend):
+ * `group~every~status~total~myShare~nextAtSeconds~payeeAddress~payeeName~title`. Amounts are USDC
+ * base units; the title goes last so it may contain anything. The payee's address lets the page
+ * name that subscription's charges in the chain history. My share is 0 when I'm the one paid.
+ */
+export function subscriptionParam(group: string, sub: Subscription, viewer: string, payee?: Member): string {
+  const mine = viewer === sub.split.payeeMemberId ? 0n : (sub.split.shares[viewer] ?? 0n);
+  const next = sub.nextAt ? Math.floor(sub.nextAt / 1000) : 0;
+  const clean = (text: string) => text.replace(/~/g, "-");
+  return [group, sub.every, sub.status === "active" ? "a" : "p", sub.split.total, mine, next, payee?.wallet?.address ?? "-", clean(payee?.displayName ?? "-"), sub.title].join("~");
+}
+
 /** The next charge after `from`: a week later, or the same day next month (the 31st clamps to the month's end). */
 export function nextCharge(from: number, every: "weekly" | "monthly", overrideMs?: number): number {
   if (overrideMs) return from + overrideMs;
@@ -391,8 +404,18 @@ export class GroupRuntime {
     for (const { record, member } of this.membershipsOf(handle)) {
       const group = groupIdForChat(record.group.chatId);
       if (member.wallet && group.toLowerCase() !== current) url.searchParams.append("k", `${group}:${this.chatLabel(record, handle)}`);
+      for (const sub of this.subscriptions(record)) {
+        if (sub.status === "cancelled" || !(member.id in sub.split.shares)) continue;
+        url.searchParams.append("s", subscriptionParam(group, sub, member.id, this.payeeOf(record, sub)));
+      }
     }
+    // The list above is complete: the page replaces what it remembered (a stopped one disappears).
+    url.searchParams.set("sv", "1");
     return url.toString();
+  }
+
+  private payeeOf(record: GroupRecord, sub: Subscription): Member | undefined {
+    return record.group.members.find((m) => m.id === sub.split.payeeMemberId);
   }
 
   /** Settles everything approved and waiting on the tab. */

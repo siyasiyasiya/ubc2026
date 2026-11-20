@@ -79,6 +79,8 @@ export interface Entry {
   group?: Hex;
   limit?: bigint;
   period?: number;
+  /** The purchase this money moved for (shares and missed shares), so the page can name it. */
+  purchase?: Hex;
   /** The limit was changed by Kitty (the operator), not the member. */
   byKitty?: boolean;
   reason?: string;
@@ -132,9 +134,9 @@ export function buildHistory(logs: ExplorerLog[], transfers: ExplorerTransfer[],
    * without the transfer list). Keyed by tx so the matching USDC transfer isn't listed twice.
    */
   const explained = new Map<string, { other: string; amount: bigint; incoming: boolean }[]>();
-  const moved = (e: Decoded, kind: EntryKind, other: string, amount: bigint, group?: Hex) => {
+  const moved = (e: Decoded, kind: EntryKind, other: string, amount: bigint, group?: Hex, purchase?: Hex) => {
     const incoming = kind === "got";
-    activity.push({ kind, at: e.at, tx: e.tx, amount: incoming ? amount : -amount, group });
+    activity.push({ kind, at: e.at, tx: e.tx, amount: incoming ? amount : -amount, group, ...(purchase ? { purchase } : {}) });
     const list = explained.get(lower(e.tx)) ?? [];
     list.push({ other: lower(other), amount, incoming });
     explained.set(lower(e.tx), list);
@@ -185,11 +187,11 @@ export function buildHistory(logs: ExplorerLog[], transfers: ExplorerTransfer[],
         const p = purchases.get(lower(e.args.id));
         if (lower(e.args.from) === me) {
           if (p) p.mine = { amount: e.args.amount, ok: true };
-          moved(e, "share", e.args.to, e.args.amount, p?.group);
+          moved(e, "share", e.args.to, e.args.amount, p?.group, e.args.id);
         }
         if (lower(e.args.to) === me) {
           if (p) p.toMe += e.args.amount;
-          moved(e, "got", e.args.from, e.args.amount, p?.group);
+          moved(e, "got", e.args.from, e.args.amount, p?.group, e.args.id);
         }
         break;
       }
@@ -197,7 +199,7 @@ export function buildHistory(logs: ExplorerLog[], transfers: ExplorerTransfer[],
         const p = purchases.get(lower(e.args.id));
         if (lower(e.args.from) === me) {
           if (p) p.mine = { amount: e.args.amount, ok: false, reason: e.args.reason };
-          activity.push({ kind: "owe", at: e.at, tx: e.tx, group: p?.group, amount: e.args.amount, reason: e.args.reason });
+          activity.push({ kind: "owe", at: e.at, tx: e.tx, group: p?.group, amount: e.args.amount, reason: e.args.reason, purchase: e.args.id });
         }
         break;
       }

@@ -273,6 +273,7 @@
       @media (max-width: 380px) { #k-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
       #dash h3 { font-size: 13px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin: 0 0 4px; }
       #k-mine-box { margin-top: 18px; }
+      #k-subs-box { margin-bottom: 18px; }
 
       footer {
         margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--line);
@@ -351,10 +352,12 @@
           <div id="dash-owe" hidden></div>
           <div class="seg" id="dash-tabs" role="tablist">
             <button type="button" data-tab="kitties">Kitties</button>
-            <button type="button" data-tab="activity">Your activity</button>
+            <button type="button" data-tab="subs">Subscriptions</button>
+            <button type="button" data-tab="activity">Activity</button>
           </div>
           <p id="dash-error" hidden>Couldn't load your history. <button id="dash-retry" type="button">Try again</button></p>
           <div id="tab-kitties"><ul id="dash-kitties" class="list"></ul></div>
+          <div id="tab-subs" hidden><ul id="dash-subs" class="feed"></ul></div>
           <div id="tab-activity" hidden><ul id="dash-activity" class="feed"></ul></div>
         </div>
         <div id="dash-kitty" hidden>
@@ -362,6 +365,10 @@
           <h2 id="k-name"></h2>
           <div id="k-cap"></div>
           <div id="k-stats" hidden></div>
+          <div id="k-subs-box" hidden>
+            <h3>Subscriptions</h3>
+            <ul id="k-subs" class="feed"></ul>
+          </div>
           <h3>Purchases</h3>
           <ul id="k-purchases" class="feed"></ul>
           <div id="k-mine-box" hidden>
