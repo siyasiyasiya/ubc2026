@@ -32,6 +32,9 @@ const clientUrl = (import.meta.env.VITE_CLIENT_URL as string) || "https://modula
 const treasury = import.meta.env.VITE_TREASURY_ADDRESS as Hex;
 const usdc = ContractAddress.ArcTestnet_USDC as Hex;
 const CREDENTIAL_KEY = "kitty.passkey.v2";
+// Arc's RPC reports a 0 priority fee, but Circle's bundler prechecks reject a userOp with
+// maxPriorityFeePerGas below 1 gwei. Set it explicitly so joins / pay-backs aren't rejected.
+const MIN_PRIORITY_FEE = 1_000_000_000n;
 
 const params = new URLSearchParams(location.search);
 const group = params.get("g") ?? "";
@@ -307,7 +310,7 @@ async function submit(event: Event, returning = false): Promise<void> {
     );
 
     show("Saving…");
-    const hash = await bundler.sendUserOperation({ calls, paymaster: true });
+    const hash = await bundler.sendUserOperation({ calls, paymaster: true, maxPriorityFeePerGas: MIN_PRIORITY_FEE });
     const { receipt, success } = await bundler.waitForUserOperationReceipt({ hash });
     if (!success) throw new Error("The transaction didn't go through.");
 
@@ -446,6 +449,7 @@ function setupPayBack(): void {
       const hash = await session.bundler.sendUserOperation({
         calls: [{ to: treasury, data: encodeFunctionData({ abi: treasuryAbi, functionName: "payDebt", args: [creditor as Hex, owed] }) }],
         paymaster: true,
+        maxPriorityFeePerGas: MIN_PRIORITY_FEE,
       });
       show("Paying…");
       const { receipt, success } = await session.bundler.waitForUserOperationReceipt({ hash });
