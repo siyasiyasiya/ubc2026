@@ -204,7 +204,13 @@ describe("mapMessageRow", () => {
       text: "we are out of paper towels",
       attachments: [{ uri: "/a/b.jpg", mimeType: "image/png" }],
       at: AT.getTime(),
+      id: "msg-guid-1",
     });
+  });
+
+  it("carries an inline reply's target id (prefix stripped)", () => {
+    const row = makeMessage({ replyToMessageId: "p:0/target-guid-1" });
+    expect(mapMessageRow(row)?.replyToMessageId).toBe("target-guid-1");
   });
 
   it("defaults null text and drops attachments with no local file", () => {

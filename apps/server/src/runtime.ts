@@ -174,6 +174,8 @@ function pick<T>(variants: readonly T[]): T {
 
 export class GroupRuntime {
   private readonly history = new Map<string, string[]>();
+  /** Recent messages by id (incoming and Kitty's own), so an inline reply can quote what it points at. */
+  private readonly repliable = new Map<string, string>();
   /** The last receipt each group posted, attached to the next proposal that matches its total. */
   private readonly lastReceipt = new Map<string, Receipt>();
   /** Requests being set up right now: the payer and amount are known, so skip the state machine's "Who paid?". */
@@ -548,7 +550,15 @@ export class GroupRuntime {
   private async say(chatId: string, text: string): Promise<string> {
     this.remember(chatId, `Treasury: ${text}`);
     const ref = await this.deps.chat.postMessage(chatId, text);
+    this.rememberRepliable(ref.id, `Kitty: ${text}`);
     return ref.id;
+  }
+
+  /** Keep a bounded id -> "Who: text" map so an inline reply can be resolved to what it points at. */
+  private rememberRepliable(id: string | undefined, line: string): void {
+    if (!id) return;
+    this.repliable.set(id, line);
+    if (this.repliable.size > 1000) this.repliable.delete(this.repliable.keys().next().value!);
   }
 
   /**
@@ -610,7 +620,11 @@ export class GroupRuntime {
       }
     }
 
-    let event = msg.text ? `${member.displayName}: ${msg.text}` : "";
+    // If this is an inline reply, quote what it points at so "this one" / "yeah that" is unambiguous.
+    const repliedTo = msg.replyToMessageId ? this.repliable.get(msg.replyToMessageId) : undefined;
+    const who = repliedTo ? `${member.displayName} (replying to “${repliedTo}”)` : member.displayName;
+    let event = msg.text ? `${who}: ${msg.text}` : "";
+    this.rememberRepliable(msg.id, `${member.displayName}: ${msg.text || "[photo]"}`);
     const image = msg.attachments[0];
     if (image) {
       try {

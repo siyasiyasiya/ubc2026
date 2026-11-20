@@ -132,6 +132,10 @@ export interface IncomingMessage {
   text: string;
   attachments: ImageRef[];
   at: number;
+  /** This message's own id, so a later inline reply can be matched back to it. */
+  id?: string;
+  /** If this is an inline reply, the id of the message being replied to. */
+  replyToMessageId?: string;
 }
 
 export interface IncomingReaction {

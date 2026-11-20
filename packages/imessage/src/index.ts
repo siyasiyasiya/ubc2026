@@ -309,6 +309,9 @@ export function mapMessageRow(
     text: (message.text ?? "").replace(/￼/g, "").trim(),
     attachments,
     at: message.createdAt.getTime(),
+    id: normalizeMessageId(message.id),
+    // An inline reply points at the message it answers; normalize so it matches our stored ids.
+    ...(message.replyToMessageId ? { replyToMessageId: normalizeMessageId(message.replyToMessageId) } : {}),
   };
 }
 

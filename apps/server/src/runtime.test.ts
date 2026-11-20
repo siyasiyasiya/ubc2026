@@ -139,6 +139,10 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
     onMessage.forEach((h) => h({ chatId: CHAT, senderHandle: handle, text, attachments: [], at: 0 }));
     await runtime.serial(async () => undefined);
   };
+  const replying = async (handle: string, text: string, replyToMessageId: string, id = `r-${replyToMessageId}`) => {
+    onMessage.forEach((h) => h({ chatId: CHAT, senderHandle: handle, text, attachments: [], at: 0, id, replyToMessageId }));
+    await runtime.serial(async () => undefined);
+  };
   const react = async (handle: string, targetMessageId: string, emoji = "👍") => {
     onReaction.forEach((h) => h({ chatId: CHAT, senderHandle: handle, targetMessageId, emoji, added: true, at: 0 }));
     await runtime.serial(async () => undefined);
@@ -158,7 +162,7 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
     await say(NEENA, "split dinner with siya and tristan");
     return request();
   };
-  return { posted, dms, failing, say, react, dm, image, dmSummaries, turnEvents, turnSnapshots, proposeDinner, request, runtime, store };
+  return { posted, dms, failing, say, replying, react, dm, image, dmSummaries, turnEvents, turnSnapshots, proposeDinner, request, runtime, store };
 }
 
 describe("GroupRuntime", () => {
@@ -234,6 +238,18 @@ describe("GroupRuntime", () => {
     a.save();
     const b = new Store(file);
     expect(b.get("g")!.preferences!["paper towels"]!.choice).toBe("Bounty");
+  });
+
+  it("tells the agent what an inline reply points at", async () => {
+    const t = setup();
+    const before = t.posted.length;
+    await t.say(SIYA, "options please"); // Kitty posts 3 separate messages (desc, link, which one?)
+    const optionMsg = t.posted.slice(before)[0]!; // "1. Cascade pods ~$18"
+
+    await t.replying(SIYA, "this one", optionMsg.id); // Siya inline-replies to that option message
+
+    expect(t.turnEvents.at(-1)).toContain('replying to “Kitty: 1. Cascade pods ~$18”');
+    expect(t.turnEvents.at(-1)).toContain("this one");
   });
 
   it("splits a reply on --- lines into separate messages (buy options: description then link)", async () => {
