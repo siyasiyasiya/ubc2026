@@ -8,8 +8,8 @@ const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as 
 
 const params = new URLSearchParams(location.search);
 // Bridge mode (real phone call through the Mac): `mic` and `speaker` name the audio devices to use, by
-// part of their label (e.g. mic=BlackHole 2ch carries the phone call in, speaker=Kitty out sends Kitty's
-// voice into the call). `answer=auto` starts right away, with no ring.
+// part of their label (e.g. mic=MacBook Pro Microphone hears the call on the speakers, speaker=BlackHole 16ch sends Kitty's
+// voice into the call). `answer=auto` skips the ring and starts Kitty once the callee speaks or someone clicks.
 const micLabel = params.get("mic");
 const speakerLabel = params.get("speaker");
 const autoAnswer = params.get("answer") === "auto";

@@ -1,6 +1,6 @@
 #!/bin/zsh
 # Places a real phone call from this Mac (through the paired iPhone, "Calls from iPhone") with Kitty's
-# ElevenLabs voice agent on the line. Audio path (BlackHole virtual device, see make-devices.swift):
+# ElevenLabs voice agent on the line. Needs: brew install --cask blackhole-16ch; brew install switchaudio-osx.
 #   caller's voice: the call plays on the MacBook speakers (macOS ignores virtual outputs for calls), so the
 #                   room hears it, and Kitty listens with the MacBook microphone (needs a quiet room)
 #   Kitty's voice:  Kitty → BlackHole 16ch only (on the speakers, the mic would hear Kitty) → call
@@ -29,11 +29,16 @@ fi
 
 # Remember the normal devices once (a second call shouldn't save the bridge as "normal").
 [[ -f "$STATE" ]] || printf '%s\n%s\n' "$(SwitchAudioSource -t output -c)" "$(SwitchAudioSource -t input -c)" > "$STATE"
-SwitchAudioSource -t output -s "MacBook Pro Speakers" >/dev/null
+# The Mac's own speakers and mic (e.g. "MacBook Pro Speakers", "MacBook Air Microphone", "Mac mini Speakers").
+builtin_out=$(SwitchAudioSource -a -t output | grep -m1 -E '^(MacBook|Mac mini|iMac|Mac Studio|Built-in).*(Speakers|Output)' || true)
+builtin_in=$(SwitchAudioSource -a -t input | grep -m1 -E '^(MacBook|iMac|Mac Studio|Built-in).*(Microphone|Input)' || true)
+[[ -n "$builtin_out" && -n "$builtin_in" ]] || { echo "couldn't find the Mac's built-in speakers/mic: $(SwitchAudioSource -a | tr '\n' ',')"; exit 1; }
+SwitchAudioSource -t output -s "$builtin_out" >/dev/null
 SwitchAudioSource -t input -s "BlackHole 16ch" >/dev/null
 
-# Bridge params: Kitty listens on the Mac's mic, speaks into "Kitty out", starts once the callee talks.
+# Bridge params: Kitty listens on the Mac's mic, speaks into BlackHole 16ch, starts once the callee talks (or a click).
 sep='?'; [[ "$page" == *\?* ]] && sep='&'
-open -a "Google Chrome" "${page}${sep}mic=MacBook%20Pro%20Microphone&speaker=BlackHole%2016ch&answer=auto"
+mic=${builtin_in// /%20}
+open -a "Google Chrome" "${page}${sep}mic=${mic}&speaker=BlackHole%2016ch&answer=auto"
 open "tel://${phone}"
 echo "calling $phone with Kitty on the line (restore audio after: $0 --restore)"
