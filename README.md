@@ -129,6 +129,10 @@ The pieces the system needs, and what each one is built on.
 
 ## How ElevenLabs is used
 
+Two ElevenLabs products, each doing something money moves on: a **voice agent** that makes real phone calls (outbound voice), and **Speech-to-Text (Scribe)** that lets a member speak a request (inbound voice). Voice is how Kitty reaches the real world and how you reach Kitty.
+
+### Booking calls (voice agent)
+
 Some plans need a phone call, not a checkout. On a trip: "kitty book 3 canoes for 2 hours at Lakeside Canoe Rentals, (518) 817-3144, saturday 9am, under neena".
 
 1. The agent's `call_to_book` tool starts an **ElevenLabs voice agent** call. The business, what to book, how many people, when and whose name it's under go in as dynamic variables, so one agent handles every booking.
@@ -142,6 +146,12 @@ How the call is placed:
 - **No Mac, no line:** Kitty texts the business a link to the same call page, which rings like a call; tapping Accept starts the agent in their browser.
 
 Code: `apps/server/src/booking-call.ts`, `GroupRuntime.callToBook` in `apps/server/src/runtime.ts`. Agent setup (prompt, data collection fields): [`docs/elevenlabs-agent.md`](docs/elevenlabs-agent.md). Calling is off until `ELEVENLABS_API_KEY` and `ELEVENLABS_AGENT_ID` are set.
+
+### Voice memos (Speech-to-Text)
+
+Group chats run on voice memos, so you can talk to Kitty too. Send a spoken memo in the chat ("split the $80 dinner between me, Neena and Akash") and Kitty transcribes it with ElevenLabs **Speech-to-Text** (Scribe, `POST /v1/speech-to-text`), then acts on the words exactly like a typed message, splits, buys, bookings and all. An iMessage voice memo arrives as an audio attachment; Kitty routes any `audio/*` attachment to Scribe instead of the receipt reader. On when `ELEVENLABS_API_KEY` is set.
+
+Code: `apps/server/src/speech.ts`, wired in `GroupRuntime.handleMessage` (`apps/server/src/runtime.ts`).
 
 ## How Arc and Circle are used
 

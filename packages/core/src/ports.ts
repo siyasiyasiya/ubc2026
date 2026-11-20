@@ -218,3 +218,14 @@ export interface ChatPort {
 export interface ReceiptReader {
   read(image: ImageRef): Promise<Receipt>;
 }
+
+// ----------------------------------------------------------------------------
+// SpeechToText — turns a spoken voice memo into text so the agent can act on it
+// the same way it acts on a typed message (provider undecided; ElevenLabs Scribe
+// in the app).
+// ----------------------------------------------------------------------------
+
+export interface SpeechToText {
+  /** Transcribe a spoken audio clip (an iMessage voice memo) to plain text. */
+  transcribe(audio: ImageRef): Promise<string>;
+}

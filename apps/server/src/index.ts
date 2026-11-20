@@ -20,6 +20,7 @@ import { PhotonChatPort } from "@gta/imessage";
 import { createCrossmintPurchaseAdapterFromEnv, crossmintJwtSignerFromEnv } from "@gta/purchase";
 import { SimulatedPurchaseAdapter } from "./simulated-purchase.js";
 import { elevenLabsFromEnv, macDialerFromEnv } from "./booking-call.js";
+import { elevenLabsSpeechFromEnv } from "./speech.js";
 import { usdc, type Usdc } from "@gta/core";
 import { getAddress } from "viem";
 import { arcClients, arcWalletAdapters, InMemoryWalletAdapter, JoinWatcher, sendWelcomeBalance } from "@gta/wallet";
@@ -52,6 +53,7 @@ const runtime = new GroupRuntime({
   chat,
   wallet,
   receipts: new ClaudeReceiptReader(),
+  ...voiceMemos(),
   purchase: purchaseAdapter(),
   ...bookingCalls(),
   runTurn,
@@ -325,6 +327,13 @@ function bookingCalls() {
       : "texts the business a link to talk (no ELEVENLABS_PHONE_NUMBER_ID)";
   console.log(calls ? `calls: ElevenLabs voice agent, ${how}` : "calls: off (set ELEVENLABS_API_KEY and ELEVENLABS_AGENT_ID; ELEVENLABS_PHONE_NUMBER_ID for real phone calls)");
   return calls ? { calls, ...(dial ? { dial } : {}) } : {};
+}
+
+/** ElevenLabs Scribe: members can *speak* a request as an iMessage voice memo. On when ELEVENLABS_API_KEY is set. */
+function voiceMemos() {
+  const speech = elevenLabsSpeechFromEnv();
+  console.log(speech ? "voice memos: on (ElevenLabs Scribe transcribes spoken requests)" : "voice memos: off (set ELEVENLABS_API_KEY)");
+  return speech ? { speech } : {};
 }
 
 /**

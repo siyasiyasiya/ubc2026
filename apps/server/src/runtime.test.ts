@@ -1,4 +1,4 @@
-import { usdc, type PurchaseAdapter, type ChatPort, type IncomingMessage, type IncomingReaction, type PullParams, type Receipt, type WalletAdapter } from "@gta/core";
+import { usdc, type PurchaseAdapter, type ChatPort, type IncomingMessage, type IncomingReaction, type PullParams, type Receipt, type SpeechToText, type WalletAdapter } from "@gta/core";
 import { NotAReceiptError } from "@gta/agent";
 import type { runTurn as RunTurn, runDmTurn as RunDmTurn } from "@gta/agent";
 import { groupIdForChat, InMemoryWalletAdapter, inviteTicket } from "@gta/wallet";
@@ -15,7 +15,7 @@ const OUTSIDER = "+1999";
 const CHAT = "group";
 
 /** A runtime whose "agent" proposes a $90 dinner paid by Neena, split three ways. */
-function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapter; wallets?: Record<string, string>; invites?: { baseUrl: string; secret: string }; chats?: string[]; participants?: string[]; chatName?: string; receiptItems?: { name: string; amount: ReturnType<typeof usdc> }[]; receiptError?: Error; purchase?: PurchaseAdapter; calls?: BookingCaller; dial?: (phone: string, link: string) => Promise<void>; now?: () => number; subscriptionEveryMs?: number; autoTopUp?: ConstructorParameters<typeof GroupRuntime>[0]["autoTopUp"]; cards?: ConstructorParameters<typeof GroupRuntime>[0]["cards"]; shortLink?: ConstructorParameters<typeof GroupRuntime>[0]["shortLink"]; testMoney?: { send: (address: string, amount: bigint) => Promise<string>; maxUsd: number; dailyUsd: number } } = {}) {
+function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapter; wallets?: Record<string, string>; invites?: { baseUrl: string; secret: string }; chats?: string[]; participants?: string[]; chatName?: string; receiptItems?: { name: string; amount: ReturnType<typeof usdc> }[]; receiptError?: Error; purchase?: PurchaseAdapter; calls?: BookingCaller; dial?: (phone: string, link: string) => Promise<void>; now?: () => number; subscriptionEveryMs?: number; autoTopUp?: ConstructorParameters<typeof GroupRuntime>[0]["autoTopUp"]; cards?: ConstructorParameters<typeof GroupRuntime>[0]["cards"]; shortLink?: ConstructorParameters<typeof GroupRuntime>[0]["shortLink"]; testMoney?: { send: (address: string, amount: bigint) => Promise<string>; maxUsd: number; dailyUsd: number }; speech?: SpeechToText } = {}) {
   const posted: { id: string; text: string }[] = [];
   const failing = { posts: 0, dms: 0 };
   const dms: { handle: string; text: string }[] = [];
@@ -128,6 +128,7 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
     ...(opts.autoTopUp ? { autoTopUp: opts.autoTopUp } : {}),
     ...(opts.cards ? { cards: opts.cards } : {}),
     ...(opts.shortLink ? { shortLink: opts.shortLink } : {}),
+    ...(opts.speech ? { speech: opts.speech } : {}),
     receipts: {
       read: async (): Promise<Receipt> => {
         if (opts.receiptError) throw opts.receiptError;
@@ -166,13 +167,17 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
     onMessage.forEach((h) => h({ chatId: CHAT, senderHandle: handle, text: "", attachments: [{ uri: "/receipt.jpg" }], at: 0 }));
     await runtime.serial(async () => undefined);
   };
+  const voice = async (handle: string) => {
+    onMessage.forEach((h) => h({ chatId: CHAT, senderHandle: handle, text: "", attachments: [{ uri: "/memo.caf", mimeType: "audio/x-caf" }], at: 0 }));
+    await runtime.serial(async () => undefined);
+  };
 
   const proposeDinner = async () => {
     for (const who of [SIYA, TRISTAN, OUTSIDER]) await say(who, "hi");
     await say(NEENA, "split dinner with siya and tristan");
     return request();
   };
-  return { posted, dms, failing, say, replying, react, dm, image, dmSummaries, turnEvents, turnSnapshots, proposeDinner, request, runtime, store };
+  return { posted, dms, failing, say, replying, react, dm, image, voice, dmSummaries, turnEvents, turnSnapshots, proposeDinner, request, runtime, store };
 }
 
 describe("GroupRuntime", () => {
@@ -215,6 +220,29 @@ describe("GroupRuntime", () => {
     const event = t.turnEvents.at(-1)!;
     expect(event).toContain("couldn't open it");
     expect(event).not.toContain("isn't a receipt");
+  });
+
+  it("transcribes a voice memo and acts on the spoken request like a typed one", async () => {
+    const t = setup(200, { speech: { transcribe: async () => "split dinner with siya and tristan" } });
+    for (const who of [SIYA, TRISTAN]) await t.say(who, "hi"); // become members
+    await t.voice(NEENA); // a spoken "split dinner..." memo
+
+    // The transcript reached the agent as if Neena had typed it...
+    expect(t.turnEvents.some((e) => e.includes("Neena: split dinner with siya and tristan"))).toBe(true);
+    // ...and drove the same action a typed message would.
+    expect(t.request().state.name).toBe("awaiting_approval");
+  });
+
+  it("tells the agent when a voice memo can't be transcribed", async () => {
+    const t = setup(200, { speech: { transcribe: async () => { throw new Error("stt down"); } } });
+    await t.voice(SIYA);
+    expect(t.turnEvents.at(-1)).toContain("couldn't make it out");
+  });
+
+  it("without a speech reader, an audio attachment is not treated as a spoken request", async () => {
+    const t = setup(); // no speech configured; the audio falls through to the receipt reader ($90)
+    await t.voice(NEENA);
+    expect(t.turnEvents.at(-1)).toContain("posted a receipt");
   });
 
   it("saves a group preference and surfaces it in the next snapshot", async () => {

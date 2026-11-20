@@ -25,6 +25,7 @@ import {
   type ChatPort,
   type Effect,
   type Group,
+  type ImageRef,
   type IncomingMessage,
   type IncomingReaction,
   type Member,
@@ -32,6 +33,7 @@ import {
   type Receipt,
   type ReceiptReader,
   type RequestEvent,
+  type SpeechToText,
   type SpendingLimit,
   type Split,
   type Usdc,
@@ -44,11 +46,19 @@ import { normalizePreferenceKey, type GroupBuy, type GroupRecord, type RequestRe
 import type { BookingCallRequest, BookingCaller } from "./booking-call.js";
 import { asPng } from "./svg-to-png.js";
 
+/** iMessage voice memos arrive as audio attachments (.caf/.amr, mime audio/*), unlike receipt photos. */
+function isAudioAttachment(a: ImageRef): boolean {
+  if (a.mimeType?.toLowerCase().startsWith("audio/")) return true;
+  return /\.(caf|amr|m4a|mp3|wav|aac|ogg|opus)$/i.test(a.uri);
+}
+
 export interface RuntimeDeps {
   chat: ChatPort;
   /** One adapter for every chat, or one per chat (the Arc adapter: limits are per chat onchain). */
   wallet: WalletAdapter | ((chatId: string) => WalletAdapter);
   receipts: ReceiptReader;
+  /** Turns an iMessage voice memo into text so the agent acts on a spoken message (ElevenLabs Scribe). Off when unset. */
+  speech?: SpeechToText;
   /** Kitty buys things for the group (pay before). Crossmint for real orders, or a labelled simulation. */
   purchase?: PurchaseAdapter;
   /** Testnet only: send test dollars to an account (the operator's faucet). Off in production. */
@@ -678,10 +688,25 @@ export class GroupRuntime {
     const who = repliedTo ? `${member.displayName} (replying to “${repliedTo}”)` : member.displayName;
     let event = msg.text ? `${who}: ${msg.text}` : "";
     this.rememberRepliable(msg.id, `${member.displayName}: ${msg.text || "[photo]"}`);
-    const image = msg.attachments[0];
-    if (image) {
+    const attachment = msg.attachments[0];
+    if (attachment && this.deps.speech && isAudioAttachment(attachment)) {
+      // A voice memo: transcribe it and treat the words as if the member typed them.
       try {
-        const receipt = await this.deps.receipts.read(image);
+        const transcript = (await this.deps.speech.transcribe(attachment)).trim();
+        if (transcript) {
+          this.log(`🎙️ ${member.displayName} voice memo: “${transcript}”`);
+          const spoken = msg.text ? `${msg.text} ${transcript}` : transcript;
+          event = `${who}: ${spoken}`;
+        } else {
+          event = `[${member.displayName} sent a voice memo but it came through empty]`;
+        }
+      } catch (err) {
+        this.log(`voice transcription failed on ${attachment.mimeType ?? "audio"} ${attachment.uri}: ${(err as Error).message}`);
+        event = `[${member.displayName} sent a voice memo but Kitty couldn't make it out]`;
+      }
+    } else if (attachment) {
+      try {
+        const receipt = await this.deps.receipts.read(attachment);
         this.lastReceipt.set(msg.chatId, receipt);
         // Number items (1-based) so "split by item" claims line up with the lineItems order.
         const items = (receipt.lineItems ?? []).map((i, n) => `${n + 1}. ${i.name} ${formatUsdc(i.amount)}`).join("; ");
@@ -695,7 +720,7 @@ export class GroupRuntime {
         } else {
           // A technical failure (couldn't open the file, converter or vision call errored), not a
           // verdict that it's not a receipt. Log loudly and tell the agent so it asks for a resend.
-          this.log(`receipt read failed on ${image.mimeType ?? "file"} ${image.uri}: ${(err as Error).message}`);
+          this.log(`receipt read failed on ${attachment.mimeType ?? "file"} ${attachment.uri}: ${(err as Error).message}`);
           event = `[${member.displayName} posted an image but Kitty couldn't open it this time]`;
         }
       }
