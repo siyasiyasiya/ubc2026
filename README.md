@@ -50,7 +50,7 @@ As of Nov 19, 2026, run live in a real iMessage group on Arc testnet unless note
 | Proactive nudges for stale approval cards and unpaid debts (off by default, `NUDGES=on`) | 🟡 built and tested, off for demos |
 | Raise a limit (one-tap Face ID link), leave a chat's Kitty, private balance questions by text | 🟡 built and tested, live run pending |
 | Kitty buys it (pay before): checkout card, 👍s, order, shares paid back to the card | 🟡 real Crossmint order placed from the terminal (a $1 Gumroad item, $1.07 charged); from the chat: live run pending |
-| Restaurant calls (ElevenLabs) | 🟡 built and tested against the documented API; needs ElevenLabs keys and a phone number |
+| Restaurant calls (ElevenLabs) | 🟡 the voice agent runs live (a real voice conversation in the browser, with its result read back by the server into Kitty's chat line); phone calls from the chat need a paid Twilio number |
 | Using members' existing store accounts, Link one-time cards, connecting an existing wallet | ⬜ not built |
 
 ## How spending works
