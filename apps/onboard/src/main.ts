@@ -543,11 +543,12 @@ async function showFunding(address: Hex, snapshot = true): Promise<void> {
 
 /**
  * Testnet: "Add $20 test money" sends real test USDC on Arc from the team's faucet wallet
- * (/api/test-money), so the add-money step works end to end before Onramp is live. When it's on,
- * it's the main button and Apple Pay steps back.
+ * (/api/test-money), so the add-money step works end to end before Onramp is live. Only on links
+ * with `test=1` (the team's own): members, and the demo, see the real Apple Pay / card flow.
  */
 async function offerTestMoney(address: Hex, balanceText: HTMLElement, add: HTMLAnchorElement): Promise<void> {
   const test = $<HTMLAnchorElement>("test");
+  if (params.get("test") !== "1") return;
   try {
     const res = await fetch("/api/test-money");
     if (!res.ok || !((await res.json()) as { on?: boolean }).on) return;

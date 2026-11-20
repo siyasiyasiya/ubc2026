@@ -173,7 +173,7 @@ The chat picks its plan once ("this is a trip, $200 each"), each person confirms
 
 Members ask Kitty privately to see their kitties and get a link to the dashboard (`apps/onboard`, `?v=1`). It unlocks with the passkey this phone already has, with no extra Face ID tap, and shows:
 
-- **Balance and add money** (Apple Pay through Arc Onramp, or test money on testnet).
+- **Balance and add money** (Apple Pay or a card through Arc Onramp; its sandbox on testnet).
 - **Every kitty** with what's left of the cap and when it resets, read live from `GroupTreasury` (`members`, `remaining`, `resetsAt`). Tap one for its **purchases** (total, your share, paid / waiting / cancelled / missed), group stats, your cap history, and **Change spending cap**, which opens the one-tap Face ID `setLimit` page and returns to the dashboard.
 - **Subscriptions**: each one you're in, your share, the total, who gets paid, and the next charge, plus about what your shares cost a month. Each charge in the history is labeled with its subscription's name.
 - **Your activity**: every dollar in or out of your account (top-ups, shares, pay-backs, money paid to you), plus joins, cap changes, and missed shares, with a pay-back link for anything still owed.
@@ -220,7 +220,7 @@ pnpm --filter @gta/server crossmint card               # link to save the card K
 pnpm --filter @gta/server crossmint buy "<item or URL>"  # real test order, asks "yes" before charging
 ```
 
-**Testing on testnet:** members text Kitty privately "add $20" and get test dollars straight into their Kitty account (from the bot's wallet, up to $20 a request and $50 a day; top the bot up at faucet.circle.com). The add-money page has the same thing as a button, **Add $20 test money**: it sends test USDC on Arc from a separate faucet wallet (`apps/onboard/api/test-money.ts`). Real money comes in through Apple Pay (Arc Onramp) instead.
+**Testing on testnet:** members text Kitty privately "add $20" and get test dollars straight into their Kitty account (from the bot's wallet, up to $20 a request and $50 a day; top the bot up at faucet.circle.com). The add-money page has the same thing as a button, **Add $20 test money**, shown only on links with `&test=1` (the team's own): it sends test USDC on Arc from a separate faucet wallet (`apps/onboard/api/test-money.ts`). Everyone else sees only **Add money with Apple Pay**, which opens Arc Onramp (its sandbox on testnet: test cards, no real charge).
 
 The bot runs on a Mac signed into Messages with **its own Apple ID**, and the terminal needs Full Disk Access (it reads `~/Library/Messages/chat.db`). Add that Apple ID to a group chat and it serves it; with `ALLOWED_CHAT_IDS` empty it serves every group it's in, so never leave it empty on a personal Apple ID. Only one bot can run per Mac (a lock file stops a second one).
 
