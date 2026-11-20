@@ -19,7 +19,32 @@ export interface RequestRecord {
   onTab?: boolean;
   /** Pay-before: who's in the split and whose card pays the store (they get paid back). */
   buy?: { participants: MemberId[]; payer: MemberId };
+  /** Part of a subscription: its setup card (approved once by everyone) or one of its charges. */
+  subscriptionId?: string;
+  /** A scheduled subscription charge: already approved when the group started it, so no card. */
+  charge?: boolean;
   createdAt: number;
+}
+
+/**
+ * Something the group pays for on repeat (Spotify, rent, a cleaner). Everyone 👍s it once; Kitty
+ * then charges the same split every period through the contract, never past anyone's cap.
+ */
+export interface Subscription {
+  id: string;
+  title: string;
+  every: "weekly" | "monthly";
+  split: Split;
+  /** pending: waiting on 👍s for the setup card. active: charging. cancelled: stopped for good. */
+  status: "pending" | "active" | "cancelled";
+  /** The setup card everyone 👍s; its settle is the first charge. */
+  setupRequestId: string;
+  createdBy: MemberId;
+  createdAt: number;
+  /** When the next charge is due (set once it starts). */
+  nextAt?: number;
+  charges: number;
+  cancelledBy?: MemberId;
 }
 
 /** The group's saved "usual" for a generic item, so Kitty buys it instead of asking every time. */
@@ -46,6 +71,8 @@ export interface GroupRecord {
   preferences?: Record<string, Preference>;
   /** Each member's personal usuals, by member id then normalized item name. A member's own pick wins over the group's. */
   memberPreferences?: Record<MemberId, Record<string, Preference>>;
+  /** Recurring splits this chat pays on repeat. */
+  subscriptions?: Subscription[];
 }
 
 /** Normalize an item name to a stable preference key: lowercase, trimmed, whitespace collapsed. */

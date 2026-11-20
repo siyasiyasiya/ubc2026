@@ -52,12 +52,13 @@ As of Nov 19, 2026, run live in a real iMessage group on Arc testnet unless note
 | Raise a limit (one-tap Face ID link), leave a chat's Kitty, private balance questions by text | 🟡 built and tested, live run pending |
 | Kitty buys it (pay before): checkout card, 👍s, order, shares paid back to the card | 🟡 real Crossmint order placed from the terminal (a $1 Gumroad item, $1.07 charged); from the chat: live run pending |
 | Restaurant calls (ElevenLabs) | 🟡 voice agent live: a real voice conversation started from Kitty's link, found and read back by the server code ("📞 booked Uchi for 4 … ✅"); from the group chat: live run pending a bot restart. Phone-line calls need a paid Twilio number |
+| Subscriptions (Spotify, rent): the group 👍s once, then Kitty charges the same split every week or month; "cancel Spotify" stops it | 🟡 built and tested, run end to end with the real agent in the simulator; live run pending |
 | Web dashboard ("your kitties"): balance and add money, every kitty with its cap, each kitty's purchases, change a cap, your own activity | 🟡 built and tested against live Arc data, phone run pending |
 | Using members' existing store accounts, Link one-time cards, connecting an existing wallet | ⬜ not built |
 
 ## How spending works
 
-Every spend follows one of two flows.
+Every spend follows one of two flows. A subscription repeats the second one on a schedule (see 3).
 
 ### 1. The agent buys something (pay before)
 
@@ -82,6 +83,15 @@ For things like dinner, a bar tab or a ride, where the real amount isn't known u
 2. After: whoever paid sends a photo or PDF of the receipt to the chat.
 3. The agent reads the total, including tax and tip, and posts a card with the split (evenly, or by what each person ordered).
 4. Everyone in the split 👍s the card. Then each share is pulled from their account and sent to whoever paid, or held on the tab until "settle up".
+
+### 3. Something the group pays on repeat (subscriptions)
+
+For things like Spotify, rent or a cleaner.
+
+1. Someone says "let's split Spotify every month, $18, I pay it". The agent posts a 🔁 card with the amount, how often, and each share.
+2. Everyone in the split 👍s it once. That settle is the first charge.
+3. After that, the server charges the same split every week or month on its own (`chargeSubscriptions`, run on a timer). Each charge goes through the same `propose` → `approveFor` → `settle` path on the contract as any split, so it still can't go past anyone's limit, and a share that can't be pulled becomes a debt with a pay-back link.
+4. Anyone in the split can say "cancel Spotify", and nothing more is charged. If the bot was off for a while, it charges once, not once per missed period.
 
 ```mermaid
 flowchart LR

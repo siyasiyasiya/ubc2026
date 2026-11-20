@@ -32,6 +32,7 @@ What you can do:
 - When someone asks for something generic without naming a brand or product ("we need dishwasher soap", "get paper towels"), don't just pick one. Use web_search to find 2 or 3 real current products, then send them as SEPARATE texts: to split one reply into several texts, put a line that is only "---" between the parts. For each option send two texts: first the description ("1. Cascade Platinum pods, 48ct, ~$18, Walmart"), then the real https:// product link on its own as the next text. So the order is: description, ---, link, ---, next description, ---, next link, and so on, then a final text asking which they want. Each link MUST be the direct product page for that one item (the page with an add-to-cart button), NOT a category, search, browse, "best of" or review/roundup page. Direct product pages look like walmart.com/ip/..., amazon.com/dp/... (or /gp/product/...), target.com/p/...; those are examples, every store has its own product-page shape, so for any other retailer use that store's single-item page the same way (one item, add-to-cart), not a listing. If a search result is a list or review page, search again (try the product name plus the store, or "site:walmart.com/ip <product>") until you land on the item page. If you still can't find a direct product link for an option, drop that option. Never make up a url. Only then call buy_for_group with their pick, passing that product's link in the request so the store buys that exact one. Skip the search and go straight to buy_for_group when: they named a specific brand or product, they say "whatever's cheapest" or "you pick", or there's a saved usual for this item. Only search for a buy like this, not for normal chat.
 - Saved usuals are in the snapshot: a "Usuals" section (the whole chat's) and per-person usuals listed by name. The person asking gets their own personal usual first; if they don't have one, use the group usual; if neither, offer options. Only a personal usual belongs to the person who set it, so don't use Siya's personal pick when Neena asks.
 - When someone settles on a usual, call set_preference and confirm. scope "group" for the chat's usual ("always get Cascade", "make Bounty our paper towels"); scope "personal" for their own ("I always want the fragrance-free one").
+- Subscriptions: for something the group pays on repeat (Spotify, Netflix, rent, a cleaner, a weekly grocery run), call start_subscription with who pays the bill, who's splitting, the amount each time, and weekly or monthly. It posts a card; once everyone 👍s, the first charge happens and Kitty charges the same split every period after, no more 👍s. Ask if the amount, payer, or how often is unclear. "cancel Spotify" or "stop the netflix split" means cancel_subscription. The Subscriptions list in the snapshot says what's running and when the next charge is.
 - Kitty can phone a restaurant to book a table (an AI voice call). You need the restaurant's phone number from the chat; never guess or look one up. Confirm party size, day and time, and whose name it's under, then call call_restaurant. The result comes back in the chat after the call.
 - Anyone can leave the group's Kitty; after that nothing more can be taken from them here. What they already owe stays owed.
 - Set people up: everyone needs a Kitty account (one Face ID tap) before money can move for them.
@@ -114,6 +115,17 @@ export interface TreasuryActions {
   /** Text a member (the sender by default) their private Face ID link to set up a Kitty account. */
   sendJoinLink(input: { name?: string }): Promise<string>;
   cancel(input: { number: number }): Promise<string>;
+  /** Something the group pays for on repeat: everyone 👍s once, then Kitty charges the same split every period. */
+  startSubscription(input: {
+    title: string;
+    totalUsd: number;
+    payer: string;
+    participants: string[];
+    every: "weekly" | "monthly";
+    amountsUsd?: Record<string, number>;
+  }): Promise<string>;
+  /** Stop a subscription by name. */
+  cancelSubscription(input: { title: string }): Promise<string>;
 }
 
 export interface TurnInput {
@@ -301,6 +313,34 @@ export async function runTurn(input: TurnInput): Promise<string | null> {
         "Text someone their private Face ID link to set up their Kitty account for this group. Defaults to the sender. Use for anyone not set up yet who is in, wants to join, or is in a split.",
       inputSchema: z.object({ name: z.string().optional().describe("Member's name; omit for the sender") }),
       run: (a) => actions.sendJoinLink(a.name ? { name: a.name } : {}),
+    }),
+    betaZodTool({
+      name: "start_subscription",
+      description:
+        "Set up something the group pays on repeat (Spotify, rent, a cleaner). Posts a card; once everyone in the split 👍s, the first charge happens now and Kitty charges the same split every week or month after, without asking again. Each charge still can't go past anyone's limit.",
+      inputSchema: z.object({
+        title: z.string().describe("Short name, e.g. 'Spotify' or 'Rent'"),
+        total_usd: z.number().positive().describe("The full amount each time it's charged"),
+        payer: z.string().describe("Name of whoever pays the bill and gets paid back"),
+        participants: z.array(z.string()).min(1).describe("Names of everyone splitting it, including the payer if they're in"),
+        every: z.enum(["weekly", "monthly"]),
+        amounts_usd: z.record(z.string(), z.number().nonnegative()).optional().describe("Only for uneven splits: name -> amount each time"),
+      }),
+      run: (a) =>
+        actions.startSubscription({
+          title: a.title,
+          totalUsd: a.total_usd,
+          payer: a.payer,
+          participants: a.participants,
+          every: a.every,
+          ...(a.amounts_usd ? { amountsUsd: a.amounts_usd } : {}),
+        }),
+    }),
+    betaZodTool({
+      name: "cancel_subscription",
+      description: "Stop a subscription by name ('cancel Spotify'). Only someone in its split can. Nothing more is charged.",
+      inputSchema: z.object({ title: z.string().describe("The subscription's name as the chat said it") }),
+      run: (a) => actions.cancelSubscription({ title: a.title }),
     }),
     betaZodTool({
       name: "cancel_request",

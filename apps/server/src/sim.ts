@@ -7,6 +7,7 @@
  *   /photo neena ./receipt.jpg           a member posts a photo
  *   /like siya 1                         a member 👍s the card for request #1
  *   /dm siya what's my balance?          a member DMs Kitty privately
+ *   /later 31                            jump 31 days ahead and charge any subscriptions now due
  *   /state                               print the group's state
  *
  * Buying uses a pretend store unless SIM_CROSSMINT=1, which places REAL Crossmint orders on the
@@ -62,6 +63,8 @@ const purchase = realStore ? createCrossmintPurchaseAdapterFromEnv() : new Simul
 console.log(realStore ? `purchase: REAL Crossmint orders (${purchase.store})` : "purchase: simulated store (SIM_CROSSMINT=1 for real orders)");
 
 const store = new Store(process.env.SIM_STATE_FILE);
+/** `/later <days>` moves this pretend clock forward, so a monthly subscription's next charge can be seen. */
+let clockOffsetMs = 0;
 const runtime = new GroupRuntime({
   chat,
   wallet: new InMemoryWalletAdapter(),
@@ -78,6 +81,7 @@ const runtime = new GroupRuntime({
     "+15550000003": "0x0000000000000000000000000000000000000003",
   },
   purchase,
+  now: () => Date.now() + clockOffsetMs,
   log: (line) => console.log(`  (${line})`),
 });
 runtime.attach();
@@ -89,7 +93,12 @@ for await (const raw of rl) {
   const line = raw.trim();
   if (!line) continue;
   const at = Date.now();
-  if (line === "/state") {
+  if (line.startsWith("/later")) {
+    const days = Number(line.split(/\s+/)[1] ?? "31");
+    clockOffsetMs += days * 86_400_000;
+    console.log(`  (it's now ${new Date(Date.now() + clockOffsetMs).toDateString()})`);
+    await runtime.run(() => runtime.chargeSubscriptions());
+  } else if (line === "/state") {
     console.dir(store.get(CHAT), { depth: 6 });
   } else if (line.startsWith("/dm ")) {
     const [, who = "", ...rest] = line.split(/\s+/);

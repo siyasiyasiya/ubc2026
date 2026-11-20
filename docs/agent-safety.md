@@ -28,6 +28,7 @@ runtime (`apps/server`), and the wallet (`packages/wallet`, later the Arc contra
 | --- | --- |
 | The agent has no tool that moves money | `packages/agent` tool list |
 | Every participant must 👍 the real total before anything is pulled, including pay-after with no estimate | `packages/core` state machine |
+| A subscription is 👍'd once by everyone for a fixed split and period; later charges reuse exactly that split, anyone in it can stop it, and a missed stretch charges once | `apps/server` `chargeSubscriptions`; the contract limit still caps each charge |
 | A 👍 from someone outside the split, or any other emoji, doesn't count | state machine `requiredApprovers` |
 | No pull exceeds what's left of the member's weekly or monthly limit | `WalletAdapter` (in-memory now, Arc contract next) |
 | A retried pull never charges twice | idempotency key per request and member |

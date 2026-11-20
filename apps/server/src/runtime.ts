@@ -40,7 +40,7 @@ import {
 import { NotAReceiptError } from "@gta/agent";
 import type { runTurn as RunTurn, runDmTurn as RunDmTurn, TreasuryActions, DmActions } from "@gta/agent";
 import { groupIdForChat, inviteLink, inviteTicket, type DebtPaidEvent, type JoinEvent, type LimitSetEvent } from "@gta/wallet";
-import { normalizePreferenceKey, type GroupRecord, type RequestRecord, type Store } from "./store.js";
+import { normalizePreferenceKey, type GroupRecord, type RequestRecord, type Store, type Subscription } from "./store.js";
 import type { RestaurantCaller } from "./restaurant-call.js";
 import { asPng } from "./svg-to-png.js";
 
@@ -70,8 +70,23 @@ export interface RuntimeDeps {
   invites?: { baseUrl: string; secret: string };
   /** Chats the bot serves (ALLOWED_CHAT_IDS), so a CLI invite to a chat it hasn't seen still matches. */
   chats?: string[];
+  /** Demo only (SUBSCRIPTION_EVERY_MIN): charge subscriptions this often instead of weekly/monthly. */
+  subscriptionEveryMs?: number;
   now?: () => number;
   log?: (line: string) => void;
+}
+
+/** The next charge after `from`: a week later, or the same day next month (the 31st clamps to the month's end). */
+export function nextCharge(from: number, every: "weekly" | "monthly", overrideMs?: number): number {
+  if (overrideMs) return from + overrideMs;
+  if (every === "weekly") return from + 7 * 24 * 60 * 60 * 1000;
+  const d = new Date(from);
+  const day = d.getDate();
+  d.setDate(1);
+  d.setMonth(d.getMonth() + 1);
+  const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  d.setDate(Math.min(day, lastDay));
+  return d.getTime();
 }
 
 const HISTORY_LINES = 30;
@@ -639,7 +654,11 @@ export class GroupRuntime {
         const resets = resetsIn(limit, status.resetsAt ?? status.limit.resetsAt, this.now());
         const activity = this.recentActivity(record, member.id, 5);
         const history = activity.length ? `\n     recent: ${activity.map((l) => l.replace(/^- /, "")).join(" | ")}` : "";
-        return `- ${record.group.name}: ${formatUsdc(status.remaining)} left of a ${formatUsdc(limit.amount)} limit ${per}${resets ? `, ${resets}` : ""}${history}`;
+        const subs = this.subscriptions(record)
+          .filter((s) => s.status === "active" && member.id in s.split.shares && member.id !== s.split.payeeMemberId)
+          .map((s) => `${s.title} ${formatUsdc(s.split.shares[member.id]!)} ${s.every}`);
+        const subLine = subs.length ? `\n     subscriptions (their share, charged automatically): ${subs.join(" | ")}` : "";
+        return `- ${record.group.name}: ${formatUsdc(status.remaining)} left of a ${formatUsdc(limit.amount)} limit ${per}${resets ? `, ${resets}` : ""}${subLine}${history}`;
       }),
     );
     return `Person: ${name}\n${balanceLine}\n\nTheir groups (and their recent transactions in each, across all their chats):\n${groups.join("\n") || "- (none yet)"}`;
@@ -920,30 +939,40 @@ export class GroupRuntime {
     const personal = Object.entries(record.memberPreferences ?? {}).flatMap(([id, prefs]) =>
       Object.values(prefs).map((p) => `- ${this.name(record, id)}'s ${p.item}: ${p.choice}`),
     );
-    return `Plan: ${plan}\n\nMembers:\n${members.join("\n") || "- (none yet)"}\n\nOpen requests:\n${open.join("\n") || "- none"}\n\nOn the tab (settles on "settle up"):\n${tab.join("\n") || "- nothing"}\n\nUsuals (group's saved picks for generic buys; use instead of asking):\n${usuals.join("\n") || "- none set"}\n\nPersonal usuals (the asker gets their own first):\n${personal.join("\n") || "- none set"}\n\nRecent transactions in THIS chat (for history questions):\n${recent.join("\n") || "- none yet"}`;
+    const subs = this.subscriptions(record)
+      .filter((s) => s.status !== "cancelled")
+      .map((s) => {
+        const shares = Object.entries(s.split.shares)
+          .filter(([id]) => id !== s.split.payeeMemberId)
+          .map(([id, a]) => `${this.name(record, id)} ${formatUsdc(a)}`)
+          .join(", ");
+        const when =
+          s.status === "active" && s.nextAt
+            ? `next charge ${new Date(s.nextAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}, charged ${s.charges} time${s.charges === 1 ? "" : "s"}`
+            : "waiting on 👍s to start";
+        return `- ${s.title}: ${formatUsdc(s.split.total)} ${s.every}, paid back to ${this.name(record, s.split.payeeMemberId)} by ${shares || "nobody"}; ${when}`;
+      });
+    return `Plan: ${plan}\n\nSubscriptions (charge automatically each period; "cancel <name>" stops one):\n${subs.join("\n") || "- none"}\n\nMembers:\n${members.join("\n") || "- (none yet)"}\n\nOpen requests:\n${open.join("\n") || "- none"}\n\nOn the tab (settles on "settle up"):\n${tab.join("\n") || "- nothing"}\n\nUsuals (group's saved picks for generic buys; use instead of asking):\n${usuals.join("\n") || "- none set"}\n\nPersonal usuals (the asker gets their own first):\n${personal.join("\n") || "- none set"}\n\nRecent transactions in THIS chat (for history questions):\n${recent.join("\n") || "- none yet"}`;
   }
 
   // --- what the agent can do --------------------------------------------------
+
+  /** An even split of `totalUsd` among `participants`, or the exact amounts given, paid back to `payer`. */
+  private buildSplit(record: GroupRecord, input: { totalUsd: number; payer: string; participants: string[]; amountsUsd?: Record<string, number> }): Split {
+    const payer = this.resolve(record, input.payer);
+    if (input.amountsUsd) {
+      const shares = Object.fromEntries(Object.entries(input.amountsUsd).map(([n, a]) => [this.resolve(record, n).id, usdc(a)]));
+      return customSplit({ shares, payeeMemberId: payer.id });
+    }
+    const participants = input.participants.map((p) => this.resolve(record, p));
+    return evenSplit({ total: usdc(input.totalUsd), participantIds: [...new Set(participants.map((p) => p.id))], payeeMemberId: payer.id });
+  }
 
   private actionsFor(record: GroupRecord, sender: Member): TreasuryActions {
     return {
       proposeReimbursement: async (input) => {
         try {
-          const payer = this.resolve(record, input.payer);
-          const participants = input.participants.map((p) => this.resolve(record, p));
-          let split: Split;
-          if (input.amountsUsd) {
-            const shares = Object.fromEntries(
-              Object.entries(input.amountsUsd).map(([n, a]) => [this.resolve(record, n).id, usdc(a)]),
-            );
-            split = customSplit({ shares, payeeMemberId: payer.id });
-          } else {
-            split = evenSplit({
-              total: usdc(input.totalUsd),
-              participantIds: [...new Set(participants.map((p) => p.id))],
-              payeeMemberId: payer.id,
-            });
-          }
+          const split = this.buildSplit(record, input);
           const request = await this.startReimbursement(record, sender, input.title, split, input.settle === "tab");
           return `Posted approval card #${request.number}: ${this.cardText(record, request)}`;
         } catch (err) {
@@ -1034,11 +1063,105 @@ export class GroupRuntime {
         await this.apply(record, request, { type: "cancel", reason: `cancelled by ${sender.displayName}` });
         return `Cancelled #${number}.`;
       },
+      startSubscription: async (input) => {
+        try {
+          return await this.startSubscription(record, sender, input);
+        } catch (err) {
+          return `Could not set that up: ${(err as Error).message}`;
+        }
+      },
+      cancelSubscription: async ({ title }) => this.cancelSubscription(record, sender, title),
     };
   }
 
+  // --- subscriptions (Spotify, rent, a cleaner) ---------------------------------
+
+  /** Posts the setup card. Everyone 👍s once; that settle is the first charge, then it repeats. */
+  private async startSubscription(
+    record: GroupRecord,
+    sender: Member,
+    input: { title: string; totalUsd: number; payer: string; participants: string[]; every: "weekly" | "monthly"; amountsUsd?: Record<string, number> },
+  ): Promise<string> {
+    const title = input.title.trim();
+    const live = this.subscriptions(record).find((s) => s.status !== "cancelled" && s.title.toLowerCase() === title.toLowerCase());
+    if (live) return `${live.title} is already ${live.status === "active" ? "running" : "waiting on 👍s"}. Cancel it first to change it.`;
+    const split = this.buildSplit(record, input);
+    const subs = (record.subscriptions ??= []);
+    const sub: Subscription = {
+      id: `${record.group.id}:sub:${subs.length + 1}`,
+      title,
+      every: input.every,
+      split,
+      status: "pending",
+      setupRequestId: "",
+      createdBy: sender.id,
+      createdAt: this.now(),
+      charges: 0,
+    };
+    subs.push(sub);
+    const request = await this.startReimbursement(record, sender, title, split, false, sub.id);
+    sub.setupRequestId = request.id;
+    this.deps.store.save();
+    return `Posted subscription card #${request.number}: ${this.cardText(record, request)}`;
+  }
+
+  private async cancelSubscription(record: GroupRecord, sender: Member, title: string): Promise<string> {
+    const wanted = title.trim().toLowerCase();
+    const live = this.subscriptions(record).filter((s) => s.status !== "cancelled");
+    const sub = live.find((s) => s.title.toLowerCase() === wanted) ?? live.find((s) => s.title.toLowerCase().includes(wanted) || wanted.includes(s.title.toLowerCase()));
+    if (!sub) return live.length ? `No subscription called "${title}". Running: ${live.map((s) => s.title).join(", ")}.` : "This chat has no subscriptions.";
+    if (!(sender.id in sub.split.shares)) return `Only people in ${sub.title} can cancel it.`;
+    if (sub.status === "pending") {
+      const setup = record.requests.find((r) => r.id === sub.setupRequestId);
+      if (setup?.state.name === "awaiting_approval") await this.apply(record, setup, { type: "cancel", reason: `cancelled by ${sender.displayName}` });
+    }
+    sub.status = "cancelled";
+    sub.cancelledBy = sender.id;
+    delete sub.nextAt;
+    this.deps.store.save();
+    return `Stopped ${sub.title}. No more charges.`;
+  }
+
+  /** This chat's subscriptions, with any whose setup card was cancelled or expired marked cancelled. */
+  private subscriptions(record: GroupRecord): Subscription[] {
+    for (const sub of record.subscriptions ?? []) {
+      if (sub.status !== "pending") continue;
+      const setup = record.requests.find((r) => r.id === sub.setupRequestId);
+      if (setup && ["cancelled", "rejected", "failed"].includes(setup.state.name)) sub.status = "cancelled";
+    }
+    return record.subscriptions ?? [];
+  }
+
+  /**
+   * Charges every subscription that's due. Run on a timer (index.ts). The group approved it when
+   * it started, so the relayed 👍s go in at once; the contract still caps each share, and a share
+   * it can't pull becomes a debt like any split. A bot that was off for a while charges once, not
+   * once per missed period, so nobody wakes up to a pile of charges.
+   */
+  async chargeSubscriptions(): Promise<void> {
+    const now = this.now();
+    for (const record of this.deps.store.all()) {
+      for (const sub of this.subscriptions(record)) {
+        if (sub.status !== "active" || sub.nextAt === undefined || sub.nextAt > now) continue;
+        const due = sub.nextAt;
+        // Move the due date first and save, so a crash mid-charge can't charge twice.
+        while (sub.nextAt <= now) sub.nextAt = nextCharge(sub.nextAt, sub.every, this.deps.subscriptionEveryMs);
+        this.deps.store.save();
+        const creator = record.group.members.find((m) => m.id === sub.createdBy) ?? this.memberFor(record, sub.createdBy);
+        const label = new Date(due).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+        const request = await this.startReimbursement(record, creator, `${sub.title} · ${label}`, sub.split, false, sub.id, true);
+        if (request.state.name === "awaiting_approval") {
+          for (const memberId of request.state.requiredApprovers) {
+            await this.apply(record, request, { type: "reaction", memberId, emoji: APPROVAL_EMOJI, added: true, at: now });
+          }
+        }
+        this.deps.store.save();
+      }
+    }
+  }
+
   /** Pay-after: participants are in, the receipt is read, now everyone 👍s the real split. */
-  private async startReimbursement(record: GroupRecord, sender: Member, title: string, split: Split, onTab = false): Promise<RequestRecord> {
+  private async startReimbursement(record: GroupRecord, sender: Member, title: string, split: Split, onTab = false, subscriptionId?: string, charge = false): Promise<RequestRecord> {
     const number = record.requests.reduce((max, r) => Math.max(max, r.number), 0) + 1;
     const request: RequestRecord = {
       id: `${record.group.id}#${number}`,
@@ -1050,10 +1173,13 @@ export class GroupRuntime {
       split,
       createdAt: this.now(),
       ...(onTab ? { onTab: true } : {}),
+      ...(subscriptionId ? { subscriptionId } : {}),
+      ...(charge ? { charge: true } : {}),
     };
     record.requests.push(request);
 
-    const posted = this.lastReceipt.get(record.group.chatId);
+    // A subscription has no receipt photo; don't borrow whatever receipt was posted last.
+    const posted = subscriptionId ? undefined : this.lastReceipt.get(record.group.chatId);
     const receipt: Receipt =
       posted && posted.total === split.total ? posted : { source: "photo", total: split.total, at: this.now() };
 
@@ -1255,6 +1381,8 @@ export class GroupRuntime {
     switch (effect.type) {
       case "post_preview": {
         request.split = effect.split;
+        // A scheduled charge was approved when the subscription started: the settle message is the notice.
+        if (request.charge) return;
         const card = this.cardText(record, request);
         // Pay-before: post the checkout screenshot WITH the approve text as its caption, so there's
         // one card people see and 👍 (not a separate text message the reactions would miss).
@@ -1283,7 +1411,17 @@ export class GroupRuntime {
           await this.say(chatId, `📝 #${request.number} ${request.title} is on the tab. Say "settle up" when you're ready.`);
           return;
         }
-        await this.pullShares(record, request, effect.split);
+        {
+          const sub = request.subscriptionId ? record.subscriptions?.find((s) => s.id === request.subscriptionId) : undefined;
+          if (sub?.status === "pending" && sub.setupRequestId === request.id) {
+            sub.status = "active";
+            sub.nextAt = nextCharge(this.now(), sub.every, this.deps.subscriptionEveryMs);
+            const next = new Date(sub.nextAt).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+            await this.say(chatId, `🔁 ${sub.title} is on. First one's now, next on ${next}, then every ${sub.every === "weekly" ? "week" : "month"}. Say "cancel ${sub.title}" to stop it.`);
+          }
+          await this.pullShares(record, request, effect.split);
+          if (sub) sub.charges += 1;
+        }
         return;
       case "notify":
         // The settlement summary is posted by pullShares with names; other notices go as-is.
@@ -1328,7 +1466,11 @@ export class GroupRuntime {
     }
     await this.apply(record, request, { type: "settle_complete", at: this.now() });
     // A cheery lead-in only when everything cleared; a partial settle stays plain so the ⚠️ reads as real.
-    const lead = failed === 0 ? `${pick(["all squared up 🎉", "money moved 💸", "settled up"])}\n` : "";
+    const lead = request.charge
+      ? `🔁 ${record.subscriptions?.find((s) => s.id === request.subscriptionId)?.every === "weekly" ? "weekly" : "monthly"} charge\n`
+      : failed === 0
+        ? `${pick(["all squared up 🎉", "money moved 💸", "settled up"])}\n`
+        : "";
     const head = failed === 0 ? `✅ Settled #${request.number} ${request.title}` : `⚠️ Partly settled #${request.number} ${request.title}`;
     await this.say(record.group.chatId, `${lead}${head} (${formatUsdc(split.total)})\n${lines.join("\n")}`);
     for (const { member, amount, reason } of short) {
@@ -1358,6 +1500,15 @@ export class GroupRuntime {
         `🛒 #${request.number} ${request.title}: ${formatUsdc(split.total)} at ${store}`,
         `${this.name(record, split.payeeMemberId)}'s card pays, paid back by: ${shares.join(", ") || "nobody"}`,
         `👍 this message to approve. I only order once everyone in the split approves.`,
+      ].join("\n");
+    }
+    const sub = request.subscriptionId ? record.subscriptions?.find((s) => s.id === request.subscriptionId) : undefined;
+    if (sub && !request.charge) {
+      const per = sub.every === "weekly" ? "week" : "month";
+      return [
+        `🔁 #${request.number} ${request.title}: ${formatUsdc(split.total)} a ${per}`,
+        `Pay back ${this.name(record, split.payeeMemberId)}: ${shares.join(", ")}`,
+        `👍 to start it. After that Kitty charges it every ${per}, no more 👍s, never past anyone's cap. "cancel ${request.title}" stops it.`,
       ].join("\n");
     }
     return [

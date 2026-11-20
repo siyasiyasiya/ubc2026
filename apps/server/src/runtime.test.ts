@@ -3,7 +3,7 @@ import { NotAReceiptError } from "@gta/agent";
 import type { runTurn as RunTurn, runDmTurn as RunDmTurn } from "@gta/agent";
 import { groupIdForChat, InMemoryWalletAdapter, inviteTicket } from "@gta/wallet";
 import { describe, expect, it } from "vitest";
-import { GroupRuntime, resetsIn } from "./runtime.js";
+import { GroupRuntime, nextCharge, resetsIn } from "./runtime.js";
 import { Store } from "./store.js";
 import { SimulatedPurchaseAdapter } from "./simulated-purchase.js";
 import type { RestaurantCallRequest, RestaurantCaller, RestaurantCallResult } from "./restaurant-call.js";
@@ -15,7 +15,7 @@ const OUTSIDER = "+1999";
 const CHAT = "group";
 
 /** A runtime whose "agent" proposes a $90 dinner paid by Neena, split three ways. */
-function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapter; wallets?: Record<string, string>; invites?: { baseUrl: string; secret: string }; chats?: string[]; participants?: string[]; chatName?: string; receiptItems?: { name: string; amount: ReturnType<typeof usdc> }[]; receiptError?: Error; purchase?: PurchaseAdapter; calls?: RestaurantCaller; testMoney?: { send: (address: string, amount: bigint) => Promise<string>; maxUsd: number; dailyUsd: number } } = {}) {
+function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapter; wallets?: Record<string, string>; invites?: { baseUrl: string; secret: string }; chats?: string[]; participants?: string[]; chatName?: string; receiptItems?: { name: string; amount: ReturnType<typeof usdc> }[]; receiptError?: Error; purchase?: PurchaseAdapter; calls?: RestaurantCaller; now?: () => number; subscriptionEveryMs?: number; testMoney?: { send: (address: string, amount: bigint) => Promise<string>; maxUsd: number; dailyUsd: number } } = {}) {
   const posted: { id: string; text: string }[] = [];
   const failing = { posts: 0, dms: 0 };
   const dms: { handle: string; text: string }[] = [];
@@ -76,6 +76,10 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
       });
     }
     if (event.includes("trip plan")) return actions.setGroupPlan({ usd: 200, period: "once" });
+    if (event.includes("cancel spotify")) return actions.cancelSubscription({ title: "spotify" });
+    if (event.includes("split spotify")) {
+      return actions.startSubscription({ title: "Spotify", totalUsd: 18, payer: "Neena", participants: ["Neena", "Siya", "Tristan"], every: "monthly" });
+    }
     if (event.includes("settle up")) return actions.settleUp();
     if (event.includes("leave kitty")) return actions.leave();
     if (event.includes("tab dinner")) {
@@ -112,6 +116,8 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
     ...(opts.purchase ? { purchase: opts.purchase } : {}),
     ...(opts.calls ? { calls: opts.calls, callPollMs: 1 } : {}),
     ...(opts.testMoney ? { testMoney: opts.testMoney as never } : {}),
+    ...(opts.now ? { now: opts.now } : {}),
+    ...(opts.subscriptionEveryMs ? { subscriptionEveryMs: opts.subscriptionEveryMs } : {}),
     receipts: {
       read: async (): Promise<Receipt> => {
         if (opts.receiptError) throw opts.receiptError;
@@ -820,6 +826,116 @@ describe("GroupRuntime", () => {
     const link = new URL(t.dms.find((d) => d.text.startsWith("all your kitties"))!.text.split(" ").at(-1)!);
     // Siya's own link leaves Siya out, like Messages does.
     expect(link.searchParams.getAll("k")).toEqual([`${groupIdForChat(CHAT)}:Neena & Tristan`]);
+  });
+
+  describe("subscriptions", () => {
+    const DAY = 86_400_000;
+    const start = new Date(2026, 10, 19, 12).getTime(); // Nov 19, local noon
+
+    const subscribed = async () => {
+      let now = start;
+      const t = setup(200, { now: () => now });
+      for (const who of [SIYA, TRISTAN]) await t.say(who, "hi");
+      await t.say(NEENA, "split spotify with everyone");
+      const setupCard = t.request();
+      return { t, setupCard, advance: (ms: number) => (now += ms), charge: () => t.runtime.run(() => t.runtime.chargeSubscriptions()) };
+    };
+
+    it("starts after everyone 👍s once, and that settle is the first charge", async () => {
+      const { t, setupCard } = await subscribed();
+      const card = t.posted.find((p) => p.id === setupCard.previewMessageId)!.text;
+      expect(card).toContain("🔁 #1 Spotify: $18.00 a month");
+      expect(card).toContain("no more 👍s");
+      expect(t.store.get(CHAT)!.subscriptions![0]!.status).toBe("pending");
+
+      await t.react(SIYA, setupCard.previewMessageId!);
+      await t.react(TRISTAN, setupCard.previewMessageId!);
+      const sub = t.store.get(CHAT)!.subscriptions![0]!;
+      expect(sub).toMatchObject({ status: "active", charges: 1 });
+      expect(new Date(sub.nextAt!).getDate()).toBe(19);
+      expect(new Date(sub.nextAt!).getMonth()).toBe(11); // December
+      expect(t.posted.some((p) => p.text.startsWith("🔁 Spotify is on. First one's now, next on Dec 19"))).toBe(true);
+      expect(t.posted.at(-1)!.text).toMatch(/Settled #1 Spotify \(\$18\.00\)\nSiya → Neena \$6\.00 ✓\nTristan → Neena \$6\.00 ✓/);
+    });
+
+    it("charges each period on its own, with no card and no 👍s", async () => {
+      const { t, setupCard, advance, charge } = await subscribed();
+      await t.react(SIYA, setupCard.previewMessageId!);
+      await t.react(TRISTAN, setupCard.previewMessageId!);
+
+      advance(10 * DAY);
+      await charge();
+      expect(t.store.get(CHAT)!.requests).toHaveLength(1); // not due yet
+
+      advance(25 * DAY); // past Dec 19
+      const before = t.posted.length;
+      await charge();
+      const requests = t.store.get(CHAT)!.requests;
+      expect(requests).toHaveLength(2);
+      expect(requests[1]).toMatchObject({ title: "Spotify · Dec 19", charge: true });
+      expect(requests[1]!.state.name).toBe("done");
+      const said = t.posted.slice(before).map((p) => p.text);
+      expect(said).toHaveLength(1); // just the settle, no approval card
+      expect(said[0]).toMatch(/^🔁 monthly charge\n✅ Settled #2 Spotify · Dec 19 \(\$18\.00\)/);
+      expect(t.store.get(CHAT)!.subscriptions![0]!).toMatchObject({ charges: 2 });
+    });
+
+    it("charges once, not once per missed period, after the bot was off", async () => {
+      const { t, setupCard, advance, charge } = await subscribed();
+      await t.react(SIYA, setupCard.previewMessageId!);
+      await t.react(TRISTAN, setupCard.previewMessageId!);
+      advance(100 * DAY);
+      await charge();
+      await charge();
+      expect(t.store.get(CHAT)!.requests.filter((r) => r.charge)).toHaveLength(1);
+      expect(t.store.get(CHAT)!.subscriptions![0]!.nextAt!).toBeGreaterThan(start + 100 * DAY);
+    });
+
+    it("stops charging once someone in it cancels", async () => {
+      const { t, setupCard, advance, charge } = await subscribed();
+      await t.react(SIYA, setupCard.previewMessageId!);
+      await t.react(TRISTAN, setupCard.previewMessageId!);
+      await t.say(SIYA, "cancel spotify pls");
+      expect(t.store.get(CHAT)!.subscriptions![0]!.status).toBe("cancelled");
+      advance(40 * DAY);
+      await charge();
+      expect(t.store.get(CHAT)!.requests.filter((r) => r.charge)).toHaveLength(0);
+    });
+
+    it("cancelling before everyone 👍s cancels the card too", async () => {
+      const { t, setupCard, advance, charge } = await subscribed();
+      await t.say(TRISTAN, "cancel spotify");
+      expect(t.request().state.name).toBe("cancelled");
+      await t.react(SIYA, setupCard.previewMessageId!);
+      advance(40 * DAY);
+      await charge();
+      expect(t.store.get(CHAT)!.requests).toHaveLength(1);
+      expect(t.store.get(CHAT)!.subscriptions![0]!).toMatchObject({ status: "cancelled", charges: 0 });
+    });
+
+    it("lists a member's share in their private account summary", async () => {
+      const { t, setupCard } = await subscribed();
+      await t.react(SIYA, setupCard.previewMessageId!);
+      await t.react(TRISTAN, setupCard.previewMessageId!);
+      await t.dm(SIYA, "what am i paying for");
+      expect(t.dmSummaries.at(-1)).toContain("subscriptions (their share, charged automatically): Spotify $6.00 monthly");
+    });
+
+    it("tells the agent what's running", async () => {
+      const { t, setupCard } = await subscribed();
+      await t.react(SIYA, setupCard.previewMessageId!);
+      await t.react(TRISTAN, setupCard.previewMessageId!);
+      await t.say(NEENA, "what subscriptions do we have");
+      expect(t.turnSnapshots.at(-1)).toContain("- Spotify: $18.00 monthly, paid back to Neena by Siya $6.00, Tristan $6.00; next charge Dec 19, charged 1 time");
+    });
+
+    it("moves monthly charges to the same day next month, clamping short months", () => {
+      const jan31 = new Date(2027, 0, 31, 9).getTime();
+      expect(new Date(nextCharge(jan31, "monthly")).getDate()).toBe(28);
+      expect(new Date(nextCharge(jan31, "monthly")).getMonth()).toBe(1);
+      expect(nextCharge(jan31, "weekly") - jan31).toBe(7 * DAY);
+      expect(nextCharge(jan31, "monthly", 5 * 60_000) - jan31).toBe(5 * 60_000);
+    });
   });
 
   it("says when a limit resets in days or hours, and that one-time limits never refill", () => {

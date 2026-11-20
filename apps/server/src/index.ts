@@ -57,10 +57,12 @@ const runtime = new GroupRuntime({
   wallets: config.wallets,
   ...(config.invites ? { invites: config.invites } : {}),
   chats: config.allowedChatIds,
+  ...(subscriptionEveryMs() ? { subscriptionEveryMs: subscriptionEveryMs() } : {}),
 });
 runtime.attach();
 startJoinWatcher();
 startReminders();
+startSubscriptions();
 await chat.start();
 
 /**
@@ -73,6 +75,21 @@ function startReminders(): void {
   const staleMs = (Number(process.env.NUDGE_STALE_HOURS) || 12) * 60 * 60_000;
   console.log(`nudges: on (every ${everyMs / 60_000} min, cards/debts older than ${staleMs / 3_600_000}h)`);
   setInterval(() => void runtime.run(() => runtime.remind(staleMs)), everyMs).unref?.();
+}
+
+/** Demo override: SUBSCRIPTION_EVERY_MIN charges subscriptions every N minutes instead of weekly/monthly. */
+function subscriptionEveryMs(): number | undefined {
+  const min = Number(process.env.SUBSCRIPTION_EVERY_MIN);
+  return min > 0 ? min * 60_000 : undefined;
+}
+
+/** Charges subscriptions that are due. Always on: an approved subscription is a promise to charge. */
+function startSubscriptions(): void {
+  const demo = subscriptionEveryMs();
+  const checkMs = demo ? Math.min(60_000, demo) : 5 * 60_000;
+  if (demo) console.log(`subscriptions: demo mode, charging every ${demo / 60_000} min`);
+  void runtime.run(() => runtime.chargeSubscriptions());
+  setInterval(() => void runtime.run(() => runtime.chargeSubscriptions()), checkMs).unref?.();
 }
 
 /** Build the iMessage chat port, turning a raw chat.db access failure into a clear, actionable fix. */
