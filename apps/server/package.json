@@ -15,7 +15,8 @@
     "fund": "tsx --env-file-if-exists=.env src/fund.ts",
     "crossmint": "tsx --env-file-if-exists=.env src/crossmint.ts",
     "diag": "tsx --env-file-if-exists=.env src/diag.ts",
-    "vibe": "tsx --env-file-if-exists=.env src/vibe.ts"
+    "vibe": "tsx --env-file-if-exists=.env src/vibe.ts",
+    "smoke-arc": "tsx --env-file-if-exists=.env src/smoke-arc.ts"
   },
   "dependencies": {
     "@gta/agent": "workspace:*",
