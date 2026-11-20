@@ -30,7 +30,7 @@ An agent lives in your iMessage group chat. Members ask for things in plain lang
 - **Screenshot before every purchase.** Before the agent buys anything, it sends a screenshot of the checkout to the group chat, and everyone in the chat approves it with a 👍.
 - **Pay before or pay after.** Things bought ahead of time are paid when they're bought. Things like dinner are only paid after the bill comes, using the real total.
 - **Smart splits.** Only the people in a split pay. "I'm out" or "split it 3 ways" just works. Trips can put splits on a tab and settle up at the end.
-- **Phone calls.** Kitty can call a restaurant to book a table with an ElevenLabs voice agent and report back in the chat.
+- **Phone calls.** Kitty phones a business (a canoe rental, a tour, a restaurant) to book for the group with an ElevenLabs voice agent, gets the price on the call, and turns it straight into a split for everyone to 👍.
 
 ## What works today
 
@@ -51,7 +51,7 @@ As of Nov 19, 2026, run live in a real iMessage group on Arc testnet unless note
 | Proactive nudges for stale approval cards and unpaid debts (off by default, `NUDGES=on`) | 🟡 built and tested, off for demos |
 | Raise a limit (one-tap Face ID link), leave a chat's Kitty, private balance questions by text | 🟡 built and tested, live run pending |
 | Kitty buys it (pay before): checkout card, 👍s, order, shares paid back to the card | 🟡 real Crossmint order placed from the terminal (a $1 Gumroad item, $1.07 charged); from the chat: live run pending |
-| Restaurant calls (ElevenLabs) | 🟡 voice agent live: a real voice conversation started from Kitty's link, found and read back by the server code ("📞 booked Uchi for 4 … ✅"); from the group chat: live run pending a bot restart. Phone-line calls need a paid Twilio number |
+| Booking calls (ElevenLabs) | ✅ live Nov 20 (simulator + real agent): "book 3 canoes at Lakeside Canoe…" → Kitty phoned a teammate's real phone from the demo Mac → booked Sat 9am, quoted $250 → Kitty proposed the split on the trip tab → 👍👍 → "settle up" settled it ($83.33 each). Real phone call goes through the Mac's paired iPhone (no paid phone line: Twilio needs business KYC to buy a number or call) |
 | Subscriptions (Spotify, rent): the group 👍s once, then Kitty charges the same split every week or month; "cancel Spotify" stops it | 🟡 built and tested, run end to end with the real agent in the simulator; live run pending |
 | Balance = what your kitties can take: each period Kitty tops a member's balance up to the sum of what's left of their caps (testnet: sends it; real money: a one-tap Apple Pay text) | 🟡 built and tested; live run pending |
 | Each person saves their own card; a buy goes on the payer's own card. Starting a subscription sets everyone in it up privately (Face ID, card, add money) | 🟡 built and tested; live run pending (needs `BOT_IMESSAGE_ADDRESS` and a deploy of the card page) |
@@ -102,7 +102,7 @@ For things like Spotify, rent or a cleaner.
 flowchart LR
     Chat["iMessage group chat"] <-->|requests, checkout, 👍| Agent["Agent (Claude)"]
     Agent -->|cart, then order<br/>on the payer's card| Store["Store<br/>(Crossmint)"]
-    Agent -->|books a table| Phone["Restaurant<br/>(ElevenLabs call)"]
+    Agent -->|books by phone| Phone["Canoe rental, tour…<br/>(ElevenLabs call)"]
     Agent -->|approved spend| Contract["Group contract<br/>(Arc)"]
     Contract -->|pulls each share,<br/>within each member's limit| Wallets["Members' wallets"]
     Wallets -->|USDC| Payer["Whoever's account<br/>or card paid"]
@@ -123,19 +123,23 @@ The pieces the system needs, and what each one is built on.
 | Chain | Where the contract runs and USDC moves | Arc (USDC is gas) |
 | Checkout wallet | Issues one-time cards so the agent can pay real merchants | [Link agent wallet](https://docs.stripe.com/agentic-commerce/agents/link-agent-wallet) (planned, not built) |
 | Onchain data | Pushes every treasury event to Kitty as it's mined (and backfills history) for the dashboard and the bot | [QuickNode Streams](https://www.quicknode.com/streams) → signed webhook → Neon Postgres |
-| Phone calls | Kitty phones restaurants to book a table and reports back in the chat | [ElevenLabs](https://elevenlabs.io) voice agent, outbound through a Twilio number |
+| Phone calls | Kitty phones a business to book for the group and brings back the price for the split | [ElevenLabs](https://elevenlabs.io) voice agent: a Twilio line when there is one; in our demo, a real call from the Mac through its paired iPhone |
 
 ## How ElevenLabs is used
 
-Some plans need a phone call, not a checkout. In the chat: "kitty, book Uchi for 4 tomorrow at 7:30, their number is (512) 555-0100".
+Some plans need a phone call, not a checkout. On a trip: "kitty book 3 canoes for 2 hours at Lakeside Canoe Rentals, (518) 817-3144, saturday 9am, under neena".
 
-1. The agent's `call_restaurant` tool starts an **ElevenLabs voice agent** call. The restaurant, party size, time and reservation name go in as dynamic variables, so one agent handles every booking.
-   - **With a phone line:** an outbound phone call (`POST /v1/convai/twilio/outbound-call`) from a Twilio number connected to ElevenLabs.
-   - **Without one** (what our demo runs, since a Twilio trial can't get a number): Kitty texts the restaurant's number an iMessage link to its own incoming-call screen (`kittyagent.vercel.app/call.html`, from `apps/onboard`), carrying the same details as `var_…` parameters plus a one-off `call_ref`. It rings like a phone call; tapping Accept starts the same voice agent in their browser through the ElevenLabs client SDK (`@elevenlabs/client`, WebRTC), with live captions.
-2. The voice agent says it's an AI assistant calling for the group, asks for the table, and asks for the closest time if that one's taken. It never accepts a different time on its own.
-3. When the call ends, the server reads ElevenLabs' call analysis (`GET /v1/convai/conversations/{id}`; a link call is found first by its `call_ref` among the agent's new conversations): the data collection fields `reservation_confirmed`, `confirmed_time` and `alternative_offered`, the summary, and whether anyone picked up. It posts one line in the chat: "📞 booked Uchi for 4, 7:45pm, under Neena ✅", or the time they offered instead, or that it went to voicemail.
+1. The agent's `call_to_book` tool starts an **ElevenLabs voice agent** call. The business, what to book, how many people, when and whose name it's under go in as dynamic variables, so one agent handles every booking.
+2. The voice agent says it's an AI assistant calling for the group, books it, and **asks what the total comes to**. It never accepts a different time on its own: it asks for the closest one and says it'll check with the group.
+3. When the call ends, the server reads ElevenLabs' call analysis (`GET /v1/convai/conversations/{id}`): the data collection fields `booking_confirmed`, `confirmed_time`, `alternative_offered` and `total_price_usd`, the summary, and whether anyone picked up.
+4. **The price becomes money movement.** A booking with a price goes back to Kitty as an event, so in one breath it posts "booked, 3 canoes saturday 9am, $250 total" and proposes the split: whoever it's under pays the business, everyone on the trip pays them back, on the trip's tab. Everyone 👍s, and "settle up" at the end of the trip pulls the shares on Arc.
 
-Code: `apps/server/src/restaurant-call.ts`. Agent setup (prompt, data collection fields, phone number): [`docs/elevenlabs-agent.md`](docs/elevenlabs-agent.md). Calling is off until `ELEVENLABS_API_KEY` and `ELEVENLABS_AGENT_ID` are set; `ELEVENLABS_PHONE_NUMBER_ID` switches it from links to phone calls; `KITTY_CALL_PAGE_URL` overrides the call page.
+How the call is placed:
+- **With a phone line:** an outbound call (`POST /v1/convai/twilio/outbound-call`) from a Twilio number connected to ElevenLabs (`ELEVENLABS_PHONE_NUMBER_ID`). New Twilio accounts need an approved business profile (KYC, with an EIN) before they can buy a number or place calls, so our demo doesn't use one.
+- **What our demo runs: a real call from the Mac** (`KITTY_CALL_BRIDGE=1`, `scripts/call-bridge/`). The Mac dials through its paired iPhone ("Calls from iPhone"), and the ElevenLabs agent runs on Kitty's call page (`apps/onboard/call.html`, `@elevenlabs/client` over WebRTC). Kitty's voice goes into the call through a BlackHole virtual device; Kitty hears the other side through the laptop mic (macOS only plays phone calls on the real speakers), so it needs a quiet room. The page waits for the other person to pick up (their voice, or a click) before Kitty speaks. The server finds the conversation by a one-off `call_ref` and reads it as above.
+- **No Mac, no line:** Kitty texts the business a link to the same call page, which rings like a call; tapping Accept starts the agent in their browser.
+
+Code: `apps/server/src/booking-call.ts`, `GroupRuntime.callToBook` in `apps/server/src/runtime.ts`. Agent setup (prompt, data collection fields): [`docs/elevenlabs-agent.md`](docs/elevenlabs-agent.md). Calling is off until `ELEVENLABS_API_KEY` and `ELEVENLABS_AGENT_ID` are set.
 
 ## How Arc and Circle are used
 
@@ -217,7 +221,7 @@ pnpm install && pnpm build && pnpm test
 cd contracts && forge test            # 54 tests
 # apps/server/.env (see .env.example): ARC_RPC_URL, TREASURY_ADDRESS, TREASURY_DEPLOY_BLOCK,
 #   OPERATOR_PRIVATE_KEY, INVITE_SECRET, ONBOARD_URL, ANTHROPIC_API_KEY.
-#   Optional: CROSSMINT_* for real store orders, ELEVENLABS_* for restaurant calls.
+#   Optional: CROSSMINT_* for real store orders, ELEVENLABS_* for booking calls.
 pnpm --filter @gta/server dev         # the iMessage bot
 pnpm --filter @gta/server fund <phone|address> <usd>   # testnet: send someone test dollars
 pnpm --filter @gta/server crossmint card               # link to save the card Kitty pays stores with

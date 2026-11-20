@@ -156,8 +156,15 @@ async function accept() {
     if (devices.inputDeviceId && monitorLabel) await monitor(devices.inputDeviceId, monitorLabel);
     if (autoAnswer && devices.inputDeviceId) {
       // A real phone call is ringing on the other end: start Kitty only once someone picks up and talks.
-      status.textContent = "ringing…";
-      await heardVoice(devices.inputDeviceId);
+      status.textContent = "ringing… (click when they answer)";
+      // Whichever comes first: their voice, or whoever runs the call clicking / pressing a key when they pick up.
+      await Promise.race([
+        heardVoice(devices.inputDeviceId),
+        new Promise<void>((resolve) => {
+          document.addEventListener("pointerdown", () => resolve(), { once: true });
+          document.addEventListener("keydown", () => resolve(), { once: true });
+        }),
+      ]);
       status.textContent = "connecting…";
     }
     conversation = await Conversation.startSession({
