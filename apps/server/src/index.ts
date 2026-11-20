@@ -203,10 +203,11 @@ function purchaseAdapter() {
   return new SimulatedPurchaseAdapter();
 }
 
-/** ElevenLabs voice calls to restaurants, when ELEVENLABS_API_KEY, _AGENT_ID and _PHONE_NUMBER_ID are set. */
+/** ElevenLabs voice calls to restaurants, when ELEVENLABS_API_KEY and _AGENT_ID are set (by phone with _PHONE_NUMBER_ID, else by link). */
 function restaurantCalls() {
   const calls = elevenLabsFromEnv();
-  console.log(calls ? "calls: ElevenLabs voice agent" : "calls: off (set ELEVENLABS_API_KEY, ELEVENLABS_AGENT_ID, ELEVENLABS_PHONE_NUMBER_ID)");
+  const how = process.env.ELEVENLABS_PHONE_NUMBER_ID ? "phone calls" : "texts the restaurant a link to talk (no ELEVENLABS_PHONE_NUMBER_ID)";
+  console.log(calls ? `calls: ElevenLabs voice agent, ${how}` : "calls: off (set ELEVENLABS_API_KEY and ELEVENLABS_AGENT_ID; ELEVENLABS_PHONE_NUMBER_ID for real phone calls)");
   return calls ? { calls } : {};
 }
 

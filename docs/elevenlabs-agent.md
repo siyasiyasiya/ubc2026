@@ -6,7 +6,9 @@ Kitty phones restaurants with an ElevenLabs voice agent. The server (`apps/serve
 
 ElevenLabs places the call through a phone number connected to it. The documented path is a Twilio number: in **ElevenAgents → Phone Numbers → Import**, give the number, a label, and a Twilio API key SID and secret (or Account SID and Auth Token). The id ElevenLabs shows for it is `ELEVENLABS_PHONE_NUMBER_ID`.
 
-A Twilio trial account can only call numbers you have verified in Twilio, which is fine for a demo where a teammate plays the restaurant.
+A Twilio trial account can only call numbers you have verified in Twilio. Newer trial accounts can't claim a number at all until upgraded.
+
+**No phone number?** Leave `ELEVENLABS_PHONE_NUMBER_ID` empty. Kitty then texts the restaurant's number an iMessage link to the agent's public talk-to page (`https://elevenlabs.io/app/talk-to?agent_id=…&var_restaurant=…&var_call_ref=…`), and tapping it starts the same conversation in their browser. This needs the agent's authentication off (Advanced tab; the default for new agents).
 
 ## 2. Agent
 
@@ -36,15 +38,15 @@ and call back. If they need a phone number or deposit, say the group will follow
 Confirm the details back once before ending the call. If you reach voicemail, leave no message and hang up.
 ```
 
-The `{{…}}` names are dynamic variables. The server fills them for each call (`conversation_initiation_client_data.dynamic_variables`).
+The `{{…}}` names are dynamic variables. The server fills them for each call (`conversation_initiation_client_data.dynamic_variables`). Also add a `call_ref` placeholder (any value): link calls carry it so the server can find their conversation.
 
 **Analysis → Data collection** (exact names; the server reads these)
 
 | Name | Type | Description |
 | --- | --- | --- |
 | `reservation_confirmed` | boolean | True only if the restaurant confirmed a reservation for the requested party during this call. |
-| `confirmed_time` | string | The date and time the restaurant confirmed, as they said it. Empty if nothing was confirmed. |
-| `alternative_offered` | string | The closest other time the restaurant offered, if the requested time wasn't available. Empty if none. |
+| `confirmed_time` | string | The time the restaurant confirmed, written short with digits, like "7:30pm" or "Fri 8pm". Empty if nothing was confirmed. |
+| `alternative_offered` | string | The closest other time the restaurant offered if the requested time wasn't available, written short with digits, like "8:30pm". Empty if none. |
 
 ## 3. Server
 
@@ -53,7 +55,7 @@ In `apps/server/.env` (see `.env.example`):
 ```
 ELEVENLABS_API_KEY=...
 ELEVENLABS_AGENT_ID=...
-ELEVENLABS_PHONE_NUMBER_ID=...
+ELEVENLABS_PHONE_NUMBER_ID=...   # optional: without it, calls go by link
 ```
 
-On start the server logs `calls: ElevenLabs voice agent`. In the group chat: "kitty, book Uchi for 4 tomorrow at 7:30, their number is (512) 555-0100". Kitty posts "📞 calling…" and, when the call ends, the result: booked with the confirmed time, the alternative they offered, or that nobody picked up.
+On start the server logs `calls: ElevenLabs voice agent, phone calls` (or `…, texts the restaurant a link to talk`). In the group chat: "kitty, book Uchi for 4 tomorrow at 7:30, their number is (512) 555-0100". Kitty posts "📞 calling…" and, when the call ends, the result: booked with the confirmed time, the alternative they offered, or that nobody picked up.

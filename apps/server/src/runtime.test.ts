@@ -713,6 +713,21 @@ describe("GroupRuntime", () => {
     expect(t.posted.at(-1)?.text).toBe("📞 booked Uchi for 4, 7:45pm, under Neena ✅");
   });
 
+  it("with no phone line, texts the restaurant a link and still posts the result", async () => {
+    const results: RestaurantCallResult[] = [{ status: "in_progress" }, { status: "done", booked: false, alternative: "8:30" }];
+    const calls: RestaurantCaller = {
+      start: async () => ({ callId: "link:abc:1", link: "https://elevenlabs.io/app/talk-to?agent_id=a&var_call_ref=abc" }),
+      result: async () => results.shift() ?? { status: "done" },
+    };
+    const t = setup(200, { calls });
+    await t.say(NEENA, "book uchi for us");
+    const text = t.dms.find((d) => d.handle === "+15125550100")?.text;
+    expect(text).toContain("Kitty, an AI assistant");
+    expect(text).toContain("https://elevenlabs.io/app/talk-to?agent_id=a&var_call_ref=abc");
+    await t.runtime.idle();
+    expect(t.posted.at(-1)?.text).toBe("📞 Uchi can't do tomorrow 7:30pm. they offered 8:30. want it? I can call back");
+  });
+
   it("won't call without a real phone number", async () => {
     const calls: RestaurantCaller = { start: async () => ({ callId: "x" }), result: async () => ({ status: "done" }) };
     const t = setup(200, { calls });

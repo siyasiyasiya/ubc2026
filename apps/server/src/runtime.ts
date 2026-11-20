@@ -1049,8 +1049,17 @@ export class GroupRuntime {
       ...(input.notes ? { notes: input.notes } : {}),
       group: record.group.name,
     };
-    const { callId } = await calls.start(request);
+    const { callId, link } = await calls.start(request);
     this.log(`calling ${input.restaurant} (${phone}) for ${record.group.chatId}: ${callId}`);
+    if (link) {
+      // No phone line: the restaurant gets a text with a link that starts the same voice call in the browser.
+      await this.deps.chat.sendDirectMessage(
+        phone,
+        `📞 Hi! This is Kitty, an AI assistant for a group called ${request.group}. I'd like to book a table at ${request.restaurant} for ${request.partySize}, ${request.when}. Tap to talk to me: ${link}`,
+      );
+      this.inBackground(() => this.followCall(record, request, callId));
+      return `No phone line on this bot, so Kitty texted ${input.restaurant} at ${phone} a link to talk to the voice agent. Tell the group Kitty is reaching out to ${input.restaurant} now; the result will be posted when the call ends.`;
+    }
     this.inBackground(() => this.followCall(record, request, callId));
     return `Calling ${input.restaurant} now for ${input.partySize} ${input.when}. The result will be posted when the call ends.`;
   }

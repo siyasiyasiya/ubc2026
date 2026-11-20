@@ -52,6 +52,34 @@ describe("ElevenLabsRestaurantCaller", () => {
     const caller = new ElevenLabsRestaurantCaller({ apiKey: "bad", agentId: "a", phoneNumberId: "p", fetch: fetchFn });
     await expect(caller.start(request)).rejects.toThrow("ElevenLabs 401: invalid api key");
   });
+
+  it("without a phone number, makes a talk-to link and finds the conversation it started", async () => {
+    const { fetchFn, calls } = fakeFetch([]);
+    const caller = new ElevenLabsRestaurantCaller({ apiKey: "k", agentId: "agent_1", fetch: fetchFn });
+    const { callId, link } = await caller.start(request);
+    expect(calls).toHaveLength(0);
+    const url = new URL(link!);
+    expect(url.origin + url.pathname).toBe("https://elevenlabs.io/app/talk-to");
+    expect(url.searchParams.get("agent_id")).toBe("agent_1");
+    expect(url.searchParams.get("var_restaurant")).toBe("Uchi");
+    expect(url.searchParams.get("var_party_size")).toBe("4");
+    const ref = url.searchParams.get("var_call_ref")!;
+
+    const conv = (id: string, callRef: string) => ({ body: { conversation_id: id, conversation_initiation_client_data: { dynamic_variables: { call_ref: callRef } } } });
+    const responses = [
+      { body: { conversations: [] } }, // nobody has tapped yet
+      { body: { conversations: [{ conversation_id: "conv_other" }, { conversation_id: "conv_mine" }] } },
+      conv("conv_other", "someone-else"),
+      conv("conv_mine", ref),
+      { body: { status: "done", analysis: { data_collection_results: { reservation_confirmed: { value: false }, alternative_offered: { value: "8:30" } } } } },
+    ];
+    const second = fakeFetch(responses);
+    const reader = new ElevenLabsRestaurantCaller({ apiKey: "k", agentId: "agent_1", fetch: second.fetchFn });
+    expect(await reader.result(callId)).toEqual({ status: "in_progress" });
+    expect(await reader.result(callId)).toEqual({ status: "done", booked: false, alternative: "8:30" });
+    expect(second.calls[0]!.url).toContain("/v1/convai/conversations?agent_id=agent_1&call_start_after_unix=");
+    expect(second.calls.at(-1)!.url).toBe("https://api.elevenlabs.io/v1/convai/conversations/conv_mine");
+  });
 });
 
 describe("toE164", () => {
