@@ -159,6 +159,32 @@ export const groupTreasuryAbi = [
   },
   {
     type: "function",
+    name: "netSettle",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "clears",
+        type: "tuple[]",
+        components: [
+          { name: "from", type: "address" },
+          { name: "to", type: "address" },
+          { name: "amount", type: "uint256" },
+        ],
+      },
+      {
+        name: "adds",
+        type: "tuple[]",
+        components: [
+          { name: "from", type: "address" },
+          { name: "to", type: "address" },
+          { name: "amount", type: "uint256" },
+        ],
+      },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
     name: "usdc",
     stateMutability: "view",
     inputs: [],

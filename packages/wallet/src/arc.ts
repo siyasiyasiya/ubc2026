@@ -15,6 +15,7 @@
 import {
   micros,
   periodFromIndex,
+  type DebtEdge,
   type LimitStatus,
   type Member,
   type PullOutcome,
@@ -143,6 +144,38 @@ export class ArcWalletAdapter implements WalletAdapter {
     const to = walletOf(creditor);
     if (!from || !to) return micros(0);
     return micros(await this.read("debts", [from, to]));
+  }
+
+  /**
+   * Settle-up netting onchain. Returns false (so the caller keeps the advisory plan) when the edges
+   * can't be resolved to wallets or the deployed contract predates `netSettle` (it's simulated first,
+   * so an older deployment is detected without spending gas on a reverting transaction).
+   */
+  async netSettle(clears: DebtEdge[], adds: DebtEdge[]): Promise<boolean> {
+    const toTuple = (e: DebtEdge) => {
+      const from = walletOf(e.from);
+      const to = walletOf(e.to);
+      return from && to ? { from, to, amount: e.amount } : undefined;
+    };
+    const clr = clears.map(toTuple);
+    const add = adds.map(toTuple);
+    if (clr.includes(undefined) || add.includes(undefined)) return false; // someone isn't set up
+    const args = [clr as { from: Address; to: Address; amount: bigint }[], add as { from: Address; to: Address; amount: bigint }[]] as const;
+
+    const { walletClient, publicClient, treasury } = this.opts;
+    try {
+      await publicClient.simulateContract({
+        address: treasury,
+        abi: groupTreasuryAbi,
+        functionName: "netSettle",
+        args,
+        account: walletClient.account,
+      } as never);
+    } catch {
+      return false; // old deployment without netSettle, or the rewrite doesn't balance onchain
+    }
+    await this.write("netSettle", args as never);
+    return true;
   }
 
   async pull(params: PullParams): Promise<PullOutcome> {

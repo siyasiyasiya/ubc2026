@@ -45,7 +45,7 @@ As of Nov 19, 2026, run live in a real iMessage group on Arc testnet unless note
 | Trip tab: splits wait until "settle up" | ✅ live |
 | A share that can't be pulled becomes an onchain debt, and the member gets a pay-back link | ✅ live up to the pay-back tap |
 | Itemized split: "i had the pasta and a sake", tax and tip shared proportionally | 🟡 built and tested, live run pending |
-| Settle-up netting: the fewest who-pays-whom transfers (advisory; payback still runs pairwise) | 🟡 built and tested, live run pending |
+| Settle-up netting: collapses the debt graph to the fewest who-pays-whom transfers, onchain (`netSettle`, balance-preserving) | 🟡 built and tested (contract + 8 Foundry tests); needs a contract redeploy to run against the live group |
 | Kitty wrapped: spending summary (total, per person, top spender) in the chat or a DM | 🟡 built and tested, live run pending |
 | Vague buy ("dishwasher soap"): Kitty web-searches real products for options, saves a group or personal usual so it stops asking | 🟡 built and tested, live run pending |
 | Proactive nudges for stale approval cards and unpaid debts (off by default, `NUDGES=on`) | 🟡 built and tested, off for demos |

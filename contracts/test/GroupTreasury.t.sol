@@ -440,6 +440,135 @@ contract GroupTreasuryTest is Test {
         vm.stopPrank();
     }
 
+    // --- netSettle (settle-up netting) ---
+
+    /// Record a debtor->creditor debt of `amount` by settling a 2-person spend the debtor can't cover.
+    function _debt(address debtor, address creditor, uint128 amount, bytes32 id) internal {
+        vm.prank(operator);
+        treasury.lowerLimit(G, debtor, 0); // remaining 0, so the debtor's share becomes a debt
+        address[] memory who = new address[](2);
+        (who[0], who[1]) = (creditor, debtor);
+        uint256[] memory shares = new uint256[](2);
+        (shares[0], shares[1]) = (0, amount);
+        vm.prank(operator);
+        treasury.propose(id, G, creditor, who, shares, uint64(block.timestamp + 1 days));
+        vm.prank(debtor);
+        treasury.approve(id);
+        treasury.settle(id);
+        assertEq(treasury.debts(debtor, creditor), amount);
+    }
+
+    function _edge(address from, address to, uint256 amount)
+        internal
+        pure
+        returns (GroupTreasury.Transfer memory)
+    {
+        return GroupTreasury.Transfer(from, to, amount);
+    }
+
+    function test_netSettle_collapsesAChain() public {
+        _debt(neena, tristan, 12 * USD, keccak256("d1")); // neena -> tristan
+        _debt(tristan, siya, 12 * USD, keccak256("d2")); // tristan -> siya
+
+        GroupTreasury.Transfer[] memory clears = new GroupTreasury.Transfer[](2);
+        clears[0] = _edge(neena, tristan, 12 * USD);
+        clears[1] = _edge(tristan, siya, 12 * USD);
+        GroupTreasury.Transfer[] memory adds = new GroupTreasury.Transfer[](1);
+        adds[0] = _edge(neena, siya, 12 * USD);
+
+        vm.expectEmit(false, false, false, true);
+        emit GroupTreasury.DebtsNetted(2, 1);
+        vm.prank(operator);
+        treasury.netSettle(clears, adds);
+
+        assertEq(treasury.debts(neena, tristan), 0);
+        assertEq(treasury.debts(tristan, siya), 0);
+        assertEq(treasury.debts(neena, siya), 12 * USD); // one transfer instead of two
+    }
+
+    function test_netSettle_mutualDebtsCancel() public {
+        _debt(neena, siya, 10 * USD, keccak256("m1"));
+        _debt(siya, neena, 10 * USD, keccak256("m2"));
+
+        GroupTreasury.Transfer[] memory clears = new GroupTreasury.Transfer[](2);
+        clears[0] = _edge(neena, siya, 10 * USD);
+        clears[1] = _edge(siya, neena, 10 * USD);
+        GroupTreasury.Transfer[] memory adds = new GroupTreasury.Transfer[](0);
+
+        vm.prank(operator);
+        treasury.netSettle(clears, adds);
+
+        assertEq(treasury.debts(neena, siya), 0);
+        assertEq(treasury.debts(siya, neena), 0);
+    }
+
+    function test_netSettle_thenPayDebtSettlesInOneTransfer() public {
+        _debt(neena, tristan, 12 * USD, keccak256("d1"));
+        _debt(tristan, siya, 12 * USD, keccak256("d2"));
+
+        GroupTreasury.Transfer[] memory clears = new GroupTreasury.Transfer[](2);
+        clears[0] = _edge(neena, tristan, 12 * USD);
+        clears[1] = _edge(tristan, siya, 12 * USD);
+        GroupTreasury.Transfer[] memory adds = new GroupTreasury.Transfer[](1);
+        adds[0] = _edge(neena, siya, 12 * USD);
+        vm.prank(operator);
+        treasury.netSettle(clears, adds);
+
+        // The single netted debt is payable the normal way, and Tristan (the middleman) owes nothing.
+        vm.prank(neena);
+        treasury.payDebt(siya, 12 * USD);
+        assertEq(treasury.debts(neena, siya), 0);
+        assertEq(usdc.balanceOf(siya), 1_012 * USD); // Siya paid directly by Neena
+        assertEq(usdc.balanceOf(neena), 988 * USD);
+        assertEq(usdc.balanceOf(tristan), 1_000 * USD); // never had to front or forward anything
+    }
+
+    function test_netSettle_revertsWhenNotBalanced() public {
+        _debt(neena, tristan, 12 * USD, keccak256("d1"));
+        // Redirect Neena's debt to Siya without clearing Tristan's side: Tristan would be shorted.
+        GroupTreasury.Transfer[] memory clears = new GroupTreasury.Transfer[](1);
+        clears[0] = _edge(neena, tristan, 12 * USD);
+        GroupTreasury.Transfer[] memory adds = new GroupTreasury.Transfer[](1);
+        adds[0] = _edge(neena, siya, 12 * USD);
+        vm.prank(operator);
+        vm.expectRevert(GroupTreasury.NotBalanced.selector);
+        treasury.netSettle(clears, adds);
+    }
+
+    function test_netSettle_revertsOnDebtFromNothing() public {
+        GroupTreasury.Transfer[] memory clears = new GroupTreasury.Transfer[](0);
+        GroupTreasury.Transfer[] memory adds = new GroupTreasury.Transfer[](1);
+        adds[0] = _edge(neena, siya, 5 * USD); // conjures a debt that doesn't net to zero
+        vm.prank(operator);
+        vm.expectRevert(GroupTreasury.NotBalanced.selector);
+        treasury.netSettle(clears, adds);
+    }
+
+    function test_netSettle_revertsOnOverClear() public {
+        _debt(neena, tristan, 12 * USD, keccak256("d1"));
+        GroupTreasury.Transfer[] memory clears = new GroupTreasury.Transfer[](1);
+        clears[0] = _edge(neena, tristan, 20 * USD); // more than owed
+        GroupTreasury.Transfer[] memory adds = new GroupTreasury.Transfer[](0);
+        vm.prank(operator);
+        vm.expectRevert(GroupTreasury.TooMuch.selector);
+        treasury.netSettle(clears, adds);
+    }
+
+    function test_netSettle_revertsOnSelfEdge() public {
+        GroupTreasury.Transfer[] memory clears = new GroupTreasury.Transfer[](0);
+        GroupTreasury.Transfer[] memory adds = new GroupTreasury.Transfer[](1);
+        adds[0] = _edge(neena, neena, 5 * USD);
+        vm.prank(operator);
+        vm.expectRevert(GroupTreasury.SelfDebt.selector);
+        treasury.netSettle(clears, adds);
+    }
+
+    function test_netSettle_revertsForNonOperator() public {
+        GroupTreasury.Transfer[] memory empty = new GroupTreasury.Transfer[](0);
+        vm.expectRevert(GroupTreasury.NotOperator.selector);
+        treasury.netSettle(empty, empty);
+    }
+
     // --- groups change over time ---
 
     function test_removeMember_operatorRemovesSomeoneWhoLeftTheChat() public {

@@ -54,6 +54,13 @@ contract GroupTreasury {
         uint256[] shares;
     }
 
+    /// A single "who owes whom" edge, used to rewrite the debt graph in `netSettle`.
+    struct Transfer {
+        address from;
+        address to;
+        uint256 amount;
+    }
+
     /// Weekly windows start Monday 00:00 UTC (1970-01-05), matching the off-chain adapter.
     uint256 internal constant ANCHOR = 4 days;
     /// Months are fixed 30-day windows: calendar months aren't worth the gas or the bugs.
@@ -92,6 +99,7 @@ contract GroupTreasury {
     );
     event SpendSettled(bytes32 indexed id, uint256 pulled, uint256 owed);
     event DebtPaid(address indexed debtor, address indexed creditor, uint256 amount);
+    event DebtsNetted(uint256 cleared, uint256 added);
 
     error NotOperator();
     error NotMember();
@@ -108,6 +116,8 @@ contract GroupTreasury {
     error TransferFailed();
     error TooMuch();
     error TicketUsed();
+    error NotBalanced();
+    error SelfDebt();
 
     modifier onlyOperator() {
         if (msg.sender != operator) revert NotOperator();
@@ -268,6 +278,46 @@ contract GroupTreasury {
         emit DebtPaid(msg.sender, creditor, amount);
     }
 
+    /// Settle-up netting: rewrite the pairwise debt graph to an equivalent one with fewer transfers.
+    /// `clears` are existing debt edges to remove; `adds` are the replacement edges (computed off
+    /// chain, e.g. "A owes B, B owes C" becomes "A owes C"). The rewrite is accepted only if it
+    /// leaves every touched address's net balance (what they owe minus what they're owed) exactly
+    /// unchanged, so no money is created, destroyed, or shifted between people: only who-pays-whom is
+    /// simplified. No money moves here; the (now fewer) debts are still paid back with `payDebt`.
+    ///
+    /// Operator-only, which is safe because a balance-preserving rewrite can never raise anyone's net
+    /// debt or send value anywhere, it only reduces the number of pay-backs.
+    function netSettle(Transfer[] calldata clears, Transfer[] calldata adds)
+        external
+        onlyOperator
+    {
+        uint256 cap = 2 * (clears.length + adds.length);
+        address[] memory who = new address[](cap);
+        int256[] memory bal = new int256[](cap);
+        uint256 n;
+
+        for (uint256 i; i < clears.length; ++i) {
+            Transfer calldata c = clears[i];
+            if (c.amount > debts[c.from][c.to]) revert TooMuch();
+            debts[c.from][c.to] -= c.amount;
+            // Removing an edge: the debtor owes less, the creditor is owed less.
+            n = _accrue(who, bal, n, c.from, -int256(c.amount));
+            n = _accrue(who, bal, n, c.to, int256(c.amount));
+        }
+        for (uint256 i; i < adds.length; ++i) {
+            Transfer calldata a = adds[i];
+            if (a.from == a.to) revert SelfDebt();
+            debts[a.from][a.to] += a.amount;
+            // Adding an edge: the debtor owes more, the creditor is owed more.
+            n = _accrue(who, bal, n, a.from, int256(a.amount));
+            n = _accrue(who, bal, n, a.to, -int256(a.amount));
+        }
+        for (uint256 i; i < n; ++i) {
+            if (bal[i] != 0) revert NotBalanced();
+        }
+        emit DebtsNetted(clears.length, adds.length);
+    }
+
     function getSpend(bytes32 id)
         external
         view
@@ -345,6 +395,24 @@ contract GroupTreasury {
         // casting to 'uint128' is safe because amount <= remaining() <= the uint128 limit
         // forge-lint: disable-next-line(unsafe-typecast)
         m.spent += uint128(amount);
+    }
+
+    /// Add `d` to the running net-balance delta for address `a` in the (who, bal) scratch arrays,
+    /// appending a new slot the first time an address is seen. Returns the new entry count.
+    function _accrue(address[] memory who, int256[] memory bal, uint256 n, address a, int256 d)
+        internal
+        pure
+        returns (uint256)
+    {
+        for (uint256 i; i < n; ++i) {
+            if (who[i] == a) {
+                bal[i] += d;
+                return n;
+            }
+        }
+        who[n] = a;
+        bal[n] = d;
+        return n + 1;
     }
 
     function _length(Period period) internal pure returns (uint256) {

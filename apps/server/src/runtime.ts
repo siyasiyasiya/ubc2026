@@ -949,10 +949,28 @@ export class GroupRuntime {
       if (amount > 0n) debts.push({ from: debtor.id, to: creditor.id, amount: amount as Usdc });
     }
     const net = netTransfers(debts);
-    if (net.length === 0) return "nobody owes anybody right now, you're all square 🎉";
+
+    // Commit the netting onchain when the contract supports it, so the fewer transfers are real and
+    // not just advice. Falls back to advisory (returns false) on an older deployment.
+    let executed = false;
+    const memberOf = (id: string) => record.group.members.find((m) => m.id === id);
+    const resolvable = (t: Transfer) => memberOf(t.from) && memberOf(t.to);
+    if (wallet.netSettle && debts.length > net.length && debts.every(resolvable) && net.every(resolvable)) {
+      const edges = (ts: Transfer[]) => ts.map((t) => ({ from: memberOf(t.from)!, to: memberOf(t.to)!, amount: t.amount }));
+      try {
+        executed = await wallet.netSettle(edges(debts), edges(net));
+      } catch (err) {
+        this.log(`netSettle failed: ${(err as Error).message}`);
+      }
+    }
+
+    if (net.length === 0) {
+      return executed ? "cleared it out, everyone's square now 🎉" : "nobody owes anybody right now, you're all square 🎉";
+    }
     const lines = net.map((t) => `${this.name(record, t.from)} → ${this.name(record, t.to)} ${formatUsdc(t.amount)}`);
     const note = debts.length > net.length ? `\n(${net.length} transfer${net.length === 1 ? "" : "s"} instead of ${debts.length})` : "";
-    return `simplest way to settle up:\n${lines.join("\n")}${note}`;
+    const header = executed ? "netted everyone down, it's just:" : "simplest way to settle up:";
+    return `${header}\n${lines.join("\n")}${note}`;
   }
 
   /**

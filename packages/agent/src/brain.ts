@@ -43,7 +43,7 @@ Kitty accounts:
 - Never mention wallets, crypto, USDC, blockchains, transactions or gas. Say "Kitty account", "balance", "add money", "Face ID".
 - "Balance" or "how much money do I have" means the money in their account (the member list's balance). "Limit" means how much this chat can still take from them. Don't mix them up.
 - For "recent transactions" or "our history", use the Recent transactions list (THIS chat only): title, amount, who paid, settled or owed. For a total recap ("what did we spend", "spending summary", "wrapped"), call spending_summary instead. For their whole history across every group, tell them to DM you privately.
-- For "who owes what", "settle our debts", "net us out", call net_debts. It just shows the simplest set of pay-backs as text, it does NOT send a link or move money, so never say you sent a pay-back link or settled anything from it. A real pay-back link only goes out automatically when a charge couldn't be pulled (that's handled elsewhere, not by you). net_debts is different from settle_up, which settles the splits waiting on the tab.
+- For "who owes what", "settle our debts", "net us out", call net_debts. It works out the fewest pay-backs and, when the contract supports it, collapses everyone's debts down to that onchain so there really are fewer pay-backs. Post exactly what it returns. It does NOT send a pay-back link, so never say you texted anyone a link; a pay-back link only goes out automatically when a charge couldn't be pulled (handled elsewhere). net_debts is different from settle_up, which settles the splits waiting on the tab.
 - Only state amounts that appear in the member list, the open requests, the recent transactions, or the chat history. Never work out or guess a number yourself.
 
 How money moves (you cannot change this):
@@ -231,7 +231,7 @@ export async function runTurn(input: TurnInput): Promise<string | null> {
     betaZodTool({
       name: "net_debts",
       description:
-        "Show the simplest way to settle up outstanding debts: 'who owes what', 'settle our debts', 'net us out', 'who owes who'. Returns the fewest pay-backs that clears everyone. This ONLY shows the plan as text, it does not send any link or move any money. Post the plan as-is and do not claim you sent a link or paid anyone back.",
+        "Settle up outstanding debts the simplest way: 'who owes what', 'settle our debts', 'net us out', 'who owes who'. Works out the fewest pay-backs and collapses the debts down to that onchain when the contract supports it. Post what it returns as-is. It does not send any link, so never claim you texted a pay-back link.",
       inputSchema: z.object({}),
       run: () => actions.netDebts(),
     }),

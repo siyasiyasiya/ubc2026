@@ -336,6 +336,52 @@ describe("GroupRuntime", () => {
     expect(msg).toContain("Tristan → Neena $30.00");
   });
 
+  it("executes the netting onchain when the wallet supports it", async () => {
+    const calls: { clears: number; adds: number }[] = [];
+    class NettingWallet extends InMemoryWalletAdapter {
+      owedMap = new Map<string, bigint>();
+      async owed(d: { id: string }, c: { id: string }) {
+        return (this.owedMap.get(`${d.id}->${c.id}`) ?? 0n) as ReturnType<typeof usdc>;
+      }
+      async netSettle(clears: { amount: bigint }[], adds: { amount: bigint }[]) {
+        calls.push({ clears: clears.length, adds: adds.length });
+        return true;
+      }
+    }
+    const wallet = new NettingWallet();
+    const t = setup(200, { wallet: () => wallet });
+    for (const w of [NEENA, SIYA, TRISTAN]) await t.say(w, "hi"); // seed members
+
+    // Chain: Neena owes Tristan $12, Tristan owes Siya $12 → nets to Neena → Siya $12.
+    const rec = t.store.get(CHAT)!;
+    const mk = (payee: string, debtor: string): (typeof rec.requests)[number] => ({
+      id: `r-${payee}-${debtor}`,
+      number: rec.requests.length + 1,
+      title: "dinner",
+      flow: "pay_after",
+      requesterId: payee,
+      split: { total: usdc(12), method: { kind: "even" }, shares: { [debtor]: usdc(12) }, payeeMemberId: payee },
+      state: {
+        name: "done",
+        receipt: { source: "photo", total: usdc(12), at: 0 },
+        split: { total: usdc(12), method: { kind: "even" }, shares: { [debtor]: usdc(12) }, payeeMemberId: payee },
+        pulls: [],
+        debts: [{ memberId: debtor, amount: usdc(12), reason: "over limit", createdAt: 0 }],
+      },
+      createdAt: 0,
+    });
+    rec.requests.push(mk(TRISTAN, NEENA), mk(SIYA, TRISTAN));
+    wallet.owedMap.set(`${NEENA}->${TRISTAN}`, usdc(12));
+    wallet.owedMap.set(`${TRISTAN}->${SIYA}`, usdc(12));
+    t.store.put(rec);
+
+    await t.say(NEENA, "who owes what?");
+    expect(calls).toEqual([{ clears: 2, adds: 1 }]); // committed the 2→1 netting onchain
+    const msg = t.posted.at(-1)!.text;
+    expect(msg).toContain("netted everyone down");
+    expect(msg).toContain("Neena → Siya $12.00");
+  });
+
   it("gives a spending summary with per-person totals and the biggest spender", async () => {
     const t = setup(); // default $200 limit, splits settle
     const req = await t.proposeDinner(); // $90 dinner, Neena paid, Siya+Tristan each $30

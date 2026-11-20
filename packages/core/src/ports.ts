@@ -114,6 +114,20 @@ export interface WalletAdapter {
   removeMember?(member: Member): Promise<void>;
   /** Optional: what `debtor` still owes `creditor` from shares that couldn't be pulled. */
   owed?(debtor: Member, creditor: Member): Promise<Usdc>;
+  /**
+   * Optional: settle-up netting. Rewrite the pairwise debt graph to `adds` (fewer transfers),
+   * clearing `clears`, in one onchain call. Balance-preserving (no money moves, each person's net
+   * is unchanged). Returns false if the deployed contract can't do it (so callers fall back to the
+   * advisory plan).
+   */
+  netSettle?(clears: DebtEdge[], adds: DebtEdge[]): Promise<boolean>;
+}
+
+/** A single "who owes whom" edge used by settle-up netting. */
+export interface DebtEdge {
+  from: Member;
+  to: Member;
+  amount: Usdc;
 }
 
 // ----------------------------------------------------------------------------
