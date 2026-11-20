@@ -56,7 +56,8 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
   const fakeTurn: typeof RunTurn = async ({ actions, event, groupSnapshot }) => {
     turnEvents.push(event);
     turnSnapshots.push(groupSnapshot);
-    if (event.includes("always get")) return actions.setPreference({ item: "dishwasher soap", choice: "Cascade Platinum pods" });
+    if (event.includes("always get")) return actions.setPreference({ item: "dishwasher soap", choice: "Cascade Platinum pods", scope: "group" });
+    if (event.includes("i always want")) return actions.setPreference({ item: "coffee", choice: "fragrance-free dark roast", scope: "personal" });
     if (event.includes("join me")) return actions.sendJoinLink({});
     if (event.includes("split by item")) return actions.splitByItem({ payer: "Neena", claims: { Siya: [1], Tristan: [2] } });
     if (event.includes("who owes")) return actions.netDebts();
@@ -205,6 +206,18 @@ describe("GroupRuntime", () => {
     // The saved usual now reaches the agent in the snapshot for later requests.
     await t.say(SIYA, "we need dishwasher soap");
     expect(t.turnSnapshots.at(-1)).toContain("dishwasher soap: Cascade Platinum pods");
+  });
+
+  it("saves a personal preference under just that member, labeled by name in the snapshot", async () => {
+    const t = setup();
+    await t.say(SIYA, "i always want the fragrance-free dark roast coffee");
+
+    const record = t.store.get(CHAT)!;
+    expect(record.memberPreferences![SIYA]!["coffee"]).toMatchObject({ choice: "fragrance-free dark roast", setBy: SIYA });
+    expect(record.preferences?.["coffee"]).toBeUndefined(); // not a group usual
+
+    await t.say(NEENA, "hi");
+    expect(t.turnSnapshots.at(-1)).toContain("Siya's coffee: fragrance-free dark roast");
   });
 
   it("persists preferences across a store reload", () => {

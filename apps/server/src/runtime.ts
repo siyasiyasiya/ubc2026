@@ -887,7 +887,10 @@ export class GroupRuntime {
       .map((r) => `- #${r.number} ${r.title} ${formatUsdc(r.split?.total ?? usdc(0))}`);
     const recent = this.recentActivity(record);
     const usuals = Object.values(record.preferences ?? {}).map((p) => `- ${p.item}: ${p.choice}`);
-    return `Plan: ${plan}\n\nMembers:\n${members.join("\n") || "- (none yet)"}\n\nOpen requests:\n${open.join("\n") || "- none"}\n\nOn the tab (settles on "settle up"):\n${tab.join("\n") || "- nothing"}\n\nUsuals (saved picks for generic buys; use these instead of asking):\n${usuals.join("\n") || "- none set"}\n\nRecent transactions in THIS chat (for history questions):\n${recent.join("\n") || "- none yet"}`;
+    const personal = Object.entries(record.memberPreferences ?? {}).flatMap(([id, prefs]) =>
+      Object.values(prefs).map((p) => `- ${this.name(record, id)}'s ${p.item}: ${p.choice}`),
+    );
+    return `Plan: ${plan}\n\nMembers:\n${members.join("\n") || "- (none yet)"}\n\nOpen requests:\n${open.join("\n") || "- none"}\n\nOn the tab (settles on "settle up"):\n${tab.join("\n") || "- nothing"}\n\nUsuals (group's saved picks for generic buys; use instead of asking):\n${usuals.join("\n") || "- none set"}\n\nPersonal usuals (the asker gets their own first):\n${personal.join("\n") || "- none set"}\n\nRecent transactions in THIS chat (for history questions):\n${recent.join("\n") || "- none yet"}`;
   }
 
   // --- what the agent can do --------------------------------------------------
@@ -969,14 +972,21 @@ export class GroupRuntime {
         }
       },
       leave: async () => this.leave(record, sender),
-      setPreference: async ({ item, choice }) => {
+      setPreference: async ({ item, choice, scope }) => {
         const key = normalizePreferenceKey(item);
         if (!key || !choice.trim()) return "Tell me the item and what to get for it.";
-        record.preferences ??= {};
-        record.preferences[key] = { item: item.trim(), choice: choice.trim(), setBy: sender.id, at: this.now() };
+        const pref = { item: item.trim(), choice: choice.trim(), setBy: sender.id, at: this.now() };
+        if (scope === "personal") {
+          record.memberPreferences ??= {};
+          (record.memberPreferences[sender.id] ??= {})[key] = pref;
+        } else {
+          record.preferences ??= {};
+          record.preferences[key] = pref;
+        }
         this.deps.store.put(record);
         this.deps.store.save();
-        return `Saved: ${item.trim()} means ${choice.trim()} from now on.`;
+        const whose = scope === "personal" ? `${sender.displayName}'s` : "the group's";
+        return `Saved as ${whose} usual: ${item.trim()} means ${choice.trim()}.`;
       },
       sendJoinLink: async ({ name }) => {
         try {

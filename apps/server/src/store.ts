@@ -42,8 +42,10 @@ export interface GroupRecord {
   plan?: SpendingLimit;
   /** Handles we asked "what should I call you?" privately; their Face ID link goes out once they answer. */
   awaitingName?: string[];
-  /** The group's usuals for generic buys, keyed by the normalized item name (see normalizePreferenceKey). */
+  /** The group's shared usuals for generic buys, keyed by the normalized item name (see normalizePreferenceKey). */
   preferences?: Record<string, Preference>;
+  /** Each member's personal usuals, by member id then normalized item name. A member's own pick wins over the group's. */
+  memberPreferences?: Record<MemberId, Record<string, Preference>>;
 }
 
 /** Normalize an item name to a stable preference key: lowercase, trimmed, whitespace collapsed. */
