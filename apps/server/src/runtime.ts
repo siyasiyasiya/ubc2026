@@ -70,6 +70,12 @@ export interface RuntimeDeps {
   invites?: { baseUrl: string; secret: string };
   /** Chats the bot serves (ALLOWED_CHAT_IDS), so a CLI invite to a chat it hasn't seen still matches. */
   chats?: string[];
+  /**
+   * Keeps each member's balance equal to what their kitties can take this period (see
+   * topUpBalances). "send": testnet, Kitty sends the difference itself, up to `dailyUsd` per account
+   * a day. "remind": real money, which only the member can add, so Kitty texts a one-tap top-up link.
+   */
+  autoTopUp?: { mode: "send"; send: (address: string, amount: Usdc) => Promise<string>; dailyUsd: number } | { mode: "remind" };
   /** Demo only (SUBSCRIPTION_EVERY_MIN): charge subscriptions this often instead of weekly/monthly. */
   subscriptionEveryMs?: number;
   now?: () => number;
@@ -103,6 +109,8 @@ export function nextCharge(from: number, every: "weekly" | "monthly", overrideMs
 }
 
 const HISTORY_LINES = 30;
+const CENT = 10_000n as Usdc;
+const roundUpToCent = (amount: Usdc) => (((amount + CENT - 1n) / CENT) * CENT) as Usdc;
 const APPROVAL_WINDOW_MS = 24 * 60 * 60 * 1000;
 const APPROVE_WORDS = new Set([APPROVAL_EMOJI, "like", "liked", "thumbsup", "+1"]);
 
@@ -188,6 +196,9 @@ export class GroupRuntime {
   private readonly seededRosters = new Set<string>();
   /** Nudge keys already sent, so a reminder fires once per item per process run. */
   private readonly nudged = new Set<string>();
+  /** Auto top-ups sent today per account, and the days a top-up reminder already went out. */
+  private readonly autoTopUpSent = new Map<string, { day: string; amount: Usdc }>();
+  private readonly topUpReminded = new Set<string>();
   private queue: Promise<void> = Promise.resolve();
   private readonly now: () => number;
   private readonly log: (line: string) => void;
@@ -1109,6 +1120,79 @@ export class GroupRuntime {
       },
       cancelSubscription: async ({ title }) => this.cancelSubscription(record, sender, title),
     };
+  }
+
+  // --- balance = what your kitties can take ------------------------------------
+
+  /**
+   * Tops each account up so its balance covers what all its kitties can still take this period
+   * (the sum of each chat's remaining cap). A pull lowers both sides equally, so this only acts
+   * when a cap refills (a new week or month), a cap goes up, or someone joins another kitty.
+   * Never takes money out: Kitty can't, and extra money is the member's own.
+   */
+  async topUpBalances(): Promise<void> {
+    const mode = this.deps.autoTopUp;
+    if (!mode) return;
+    const accounts = new Map<string, { record: GroupRecord; member: Member }[]>();
+    for (const record of this.deps.store.all()) {
+      for (const member of record.group.members) {
+        if (!member.wallet) continue;
+        const key = member.wallet.address.toLowerCase();
+        accounts.set(key, [...(accounts.get(key) ?? []), { record, member }]);
+      }
+    }
+    const day = new Date(this.now()).toISOString().slice(0, 10);
+    for (const [address, memberships] of accounts) {
+      try {
+        const need = await this.topUpNeed(memberships);
+        if (!need || need.short < CENT) continue;
+        const { member, record } = memberships[0]!;
+        const short = roundUpToCent(need.short);
+        if (mode.mode === "send") {
+          const sent = this.autoTopUpSent.get(address);
+          const today = sent?.day === day ? sent.amount : usdc(0);
+          const room = usdc(mode.dailyUsd) - today;
+          const amount = (short < room ? short : room) as Usdc;
+          if (amount < CENT) continue;
+          await mode.send(member.wallet!.address, amount);
+          this.autoTopUpSent.set(address, { day, amount: (today + amount) as Usdc });
+          this.log(`auto top-up: ${formatUsdc(amount)} to ${member.wallet!.address}`);
+          await this.sendDm(
+            member.id,
+            `dm:${member.id}`,
+            member.displayName,
+            `🔄 topped you up ${formatUsdc(amount)}, so your balance (${formatUsdc((need.balance + amount) as Usdc)}) covers what your kitties can take right now (${formatUsdc(need.target)}).`,
+          );
+        } else {
+          const key = `${address}:${day}`;
+          if (this.topUpReminded.has(key) || !this.deps.invites) continue;
+          this.topUpReminded.add(key);
+          const url = new URL(this.deps.invites.baseUrl);
+          url.searchParams.set("a", member.wallet!.address);
+          url.searchParams.set("c", this.chatLabel(record, member.id));
+          await this.sendDm(
+            member.id,
+            `dm:${member.id}`,
+            member.displayName,
+            `your kitties can take up to ${formatUsdc(need.target)} right now and you have ${formatUsdc(need.balance)}. add ${formatUsdc(short)} so your shares go through (Apple Pay): ${this.withChats(url, member.id)}`,
+          );
+        }
+      } catch (err) {
+        this.log(`auto top-up for ${address} failed: ${(err as Error).message}`);
+      }
+    }
+  }
+
+  /** What one account's kitties can take this period, its balance, and the gap. Undefined when the balance can't be read. */
+  private async topUpNeed(memberships: { record: GroupRecord; member: Member }[]): Promise<{ target: Usdc; balance: Usdc; short: Usdc } | undefined> {
+    let target = 0n;
+    for (const { record, member } of memberships) {
+      target += (await this.walletFor(record).getLimitStatus(member)).remaining;
+    }
+    const first = memberships[0]!;
+    const balance = await this.walletFor(first.record).balance?.(first.member);
+    if (balance === undefined) return undefined;
+    return { target: target as Usdc, balance, short: (target > balance ? target - balance : 0n) as Usdc };
   }
 
   // --- subscriptions (Spotify, rent, a cleaner) ---------------------------------

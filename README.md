@@ -53,6 +53,7 @@ As of Nov 19, 2026, run live in a real iMessage group on Arc testnet unless note
 | Kitty buys it (pay before): checkout card, 👍s, order, shares paid back to the card | 🟡 real Crossmint order placed from the terminal (a $1 Gumroad item, $1.07 charged); from the chat: live run pending |
 | Restaurant calls (ElevenLabs) | 🟡 voice agent live: a real voice conversation started from Kitty's link, found and read back by the server code ("📞 booked Uchi for 4 … ✅"); from the group chat: live run pending a bot restart. Phone-line calls need a paid Twilio number |
 | Subscriptions (Spotify, rent): the group 👍s once, then Kitty charges the same split every week or month; "cancel Spotify" stops it | 🟡 built and tested, run end to end with the real agent in the simulator; live run pending |
+| Balance = what your kitties can take: each period Kitty tops a member's balance up to the sum of what's left of their caps (testnet: sends it; real money: a one-tap Apple Pay text) | 🟡 built and tested; live run pending |
 | Web dashboard ("your kitties"): balance and add money, every kitty with its cap, each kitty's purchases, change a cap, your own activity | 🟡 built and tested against live Arc data, phone run pending |
 | Using members' existing store accounts, Link one-time cards, connecting an existing wallet | ⬜ not built |
 
@@ -173,6 +174,15 @@ Members ask Kitty privately to see their kitties and get a link to the dashboard
 - **Your activity**: every dollar in or out of your account (top-ups, shares, pay-backs, money paid to you), plus joins, cap changes, and missed shares, with a pay-back link for anything still owed.
 
 There's no database behind it. History is the contract's own events plus the account's USDC transfers, read from the Arc explorer's Etherscan-style API (`src/history.ts`) through a small edge-cached proxy (`api/explorer.ts`) so a room of phones doesn't hit the explorer's per-IP limit. The contract only knows each chat as a hash, so chat names come from Kitty's links and are remembered on the phone. An unnamed group text is labeled with the other people in it, like Messages does ("Joey & Siya"). Subscriptions live on Kitty's server, so its links carry them too (`s=` params, replaced in full on each new link so a cancelled one disappears). Purchase names live only in the chat.
+
+### Keeping balances topped up
+
+A cap is a permission, not money: when a new week starts the contract simply counts that member's spending from zero again (it works out the week from the clock; nothing runs onchain). So the money has to be there too. Kitty keeps each member's **balance equal to what their kitties can take this period**: the sum of what's left of every cap, across all their chats (`topUpBalances`, every 5 minutes, before subscriptions charge).
+
+- A share being pulled lowers both sides by the same amount, so they stay equal. Kitty only acts when a cap refills, goes up, or the member joins another kitty.
+- On testnet Kitty sends the difference itself (up to `AUTO_TOPUP_DAILY_USD` per account a day) and texts "🔄 topped you up $47".
+- With real money only the member can add funds (Apple Pay needs their tap), so Kitty texts a one-tap top-up link with the amount, at most once a day. Charging a saved card on a schedule would need a card processor and is out of scope.
+- Kitty never takes money out when a balance is above the caps; only the member holds their key.
 
 ### What the contract guarantees
 

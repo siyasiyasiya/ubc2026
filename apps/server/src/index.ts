@@ -58,6 +58,7 @@ const runtime = new GroupRuntime({
   ...(config.invites ? { invites: config.invites } : {}),
   chats: config.allowedChatIds,
   ...(subscriptionEveryMs() ? { subscriptionEveryMs: subscriptionEveryMs() } : {}),
+  ...autoTopUp(),
 });
 runtime.attach();
 startJoinWatcher();
@@ -83,13 +84,34 @@ function subscriptionEveryMs(): number | undefined {
   return min > 0 ? min * 60_000 : undefined;
 }
 
-/** Charges subscriptions that are due. Always on: an approved subscription is a promise to charge. */
+/**
+ * Balances match caps (testnet: Kitty sends the difference; real money: a one-tap top-up text),
+ * then subscriptions that are due get charged. Top-ups go first so a charge at the start of a
+ * period finds the money there. Always on: an approved subscription is a promise to charge.
+ */
 function startSubscriptions(): void {
   const demo = subscriptionEveryMs();
   const checkMs = demo ? Math.min(60_000, demo) : 5 * 60_000;
   if (demo) console.log(`subscriptions: demo mode, charging every ${demo / 60_000} min`);
-  void runtime.run(() => runtime.chargeSubscriptions());
-  setInterval(() => void runtime.run(() => runtime.chargeSubscriptions()), checkMs).unref?.();
+  const tick = () =>
+    void runtime.run(async () => {
+      await runtime.topUpBalances();
+      await runtime.chargeSubscriptions();
+    });
+  tick();
+  setInterval(tick, checkMs).unref?.();
+}
+
+/** AUTO_TOPUP=off turns it off. On testnet Kitty sends the money (AUTO_TOPUP_DAILY_USD per account, default 300). */
+function autoTopUp() {
+  if (process.env.AUTO_TOPUP === "off") return {};
+  const send = testMoney().testMoney?.send;
+  if (send) {
+    const dailyUsd = Number(process.env.AUTO_TOPUP_DAILY_USD ?? 300);
+    console.log(`auto top-up: on (balance kept equal to what the kitties can take; up to $${dailyUsd} per account a day)`);
+    return { autoTopUp: { mode: "send" as const, send, dailyUsd } };
+  }
+  return config.invites ? { autoTopUp: { mode: "remind" as const } } : {};
 }
 
 /** Build the iMessage chat port, turning a raw chat.db access failure into a clear, actionable fix. */

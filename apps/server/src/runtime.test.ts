@@ -15,7 +15,7 @@ const OUTSIDER = "+1999";
 const CHAT = "group";
 
 /** A runtime whose "agent" proposes a $90 dinner paid by Neena, split three ways. */
-function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapter; wallets?: Record<string, string>; invites?: { baseUrl: string; secret: string }; chats?: string[]; participants?: string[]; chatName?: string; receiptItems?: { name: string; amount: ReturnType<typeof usdc> }[]; receiptError?: Error; purchase?: PurchaseAdapter; calls?: RestaurantCaller; now?: () => number; subscriptionEveryMs?: number; testMoney?: { send: (address: string, amount: bigint) => Promise<string>; maxUsd: number; dailyUsd: number } } = {}) {
+function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapter; wallets?: Record<string, string>; invites?: { baseUrl: string; secret: string }; chats?: string[]; participants?: string[]; chatName?: string; receiptItems?: { name: string; amount: ReturnType<typeof usdc> }[]; receiptError?: Error; purchase?: PurchaseAdapter; calls?: RestaurantCaller; now?: () => number; subscriptionEveryMs?: number; autoTopUp?: ConstructorParameters<typeof GroupRuntime>[0]["autoTopUp"]; testMoney?: { send: (address: string, amount: bigint) => Promise<string>; maxUsd: number; dailyUsd: number } } = {}) {
   const posted: { id: string; text: string }[] = [];
   const failing = { posts: 0, dms: 0 };
   const dms: { handle: string; text: string }[] = [];
@@ -118,6 +118,7 @@ function setup(limitUsd = 200, opts: { wallet?: (chatId: string) => WalletAdapte
     ...(opts.testMoney ? { testMoney: opts.testMoney as never } : {}),
     ...(opts.now ? { now: opts.now } : {}),
     ...(opts.subscriptionEveryMs ? { subscriptionEveryMs: opts.subscriptionEveryMs } : {}),
+    ...(opts.autoTopUp ? { autoTopUp: opts.autoTopUp } : {}),
     receipts: {
       read: async (): Promise<Receipt> => {
         if (opts.receiptError) throw opts.receiptError;
@@ -967,6 +968,97 @@ describe("GroupRuntime", () => {
       expect(new Date(nextCharge(jan31, "monthly")).getMonth()).toBe(1);
       expect(nextCharge(jan31, "weekly") - jan31).toBe(7 * DAY);
       expect(nextCharge(jan31, "monthly", 5 * 60_000) - jan31).toBe(5 * 60_000);
+    });
+  });
+
+  describe("balance = what your kitties can take", () => {
+    const SIYA_WALLET = "0x00000000000000000000000000000000000000bb";
+    /** A wallet whose caps (per chat) and balances the test sets directly. */
+    const chain = () => {
+      const balances = new Map<string, bigint>();
+      const left = new Map<string, bigint>(); // `${chatId}:${memberId}` -> remaining cap
+      const wallet = (chatId: string): WalletAdapter => ({
+        id: "fake",
+        getLimitStatus: async (m) => ({ limit: m.limit, remaining: usdc(Number(left.get(`${chatId}:${m.id}`) ?? 0n) / 1e6) }),
+        canPull: async () => ({ ok: true, remaining: usdc(0) }),
+        pull: async () => ({ status: "pulled", txRef: "0x1" }),
+        balance: async (m) => usdc(Number(balances.get(m.wallet!.address) ?? 0n) / 1e6),
+      });
+      return { balances, left, wallet };
+    };
+    const sendTo = (c: ReturnType<typeof chain>, sent: { address: string; amount: bigint }[]) => async (address: string, amount: bigint) => {
+      sent.push({ address, amount });
+      c.balances.set(address, (c.balances.get(address) ?? 0n) + amount);
+      return "0xtx";
+    };
+
+    it("tops the balance up to the sum of what's left of every cap, across kitties", async () => {
+      const c = chain();
+      const sent: { address: string; amount: bigint }[] = [];
+      const t = setup(200, { wallet: c.wallet, wallets: { [SIYA]: SIYA_WALLET }, autoTopUp: { mode: "send", send: sendTo(c, sent), dailyUsd: 300 } });
+      await t.say(SIYA, "hi");
+      // Siya is in a second kitty too.
+      const siya = t.store.get(CHAT)!.group.members.find((m) => m.id === SIYA)!;
+      t.store.put({ group: { id: "trip", kind: "trip", name: "Tahoe", chatId: "trip", members: [{ ...siya }] }, requests: [] });
+      c.left.set(`${CHAT}:${SIYA}`, usdc(50));
+      c.left.set(`trip:${SIYA}`, usdc(30));
+      c.balances.set(SIYA_WALLET, usdc(3));
+
+      await t.runtime.run(() => t.runtime.topUpBalances());
+      expect(sent).toEqual([{ address: SIYA_WALLET, amount: usdc(77) }]);
+      expect(t.dms.at(-1)).toMatchObject({ handle: SIYA, text: "🔄 topped you up $77.00, so your balance ($80.00) covers what your kitties can take right now ($80.00)." });
+
+      // Matched now: nothing more. A share pulled lowers both sides, still matched.
+      await t.runtime.run(() => t.runtime.topUpBalances());
+      c.left.set(`${CHAT}:${SIYA}`, usdc(40));
+      c.balances.set(SIYA_WALLET, usdc(70));
+      await t.runtime.run(() => t.runtime.topUpBalances());
+      expect(sent).toHaveLength(1);
+
+      // A new week: the cap refills, so the gap is exactly the refill.
+      c.left.set(`${CHAT}:${SIYA}`, usdc(50));
+      await t.runtime.run(() => t.runtime.topUpBalances());
+      expect(sent.at(-1)!.amount).toBe(usdc(10));
+    });
+
+    it("never takes money out when the balance is above the caps", async () => {
+      const c = chain();
+      const sent: { address: string; amount: bigint }[] = [];
+      const t = setup(200, { wallet: c.wallet, wallets: { [SIYA]: SIYA_WALLET }, autoTopUp: { mode: "send", send: sendTo(c, sent), dailyUsd: 300 } });
+      await t.say(SIYA, "hi");
+      c.left.set(`${CHAT}:${SIYA}`, usdc(50));
+      c.balances.set(SIYA_WALLET, usdc(80));
+      await t.runtime.run(() => t.runtime.topUpBalances());
+      expect(sent).toEqual([]);
+    });
+
+    it("rounds up to the cent and stops at the daily limit", async () => {
+      const c = chain();
+      const sent: { address: string; amount: bigint }[] = [];
+      const t = setup(200, { wallet: c.wallet, wallets: { [SIYA]: SIYA_WALLET }, autoTopUp: { mode: "send", send: sendTo(c, sent), dailyUsd: 20 } });
+      await t.say(SIYA, "hi");
+      c.left.set(`${CHAT}:${SIYA}`, 12_345_001n as ReturnType<typeof usdc>);
+      await t.runtime.run(() => t.runtime.topUpBalances());
+      expect(sent.at(-1)!.amount).toBe(usdc(12.35));
+      c.left.set(`${CHAT}:${SIYA}`, usdc(100));
+      await t.runtime.run(() => t.runtime.topUpBalances());
+      await t.runtime.run(() => t.runtime.topUpBalances());
+      expect(sent.map((x) => x.amount)).toEqual([usdc(12.35), usdc(7.65)]); // $20 a day in total
+    });
+
+    it("with real money, texts a one-tap top-up link once a day instead", async () => {
+      const c = chain();
+      const invites = { baseUrl: "https://kittyagent.vercel.app", secret: "s3cret" };
+      const t = setup(200, { wallet: c.wallet, wallets: { [SIYA]: SIYA_WALLET }, invites, autoTopUp: { mode: "remind" } });
+      await t.say(SIYA, "hi");
+      c.left.set(`${CHAT}:${SIYA}`, usdc(50));
+      c.balances.set(SIYA_WALLET, usdc(3));
+      await t.runtime.run(() => t.runtime.topUpBalances());
+      await t.runtime.run(() => t.runtime.topUpBalances());
+      const texts = t.dms.filter((d) => d.text.startsWith("your kitties can take"));
+      expect(texts).toHaveLength(1);
+      expect(texts[0]!.text).toContain("up to $50.00 right now and you have $3.00. add $47.00");
+      expect(new URL(texts[0]!.text.split(" ").at(-1)!).searchParams.get("a")).toBe(SIYA_WALLET);
     });
   });
 
