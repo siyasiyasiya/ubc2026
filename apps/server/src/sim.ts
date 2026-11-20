@@ -8,15 +8,20 @@
  *   /like siya 1                         a member 👍s the card for request #1
  *   /dm siya what's my balance?          a member DMs Kitty privately
  *   /state                               print the group's state
+ *
+ * Buying uses a pretend store unless SIM_CROSSMINT=1, which places REAL Crossmint orders on the
+ * saved card (CROSSMINT_* keys in .env). Members' Kitty balances stay pretend either way.
  */
 
 import path from "node:path";
 import readline from "node:readline/promises";
 import { ClaudeReceiptReader, runTurn, runDmTurn } from "@gta/agent";
 import type { ChatPort, IncomingMessage, IncomingReaction } from "@gta/core";
+import { createCrossmintPurchaseAdapterFromEnv } from "@gta/purchase";
 import { InMemoryWalletAdapter } from "@gta/wallet";
 import { config, warnIfNoClaudeAuth } from "./config.js";
 import { GroupRuntime } from "./runtime.js";
+import { SimulatedPurchaseAdapter } from "./simulated-purchase.js";
 import { Store } from "./store.js";
 
 warnIfNoClaudeAuth();
@@ -51,6 +56,11 @@ const chat: ChatPort = {
   },
 };
 
+// Opt-in only: teammates run the sim with real Crossmint keys in .env and shouldn't be charged by surprise.
+const realStore = process.env.SIM_CROSSMINT === "1";
+const purchase = realStore ? createCrossmintPurchaseAdapterFromEnv() : new SimulatedPurchaseAdapter();
+console.log(realStore ? `purchase: REAL Crossmint orders (${purchase.store})` : "purchase: simulated store (SIM_CROSSMINT=1 for real orders)");
+
 const store = new Store(process.env.SIM_STATE_FILE);
 const runtime = new GroupRuntime({
   chat,
@@ -61,6 +71,13 @@ const runtime = new GroupRuntime({
   store,
   defaultLimit: config.defaultLimit,
   names: { "+15550000001": "Neena", "+15550000002": "Siya", "+15550000003": "Tristan" },
+  // Pretend Kitty accounts, so buying works without the Face ID join.
+  wallets: {
+    "+15550000001": "0x0000000000000000000000000000000000000001",
+    "+15550000002": "0x0000000000000000000000000000000000000002",
+    "+15550000003": "0x0000000000000000000000000000000000000003",
+  },
+  purchase,
   log: (line) => console.log(`  (${line})`),
 });
 runtime.attach();
